@@ -76,8 +76,9 @@ if st.button("Optimize layout", type="primary"):
         o4.metric("Elevators / Corridors", f"{result.elevator_module_count} / {result.corridor_count}")
 
         st.caption(
-            "Distance rule: adjacent rooms = 0; each Corridor = +1; each Elevator module = +1; "
-            "room internal length = 0. Objective = Σ(i<j) wi·wj·dij."
+            "Distance rule: adjacent endpoint rooms = 0; each Corridor = +1; each Elevator "
+            "module = +1; an intermediate transit room adds its width in grid cells. "
+            "Objective = Σ(i<j) wi·wj·dij."
         )
         st.caption(
             "Vertical hard rule: every floor in the used floor span needs an Elevator stop, "
