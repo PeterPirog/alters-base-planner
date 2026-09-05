@@ -11,6 +11,8 @@ src/alters_base_planner/data/base-size4.csv
 
 These files are the geometry source of truth for Base I-IV.
 
+The current contents are **initial provisional definitions** derived from the planner's existing Base I-IV masks. Replace them as better game measurements become available; no Python changes are required.
+
 ## Cell values
 
 ```text
