@@ -1,0 +1,46 @@
+name: Generate optimized example layout
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "config/plan.json"
+      - "src/**"
+      - ".github/workflows/example-layout.yml"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install planner
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Run optimizer
+        run: python -m alters_base_planner.cli config/plan.json
+      - name: Verify generated outputs
+        run: |
+          test -s layout.png
+          test -s layout.svg
+          test -s layout.json
+          python - <<'PY'
+          import json
+          data = json.load(open('layout.json', encoding='utf-8'))
+          assert data['status'] == 'FEASIBLE', data['status']
+          print('objective=', data['optimization']['weighted_distance_score'])
+          print('average_pair_distance=', data['optimization']['average_pair_distance'])
+          print('total_base_mass=', data['journey']['total_base_mass'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optimized-layout
+          path: |
+            layout.png
+            layout.svg
+            layout.json
+          if-no-files-found: error
