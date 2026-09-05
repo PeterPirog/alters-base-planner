@@ -1,16 +1,10 @@
 {
   "base_tier": 4,
-  "rooms": {
-    "workshop": 1,
-    "research_lab": 1,
-    "dormitory": 1,
-    "social_room": 1,
-    "small_storage": 1
-  },
+  "rooms": {},
   "solver": {
     "objective": "weighted_pair_distance",
-    "time_limit_s": 5,
-    "max_layout_attempts": 80
+    "time_limit_s": 2,
+    "max_layout_attempts": 40
   },
   "output": {
     "svg": "layout.svg",
