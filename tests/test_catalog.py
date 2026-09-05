@@ -1,4 +1,4 @@
-from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES
+from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
 from alters_base_planner.models import ConnectionLevel
 
 
@@ -35,3 +35,16 @@ def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
     keys = {m.key for m in MANDATORY_MODULES}
     assert "kitchen" in keys
     assert "womb" in keys
+
+
+def test_every_module_has_gameplay_usage_weight() -> None:
+    assert set(USAGE_WEIGHTS) == set(MODULE_BY_KEY)
+    assert all(0 < module.visit_weight <= 1 for module in MODULES)
+
+
+def test_baseline_usage_weight_priorities() -> None:
+    assert MODULE_BY_KEY["airlock"].visit_weight == 1.0
+    assert MODULE_BY_KEY["workshop"].visit_weight == 0.9
+    assert MODULE_BY_KEY["small_storage"].visit_weight == 0.1
+    assert MODULE_BY_KEY["large_storage"].visit_weight == 0.1
+    assert MODULE_BY_KEY["womb"].visit_weight < MODULE_BY_KEY["workshop"].visit_weight
