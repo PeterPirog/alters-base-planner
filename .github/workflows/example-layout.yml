@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "config/example-plan.json"
       - "config/plan.json"
       - "src/**"
       - ".github/workflows/example-layout.yml"
@@ -22,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
       - name: Run optimizer
-        run: python -m alters_base_planner.cli config/plan.json
+        run: python -m alters_base_planner.cli config/example-plan.json
       - name: Verify generated outputs
         run: |
           test -s layout.png
@@ -34,7 +35,9 @@ jobs:
           assert data['status'] == 'FEASIBLE', data['status']
           print('objective=', data['optimization']['weighted_distance_score'])
           print('average_pair_distance=', data['optimization']['average_pair_distance'])
+          print('weighted_average_pair_distance=', data['optimization']['weighted_average_pair_distance'])
           print('total_base_mass=', data['journey']['total_base_mass'])
+          print('organics_required=', data['journey']['organics_required'])
           PY
       - uses: actions/upload-artifact@v4
         with:
