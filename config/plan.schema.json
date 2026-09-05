@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/alters-base-planner/plan.schema.json",
+  "title": "The Alters Base Planner configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {"type": "string"},
+    "base_tier": {"type": "integer", "enum": [1, 2, 3, 4]},
+    "rooms": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ark_sarcophagus": {"$ref": "#/$defs/count"},
+        "contemplation_room": {"$ref": "#/$defs/count"},
+        "dormitory": {"$ref": "#/$defs/count"},
+        "gamers_den": {"$ref": "#/$defs/count"},
+        "greenhouse": {"$ref": "#/$defs/count"},
+        "gym": {"$ref": "#/$defs/count"},
+        "infirmary": {"$ref": "#/$defs/count"},
+        "large_storage": {"$ref": "#/$defs/count"},
+        "materializer": {"$ref": "#/$defs/count"},
+        "medium_storage": {"$ref": "#/$defs/count"},
+        "park_with_bench": {"$ref": "#/$defs/count"},
+        "personal_cabin": {"$ref": "#/$defs/count"},
+        "radiation_repulsor": {"$ref": "#/$defs/count"},
+        "rapidium_ark": {"$ref": "#/$defs/count"},
+        "recycler": {"$ref": "#/$defs/count"},
+        "refinery": {"$ref": "#/$defs/count"},
+        "research_lab": {"$ref": "#/$defs/count"},
+        "small_storage": {"$ref": "#/$defs/count"},
+        "social_room": {"$ref": "#/$defs/count"},
+        "workshop": {"$ref": "#/$defs/count"}
+      }
+    },
+    "solver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objective": {"const": "weighted_pair_distance"},
+        "time_limit_s": {"type": "number", "exclusiveMinimum": 0},
+        "max_layout_attempts": {"type": "integer", "minimum": 1}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "svg": {"type": "string", "minLength": 1},
+        "png": {"type": "string", "minLength": 1},
+        "json": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "required": ["base_tier", "rooms"],
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0}
+  }
+}
