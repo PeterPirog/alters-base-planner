@@ -47,6 +47,7 @@
       "additionalProperties": false,
       "properties": {
         "svg": {"type": "string", "minLength": 1},
+        "png": {"type": "string", "minLength": 1},
         "json": {"type": "string", "minLength": 1}
       }
     }
