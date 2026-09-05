@@ -185,7 +185,7 @@ def _route_utilities(
                 best, best_path = comp, path
         if best is None or best_path is None:
             return None
-        for a, b in zip(best_path, best_path[1:], strict=True):
+        for a, b in zip(best_path, best_path[1:], strict=False):
             used.add(a)
             used.add(b)
             if a[0] == b[0]:
