@@ -83,7 +83,7 @@ def _validate_vertical_elevator_coverage(
             + ", ".join(map(str, missing_levels))
         )
 
-    for lower, upper in zip(required_levels, required_levels[1:], strict=True):
+    for lower, upper in zip(required_levels, required_levels[1:], strict=False):
         shared_x = elevator_x_by_level[lower] & elevator_x_by_level[upper]
         if not shared_x:
             raise ValueError(
@@ -181,7 +181,6 @@ def _build_module_graph(
         utility_nodes[(utility.x, utility.y)] = node
         utility_kind[node] = utility.kind
 
-    # Direct legal room-to-room adjacency is free: d = 0.
     for i, a in enumerate(rooms):
         for b in rooms[i + 1 :]:
             if _directly_adjacent(a, 1, b, 0):
@@ -199,8 +198,6 @@ def _build_module_graph(
                     side_nodes[(b.instance_id, 1)],
                 )
 
-    # A room connects to a utility only when the 2x1 utility occupies the exact
-    # legal anchor immediately to the left/right of the room access level.
     for room in rooms:
         row = _connection_row(room)
         anchors = {
@@ -217,15 +214,11 @@ def _build_module_graph(
                     utility_node,
                 )
 
-    # Horizontal utility adjacency. A Corridor or Elevator is one distance unit,
-    # regardless of its 2-cell footprint.
     for (x, y), node in utility_nodes.items():
         right = utility_nodes.get((x + 2, y))
         if right is not None:
             _connect_by_entry_cost(graph, node_cost, node, right)
 
-    # Vertical adjacency exists only between immediately stacked Elevator modules.
-    # Each Elevator module is a separate +1 in the path length.
     for (x, y), node in utility_nodes.items():
         if utility_kind[node] != "elevator":
             continue
@@ -233,7 +226,6 @@ def _build_module_graph(
         if above is not None and utility_kind[above] == "elevator":
             _connect_by_entry_cost(graph, node_cost, node, above)
 
-    # Report contiguous elevator shafts separately from Elevator module count.
     shaft_count = 0
     by_x: dict[int, list[int]] = {}
     for utility in utilities:
@@ -275,13 +267,9 @@ def _dijkstra(
 def evaluate_distances(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> DistanceMetrics:
-    # Vertical continuity is a hard feasibility rule, not a soft objective.
     _validate_vertical_elevator_coverage(rooms, utilities)
     graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
 
-    # Objective pairs contain only rooms with positive usage weight. Storage and
-    # other passive modules with weight 0 still remain hard-constrained physical
-    # modules and may participate in the walkable topology if transit is legal.
     active_rooms = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
 
     pairwise: dict[str, int] = {}
