@@ -14,7 +14,7 @@ from alters_base_planner.render import render_svg
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
 st.title("The Alters Base Planner")
-st.caption("JSON-configured OR-Tools planner with automatic corridors, elevators and travel scoring")
+st.caption("JSON-configured planner with automatic corridors, elevators and weighted travel scoring")
 
 st.markdown(
     "Room counts are configured **only in JSON for now**. Edit `config/plan.json` or upload "
@@ -39,7 +39,7 @@ if st.button("Optimize layout", type="primary"):
     try:
         loaded = load_plan_config(config_path)
         base = builtin_base(loaded.request.tier)
-        with st.spinner("Solving room packing, access network, travel score and journey mass..."):
+        with st.spinner("Solving hard constraints and minimizing weighted pair distance..."):
             result = solve_plan(loaded.request, base)
     except (ValueError, json.JSONDecodeError, OSError) as exc:
         st.error(f"Invalid configuration: {exc}")
@@ -61,21 +61,25 @@ if st.button("Optimize layout", type="primary"):
 
     if result.rooms:
         o1, o2, o3, o4 = st.columns(4)
-        o1.metric("Elevator modules", result.elevator_module_count)
-        o2.metric("Elevator shafts", result.elevator_shaft_count)
-        o3.metric("Corridors", result.corridor_count)
-        o4.metric(
-            "Weighted travel",
-            f"{result.normalized_weighted_distance:.3f}"
-            if result.normalized_weighted_distance is not None
+        o1.metric(
+            "Objective",
+            f"{result.weighted_distance_score:.4f}"
+            if result.weighted_distance_score is not None
             else "n/a",
         )
+        o2.metric("Elevator modules", result.elevator_module_count)
+        o3.metric("Elevator shafts", result.elevator_shaft_count)
+        o4.metric("Corridors", result.corridor_count)
 
-        if not result.exact_minimum_elevators_proven:
+        st.caption(
+            "Distance rule: adjacent rooms = 0; each Corridor = +1; each Elevator module = +1; "
+            "room internal length = 0. Objective = Σ(i<j) wi·wj·dij."
+        )
+        if not result.global_objective_optimum_proven:
             st.info(
-                "Current candidate ranking is lexicographic (Elevators → weighted travel → mass), "
-                "but the post-router does not yet prove the global minimum Elevator count. "
-                "The exact joint CP-SAT/flow contract is documented in docs/OPTIMIZATION_MODEL.md."
+                "The objective is evaluated exactly for every generated connected candidate, "
+                "but the current placement + post-router engine does not yet prove the global "
+                "optimum across the complete joint placement/routing search space."
             )
 
         j1, j2, j3, j4 = st.columns(4)
@@ -103,14 +107,16 @@ if st.button("Optimize layout", type="primary"):
                     "geometry_note": result.base.note,
                 },
                 "optimization": {
+                    "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
+                    "weighted_distance_score": result.weighted_distance_score,
+                    "normalized_weighted_distance": result.normalized_weighted_distance,
+                    "global_objective_optimum_proven": result.global_objective_optimum_proven,
                     "elevator_module_count": result.elevator_module_count,
                     "elevator_shaft_count": result.elevator_shaft_count,
                     "corridor_count": result.corridor_count,
-                    "weighted_distance_score": result.weighted_distance_score,
-                    "normalized_weighted_distance": result.normalized_weighted_distance,
-                    "exact_minimum_elevators_proven": result.exact_minimum_elevators_proven,
                     "room_usage_weights": result.room_usage_weights,
                     "pairwise_distances": result.pairwise_distances,
+                    "pairwise_contributions": result.pairwise_contributions,
                 },
                 "journey": {
                     "room_mass": result.room_mass,
@@ -139,6 +145,7 @@ if st.button("Optimize layout", type="primary"):
                     {
                         "kind": u.kind,
                         "mass": 2,
+                        "distance_cost": 1,
                         "x": u.x,
                         "y": u.y,
                         "width": u.width,
