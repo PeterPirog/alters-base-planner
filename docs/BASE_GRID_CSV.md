@@ -64,6 +64,8 @@ The CSV loader rejects:
 - cell values other than `0`, `1`, `X`;
 - a built-in grid with no `X` cells.
 
+Changing the CSV does not weaken connectivity rules. The solver still requires continuous Elevator coverage across all used levels and a single Airlock-rooted access network.
+
 After editing a grid run:
 
 ```bash
