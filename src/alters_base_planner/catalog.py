@@ -14,7 +14,7 @@ def _load_usage_weights() -> dict[str, float]:
     result: dict[str, float] = {}
     for key, entry in weights_raw.items():
         weight = float(entry["weight"])
-        if not 0 < weight <= 1:
+        if not 0 <= weight <= 1:
             raise ValueError(f"Invalid usage weight for {key}: {weight}")
         result[key] = weight
     return result
@@ -41,8 +41,6 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec("womb", "The Womb", 5, 1, 4, ModuleType.CORE, mandatory=True, configurable=False, visit_weight=_w("womb")),
     ModuleSpec("ark_sarcophagus", "Ark Sarcophagus", 4, 2, 13, ModuleType.STORAGE, visit_weight=_w("ark_sarcophagus")),
     ModuleSpec("contemplation_room", "Contemplation Room", 6, 1, 20, ModuleType.WELLBEING, visit_weight=_w("contemplation_room")),
-    # Empirical Patch 1.4 data and in-game player reports give Dormitory mass 8.
-    # Some community wiki revisions list 40, which appears to repeat its Metal cost.
     ModuleSpec("dormitory", "Dormitory", 6, 1, 8, ModuleType.WELLBEING, visit_weight=_w("dormitory")),
     ModuleSpec("gamers_den", "Gamer's Den", 5, 1, 14, ModuleType.WELLBEING, visit_weight=_w("gamers_den")),
     ModuleSpec("greenhouse", "Greenhouse", 8, 1, 16, ModuleType.WORK, visit_weight=_w("greenhouse")),
