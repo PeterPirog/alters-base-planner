@@ -44,7 +44,7 @@ def test_storage_weight_has_small_effect_relative_to_workshop() -> None:
     rooms = [
         Placement("airlock-1", "airlock", 0, 0, 4, 1),
         Placement("workshop-1", "workshop", 4, 0, 4, 1),
-        Placement("storage-1", "small_storage", 8, 0, 2, 2),
+        Placement("storage-1", "medium_storage", 8, 0, 8, 1),
     ]
     metrics = evaluate_distances(rooms, [])
     assert metrics.weighted_score > 0
