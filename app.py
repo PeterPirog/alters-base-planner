@@ -47,9 +47,8 @@ if st.button("Optimize layout", type="primary"):
 
     if not base.verified:
         st.warning(
-            "The selected built-in Base I-IV perimeter is provisional. Public evidence verifies "
-            "the circular/irregular row structure, the immovable offset Organics core and tank "
-            "capacities, but not authoritative cell-by-cell coordinates for each tier."
+            f"{base.source} is an editable provisional Base {base.tier} mask. "
+            "Correct 0/1/X cells in the CSV when more accurate game geometry is available."
         )
 
     c1, c2, c3, c4 = st.columns(4)
@@ -74,6 +73,10 @@ if st.button("Optimize layout", type="primary"):
         st.caption(
             "Distance rule: adjacent rooms = 0; each Corridor = +1; each Elevator module = +1; "
             "room internal length = 0. Objective = Σ(i<j) wi·wj·dij."
+        )
+        st.caption(
+            "Vertical hard rule: every floor in the used floor span needs an Elevator stop, "
+            "and every adjacent floor pair must share at least one Elevator x-coordinate."
         )
         if not result.global_objective_optimum_proven:
             st.info(
@@ -157,6 +160,6 @@ if st.button("Optimize layout", type="primary"):
         )
 
 st.info(
-    "Geometry definitions live in `src/alters_base_planner/data/base_grids.json`; gameplay "
-    "usage weights live in `src/alters_base_planner/data/usage_weights.json`."
+    "Base geometry is editable in `src/alters_base_planner/data/base-size1.csv` ... "
+    "`base-size4.csv`; gameplay usage weights live in `usage_weights.json`."
 )
