@@ -8,7 +8,7 @@ from .base import builtin_base
 from .catalog import MODULE_BY_KEY
 from .config import load_plan_config
 from .engine import solve_plan
-from .render import render_svg
+from .render import average_pair_distance, render_png, render_svg
 
 
 def _result_payload(result) -> dict[str, object]:
@@ -35,7 +35,8 @@ def _result_payload(result) -> dict[str, object]:
                 "room_internal_length": 0,
             },
             "weighted_distance_score": result.weighted_distance_score,
-            "normalized_weighted_distance": result.normalized_weighted_distance,
+            "average_pair_distance": average_pair_distance(result),
+            "weighted_average_pair_distance": result.normalized_weighted_distance,
             "global_objective_optimum_proven": result.global_objective_optimum_proven,
             "elevator_module_count": result.elevator_module_count,
             "elevator_shaft_count": result.elevator_shaft_count,
@@ -98,7 +99,7 @@ def main() -> None:
     if not base.verified:
         print(
             "WARNING: selected built-in base geometry is provisional, not an authoritative "
-            "game-extracted grid. See src/alters_base_planner/data/base_grids.json."
+            "game-extracted grid. See src/alters_base_planner/data/base-sizeN.csv."
         )
 
     result = solve_plan(loaded.request, base)
@@ -107,10 +108,13 @@ def main() -> None:
 
     if result.rooms:
         loaded.output.svg.parent.mkdir(parents=True, exist_ok=True)
+        loaded.output.png.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.json.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.svg.write_text(render_svg(result), encoding="utf-8")
+        render_png(result, loaded.output.png)
         loaded.output.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"Wrote {loaded.output.svg}")
+        print(f"Wrote {loaded.output.png}")
         print(f"Wrote {loaded.output.json}")
 
 
