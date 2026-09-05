@@ -13,6 +13,11 @@ class ModuleType(StrEnum):
     UTILITY = "utility"
 
 
+class ConnectionLevel(StrEnum):
+    BOTTOM = "bottom"
+    TOP = "top"
+
+
 @dataclass(frozen=True, slots=True)
 class ModuleSpec:
     key: str
@@ -24,6 +29,7 @@ class ModuleSpec:
     mandatory: bool = False
     configurable: bool = True
     visit_weight: int = 1
+    connection_level: ConnectionLevel = ConnectionLevel.BOTTOM
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +54,6 @@ class Placement:
             for xx in range(self.x, self.x + self.width)
             for yy in range(self.y, self.y + self.height)
         )
-
-    @property
-    def connection_row(self) -> int:
-        """Rooms connect horizontally at their lower corners."""
-        return self.y + self.height - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +104,13 @@ class PlanResult:
     objective_value: float | None = None
     attempts: int = 0
     message: str = ""
+    room_mass: int = 0
+    utility_mass: int = 0
+    total_mass: int = 0
+    organics_required_for_journey: int = 0
+    organics_capacity_margin: int = 0
+    travel_feasible_at_full_tank: bool = False
+    mass_breakdown: dict[str, int] = field(default_factory=dict)
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:
