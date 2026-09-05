@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .models import ModuleSpec, ModuleType
 
-
 MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec("airlock", "Airlock", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False, visit_weight=10),
     ModuleSpec("captains_cabin", "Captain's Cabin", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False, visit_weight=10),
