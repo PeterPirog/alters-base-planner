@@ -76,7 +76,9 @@ class BaseGeometry:
     allowed_cells: frozenset[tuple[int, int]]
     blocked_cells: frozenset[tuple[int, int]]
     organics_capacity: int
-    source: str = "builtin-estimate"
+    source: str = "unknown"
+    verified: bool = False
+    note: str = ""
 
     @property
     def buildable_cells(self) -> frozenset[tuple[int, int]]:
