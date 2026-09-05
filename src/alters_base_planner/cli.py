@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .base import builtin_base
+from .catalog import MODULE_BY_KEY
 from .config import load_plan_config
 from .engine import solve_plan
 from .render import render_svg
@@ -25,10 +26,21 @@ def _result_payload(result) -> dict[str, object]:
             "geometry_verified": result.base.verified,
             "geometry_note": result.base.note,
         },
+        "journey": {
+            "room_mass": result.room_mass,
+            "utility_mass": result.utility_mass,
+            "total_base_mass": result.total_mass,
+            "organics_required": result.organics_required_for_journey,
+            "organics_tank_capacity": result.base.organics_capacity,
+            "capacity_margin": result.organics_capacity_margin,
+            "travel_feasible_at_full_tank": result.travel_feasible_at_full_tank,
+            "mass_breakdown": result.mass_breakdown,
+        },
         "rooms": [
             {
                 "instance_id": room.instance_id,
                 "module_key": room.module_key,
+                "mass": MODULE_BY_KEY[room.module_key].mass,
                 "x": room.x,
                 "y": room.y,
                 "width": room.width,
@@ -39,6 +51,7 @@ def _result_payload(result) -> dict[str, object]:
         "utilities": [
             {
                 "kind": utility.kind,
+                "mass": 2,
                 "x": utility.x,
                 "y": utility.y,
                 "width": utility.width,
