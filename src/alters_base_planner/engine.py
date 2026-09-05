@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
@@ -9,6 +9,7 @@ from .base import builtin_base
 from .catalog import MODULE_BY_KEY, MODULES
 from .models import (
     BaseGeometry,
+    ConnectionLevel,
     ModuleInstance,
     Placement,
     PlanRequest,
@@ -16,6 +17,8 @@ from .models import (
     UtilityPlacement,
     expand_instances,
 )
+
+UTILITY_MASS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,8 +43,6 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             )
             if not cells <= base.buildable_cells:
                 continue
-            # Compactness + accessibility objective. Frequently visited rooms are
-            # drawn towards the centre while storage/repulsors can live at edges.
             px = x + (spec.width - 1) / 2
             py = y + spec.height - 1
             distance = abs(px - cx) + 0.35 * abs(py - cy)
@@ -52,8 +53,36 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
     return result
 
 
-def _room_components(rooms: list[Placement]) -> list[list[int]]:
-    parent = list(range(len(rooms)))
+def _connection_row(room: Placement) -> int:
+    spec = MODULE_BY_KEY[room.module_key]
+    if spec.connection_level is ConnectionLevel.TOP:
+        return room.y
+    return room.y + room.height - 1
+
+
+def _directly_adjacent(a: Placement, a_side: int, b: Placement, b_side: int) -> bool:
+    if _connection_row(a) != _connection_row(b):
+        return False
+    if a_side == 1 and b_side == 0:
+        return a.x + a.width == b.x
+    if a_side == 0 and b_side == 1:
+        return b.x + b.width == a.x
+    return False
+
+
+def _room_port_components(
+    rooms: list[Placement],
+    base: BaseGeometry,
+    occupied: set[tuple[int, int]],
+) -> tuple[dict[int, set[int]], dict[int, set[tuple[int, int]]], int] | None:
+    """Build connectivity components using left/right room access ports.
+
+    Walk-through rooms connect their two ports internally. Terminal-only modules such as
+    the Rapidium Ark do not, so they cannot become an accidental bridge between rooms.
+    """
+
+    port_count = len(rooms) * 2
+    parent = list(range(port_count))
 
     def find(a: int) -> int:
         while parent[a] != a:
@@ -66,41 +95,48 @@ def _room_components(rooms: list[Placement]) -> list[list[int]]:
         if ra != rb:
             parent[rb] = ra
 
+    for idx, room in enumerate(rooms):
+        if MODULE_BY_KEY[room.module_key].transit_allowed:
+            union(2 * idx, 2 * idx + 1)
+
     for i, a in enumerate(rooms):
         for j in range(i + 1, len(rooms)):
             b = rooms[j]
-            if a.connection_row != b.connection_row:
-                continue
-            same_row = a.connection_row
-            if a.x + a.width == b.x or b.x + b.width == a.x:
-                if a.y <= same_row < a.y + a.height and b.y <= same_row < b.y + b.height:
-                    union(i, j)
-    groups: dict[int, list[int]] = {}
-    for i in range(len(rooms)):
-        groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
+            if _directly_adjacent(a, 1, b, 0):
+                union(2 * i + 1, 2 * j)
+            elif _directly_adjacent(a, 0, b, 1):
+                union(2 * i, 2 * j + 1)
 
+    module_components: dict[int, set[int]] = {}
+    component_anchors: dict[int, set[tuple[int, int]]] = {}
 
-def _component_terminals(
-    component: list[int],
-    rooms: list[Placement],
-    base: BaseGeometry,
-    occupied: set[tuple[int, int]],
-) -> set[tuple[int, int]]:
-    terminals: set[tuple[int, int]] = set()
-    for idx in component:
-        room = rooms[idx]
-        y = room.connection_row
-        for x in (room.x - 2, room.x + room.width):
-            cells = {(x, y), (x + 1, y)}
+    for idx, room in enumerate(rooms):
+        components: set[int] = set()
+        row = _connection_row(room)
+        for side in (0, 1):
+            port = 2 * idx + side
+            root = find(port)
+            components.add(root)
+
+            x = room.x - 2 if side == 0 else room.x + room.width
+            cells = {(x, row), (x + 1, row)}
             if (
                 x >= 0
                 and x + 1 < base.width
                 and cells <= base.buildable_cells
                 and not (cells & occupied)
             ):
-                terminals.add((x, y))
-    return terminals
+                component_anchors.setdefault(root, set()).add((x, row))
+        module_components[idx] = components
+
+    airlock_idx = next(
+        (idx for idx, room in enumerate(rooms) if room.module_key == "airlock"),
+        None,
+    )
+    if airlock_idx is None:
+        return None
+    root_component = find(2 * airlock_idx)
+    return module_components, component_anchors, root_component
 
 
 def _neighbors(anchor: tuple[int, int], valid: set[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -148,56 +184,80 @@ def _route_utilities(
             if cells <= base.buildable_cells and not (cells & occupied):
                 valid_anchors.add((x, y))
 
-    components = _room_components(rooms)
-    root_idx = next(
-        (
-            i
-            for i, comp in enumerate(components)
-            if any(rooms[j].module_key == "airlock" for j in comp)
-        ),
-        None,
-    )
-    if root_idx is None:
+    port_data = _room_port_components(rooms, base, occupied)
+    if port_data is None:
         return None
+    module_components, component_anchors, root_component = port_data
 
-    root_terminals = _component_terminals(components[root_idx], rooms, base, occupied)
-    network = set(root_terminals)
-    if not network and len(components) > 1:
-        return None
+    connected_components = {root_component}
     used: set[tuple[int, int]] = set()
     vertical: set[tuple[int, int]] = set()
 
-    remaining = [c for i, c in enumerate(components) if i != root_idx]
-    while remaining:
-        best = None
-        best_path = None
-        for comp in remaining:
-            occupied_with_utilities = occupied | {
-                cell
-                for anchor in used
-                for cell in ((anchor[0], anchor[1]), (anchor[0] + 1, anchor[1]))
-            }
-            terminals = _component_terminals(
-                comp, rooms, base, occupied_with_utilities
-            )
-            path = _shortest_path(terminals, network or root_terminals, valid_anchors | used)
-            if path is not None and (best_path is None or len(path) < len(best_path)):
-                best, best_path = comp, path
-        if best is None or best_path is None:
+    def module_is_connected(idx: int) -> bool:
+        return bool(module_components[idx] & connected_components)
+
+    while not all(module_is_connected(idx) for idx in range(len(rooms))):
+        network = set(used)
+        for component in connected_components:
+            network.update(component_anchors.get(component, set()))
+        if not network:
             return None
+
+        best_component: int | None = None
+        best_path: list[tuple[int, int]] | None = None
+        candidate_components = {
+            component
+            for idx in range(len(rooms))
+            if not module_is_connected(idx)
+            for component in module_components[idx]
+            if component not in connected_components
+        }
+
+        for component in candidate_components:
+            starts = component_anchors.get(component, set())
+            path = _shortest_path(starts, network, valid_anchors | used)
+            if path is not None and (best_path is None or len(path) < len(best_path)):
+                best_component = component
+                best_path = path
+
+        if best_component is None or best_path is None:
+            return None
+
+        used.update(best_path)
         for a, b in zip(best_path, best_path[1:], strict=False):
-            used.add(a)
-            used.add(b)
             if a[0] == b[0]:
                 vertical.add(a)
                 vertical.add(b)
-        network.update(best_path)
-        remaining.remove(best)
+        connected_components.add(best_component)
 
     return [
         UtilityPlacement("elevator" if anchor in vertical else "corridor", anchor[0], anchor[1])
         for anchor in sorted(used)
     ]
+
+
+def _mass_metrics(
+    base: BaseGeometry,
+    rooms: list[Placement],
+    utilities: list[UtilityPlacement],
+) -> tuple[int, int, int, int, bool, dict[str, int]]:
+    room_mass = sum(MODULE_BY_KEY[room.module_key].mass for room in rooms)
+    utility_mass = UTILITY_MASS * len(utilities)
+    total_mass = room_mass + utility_mass
+    margin = base.organics_capacity - total_mass
+
+    counts = Counter(room.module_key for room in rooms)
+    mass_breakdown = {
+        key: count * MODULE_BY_KEY[key].mass for key, count in sorted(counts.items())
+    }
+    corridor_count = sum(utility.kind == "corridor" for utility in utilities)
+    elevator_count = sum(utility.kind == "elevator" for utility in utilities)
+    if corridor_count:
+        mass_breakdown["corridor"] = corridor_count * UTILITY_MASS
+    if elevator_count:
+        mass_breakdown["elevator"] = elevator_count * UTILITY_MASS
+
+    return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
 
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
@@ -213,47 +273,56 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         cand = _candidate_positions(inst, base)
         if not cand:
             return PlanResult(
-                "INFEASIBLE", base, message=f"No legal position for {inst.spec.name}"
+                status="INFEASIBLE",
+                base=base,
+                message=f"No legal position for {inst.spec.name}",
             )
         candidates[inst.instance_id] = cand
-        vv = [model.new_bool_var(f"p_{inst.instance_id}_{i}") for i in range(len(cand))]
-        vars_by_instance[inst.instance_id] = vv
-        model.add(sum(vv) == 1)
-        for var, pos in zip(vv, cand, strict=True):
+        variables = [
+            model.new_bool_var(f"p_{inst.instance_id}_{idx}") for idx in range(len(cand))
+        ]
+        vars_by_instance[inst.instance_id] = variables
+        model.add(sum(variables) == 1)
+        for var, pos in zip(variables, cand, strict=True):
             for cell in pos.cells:
                 cell_vars.setdefault(cell, []).append(var)
             objective_terms.append(pos.cost * var)
 
-    for vv in cell_vars.values():
-        model.add(sum(vv) <= 1)
+    for variables in cell_vars.values():
+        model.add(sum(variables) <= 1)
 
     model.minimize(sum(objective_terms))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max(1.0, request.time_limit_s)
     solver.parameters.num_search_workers = 8
 
+    best_result: PlanResult | None = None
+    connected_candidates = 0
+
     for attempt in range(1, request.max_layout_attempts + 1):
         status = solver.solve(model)
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            if best_result is not None:
+                return best_result
             return PlanResult(
-                "INFEASIBLE",
-                base,
+                status="INFEASIBLE",
+                base=base,
                 attempts=attempt,
                 message="No feasible room packing found",
             )
 
         rooms: list[Placement] = []
-        chosen_vars = []
+        chosen_vars: list[cp_model.IntVar] = []
         for inst in instances:
-            for i, var in enumerate(vars_by_instance[inst.instance_id]):
+            for idx, var in enumerate(vars_by_instance[inst.instance_id]):
                 if solver.value(var):
-                    p = candidates[inst.instance_id][i]
+                    pos = candidates[inst.instance_id][idx]
                     rooms.append(
                         Placement(
                             inst.instance_id,
                             inst.spec.key,
-                            p.x,
-                            p.y,
+                            pos.x,
+                            pos.y,
                             inst.spec.width,
                             inst.spec.height,
                         )
@@ -263,26 +332,54 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
 
         utilities = _route_utilities(base, rooms)
         if utilities is not None:
-            total_mass = sum(MODULE_BY_KEY[r.module_key].mass for r in rooms) + 2 * len(
-                utilities
+            connected_candidates += 1
+            room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
+                base, rooms, utilities
             )
-            msg = f"Connected layout found. Estimated total base mass: {total_mass}."
-            return PlanResult(
-                "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
-                base,
-                rooms,
-                utilities,
-                solver.objective_value,
-                attempt,
-                msg,
+            message = (
+                f"Connected layout found. Base mass {total_mass}; journey requires "
+                f"{total_mass} Organics; tank capacity {base.organics_capacity}. "
+                f"Travel at full tank: {'YES' if travel_ok else 'NO'}."
             )
+            candidate_result = PlanResult(
+                status="FEASIBLE",
+                base=base,
+                rooms=rooms,
+                utilities=utilities,
+                objective_value=solver.objective_value,
+                attempts=attempt,
+                message=message,
+                room_mass=room_mass,
+                utility_mass=utility_mass,
+                total_mass=total_mass,
+                organics_required_for_journey=total_mass,
+                organics_capacity_margin=margin,
+                travel_feasible_at_full_tank=travel_ok,
+                mass_breakdown=breakdown,
+            )
+            if best_result is None or (
+                candidate_result.total_mass,
+                candidate_result.objective_value or 0,
+            ) < (
+                best_result.total_mass,
+                best_result.objective_value or 0,
+            ):
+                best_result = candidate_result
+            if utility_mass == 0:
+                return candidate_result
 
-        # Reject exactly this room arrangement and ask CP-SAT for another packing.
         model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
 
+    if best_result is not None:
+        best_result.message += (
+            f" Best of {connected_candidates} connected layouts examined; automatic utility mass "
+            "was minimized among those candidates."
+        )
+        return best_result
+
     return PlanResult(
-        "NO_CONNECTED_LAYOUT",
-        base,
+        status="NO_CONNECTED_LAYOUT",
+        base=base,
         attempts=request.max_layout_attempts,
         message=(
             "Room packings were feasible, but automatic corridor/elevator routing failed. "
