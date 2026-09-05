@@ -1,46 +1,54 @@
 {
-  "schema_version": 1,
-  "important_note": "Public sources verify expansion progression and Organics capacities, but do not publish authoritative machine-readable cell coordinates for Base I-IV. Width/height and row spans below are provisional screenshot-derived models and MUST NOT be treated as verified game data. The immovable Organics Tank footprint has been corrected to 4x2 based on published layout descriptions and screenshots.",
+  "schema_version": 2,
+  "important_note": "Verified from current guides/screenshots: the mobile base is circular/wheel-shaped, usable horizontal width varies by row because of the curved perimeter, the external rectangular holding area is not usable base space, and an immovable Organics/core obstruction sits slightly down-left of visual center. Verified Organics capacities are 300/450/700/800 for Base I-IV. NOT verified from authoritative game data: exact absolute grid width/height, exact row-by-row cell spans, exact canonical coordinates, or the exact cell footprint of the central obstruction. The profiles below are transparent provisional screenshot-derived solver fixtures and MUST keep verified=false until calibrated from clean build-mode screenshots or extracted game data.",
+  "geometry_semantics": {
+    "shape_verified": "circular/wheel-shaped with row-dependent horizontal width",
+    "overflow_area_is_buildable": false,
+    "core_is_immovable": true,
+    "core_position_verified": "slightly down-left from visual center",
+    "perimeter_cell_coordinates_verified": false,
+    "core_cell_footprint_verified": false
+  },
   "tiers": {
     "1": {
       "width": 22,
       "height": 12,
       "organics_capacity": 300,
       "verified": false,
-      "source": "provisional-public-screenshot-model-v2",
+      "source": "provisional-public-screenshot-model-v3",
       "row_spans": [[4,17],[2,19],[1,20],[0,21],[0,21],[0,21],[0,21],[0,21],[0,21],[1,20],[2,19],[4,17]],
       "blocked_rect": [8,6,4,2],
-      "note": "Absolute grid dimensions and perimeter are not yet authoritatively verified."
+      "note": "Capacity and irregular circular semantics are grounded; envelope, row spans and 4x2 blocked proxy are provisional."
     },
     "2": {
       "width": 26,
       "height": 14,
       "organics_capacity": 450,
       "verified": false,
-      "source": "provisional-public-screenshot-model-v2",
+      "source": "provisional-public-screenshot-model-v3",
       "row_spans": [[6,19],[3,22],[1,24],[1,24],[0,25],[0,25],[0,25],[0,25],[0,25],[0,25],[1,24],[1,24],[3,22],[6,19]],
       "blocked_rect": [10,7,4,2],
-      "note": "Capacity is verified; absolute cell mask remains provisional."
+      "note": "Capacity and irregular circular semantics are grounded; envelope, row spans and 4x2 blocked proxy are provisional."
     },
     "3": {
       "width": 30,
       "height": 16,
       "organics_capacity": 700,
       "verified": false,
-      "source": "provisional-public-screenshot-model-v2",
+      "source": "provisional-public-screenshot-model-v3",
       "row_spans": [[7,22],[3,26],[2,27],[1,28],[1,28],[0,29],[0,29],[0,29],[0,29],[0,29],[0,29],[1,28],[1,28],[2,27],[3,26],[7,22]],
       "blocked_rect": [12,8,4,2],
-      "note": "Capacity is verified; absolute cell mask remains provisional."
+      "note": "Capacity and irregular circular semantics are grounded; envelope, row spans and 4x2 blocked proxy are provisional."
     },
     "4": {
       "width": 34,
       "height": 18,
       "organics_capacity": 800,
       "verified": false,
-      "source": "provisional-public-screenshot-model-v2",
+      "source": "provisional-public-screenshot-model-v3",
       "row_spans": [[8,25],[4,29],[3,30],[2,31],[1,32],[1,32],[0,33],[0,33],[0,33],[0,33],[0,33],[0,33],[1,32],[1,32],[2,31],[3,30],[4,29],[8,25]],
       "blocked_rect": [14,9,4,2],
-      "note": "Capacity is verified; absolute cell mask remains provisional."
+      "note": "Capacity and irregular circular semantics are grounded; envelope, row spans and 4x2 blocked proxy are provisional."
     }
   }
 }
