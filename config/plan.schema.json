@@ -37,9 +37,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "objective": {"const": "lexicographic_access"},
-        "min_elevators": {"type": "integer", "minimum": 0, "default": 3},
-        "max_elevators": {"type": ["integer", "null"], "minimum": 0},
+        "objective": {"const": "weighted_pair_distance"},
         "time_limit_s": {"type": "number", "exclusiveMinimum": 0},
         "max_layout_attempts": {"type": "integer", "minimum": 1}
       }
