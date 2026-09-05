@@ -5,7 +5,6 @@ from html import escape
 from .catalog import MODULE_BY_KEY
 from .models import PlanResult
 
-
 PALETTE = {
     "core": "#5b8ff9",
     "work": "#61d9a6",
