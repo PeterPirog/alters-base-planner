@@ -1,62 +1,76 @@
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import streamlit as st
 
 from alters_base_planner.base import builtin_base
-from alters_base_planner.catalog import CONFIGURABLE_MODULES, MANDATORY_MODULES
+from alters_base_planner.config import load_plan_config
 from alters_base_planner.engine import solve_plan
-from alters_base_planner.models import PlanRequest
 from alters_base_planner.render import render_svg
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
 st.title("The Alters Base Planner")
-st.caption("OR-Tools CP-SAT room packing with automatic corridors and elevators")
+st.caption("JSON-configured OR-Tools CP-SAT planner with automatic corridors and elevators")
 
-with st.sidebar:
-    tier = st.selectbox("Base size", [1, 2, 3, 4], format_func=lambda x: f"Base Expansion {x}")
-    strategy = st.selectbox("Optimization profile", ["balanced", "compact", "minimum_travel"])
-    time_limit = st.slider("Solver time limit [s]", 3, 60, 15)
-    attempts = st.slider("Connected-layout attempts", 1, 100, 20)
+st.markdown(
+    "Room counts are configured **only in JSON for now**. Edit `config/plan.json` or upload "
+    "a compatible file below. Corridor and Elevator counts are never configured by the player."
+)
 
-st.subheader("Mandatory modules")
-st.write(", ".join(m.name for m in MANDATORY_MODULES))
-
-st.subheader("Configure room counts")
-counts: dict[str, int] = {}
-cols = st.columns(3)
-for idx, module in enumerate(CONFIGURABLE_MODULES):
-    with cols[idx % 3]:
-        counts[module.key] = st.number_input(
-            f"{module.name} ({module.width}×{module.height})",
-            min_value=0,
-            max_value=12,
-            value=0,
-            step=1,
-            key=module.key,
-        )
+uploaded = st.file_uploader("Plan configuration JSON", type=["json"])
+use_repo_default = st.checkbox("Use repository config/plan.json", value=uploaded is None)
 
 if st.button("Optimize layout", type="primary"):
-    request = PlanRequest(
-        tier=tier,
-        room_counts=counts,
-        objective=strategy,
-        time_limit_s=float(time_limit),
-        max_layout_attempts=int(attempts),
-    )
-    with st.spinner("Solving room packing and routing utilities..."):
-        result = solve_plan(request, builtin_base(tier))
+    if uploaded is None and not use_repo_default:
+        st.error("Upload a JSON configuration or enable the repository default.")
+        st.stop()
 
-    st.metric("Status", result.status)
-    st.metric("Attempts", result.attempts)
+    if uploaded is not None:
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="wb", delete=False) as tmp:
+            tmp.write(uploaded.getvalue())
+            config_path = Path(tmp.name)
+    else:
+        config_path = Path("config/plan.json")
+
+    try:
+        loaded = load_plan_config(config_path)
+        base = builtin_base(loaded.request.tier)
+        with st.spinner("Solving room packing and routing utilities..."):
+            result = solve_plan(loaded.request, base)
+    except (ValueError, json.JSONDecodeError, OSError) as exc:
+        st.error(f"Invalid configuration: {exc}")
+        st.stop()
+
+    if not base.verified:
+        st.warning(
+            "The selected built-in Base I-IV grid is still provisional. Organics capacity and the 4×2 "
+            "immovable tank are grounded in public evidence, but authoritative cell coordinates are not public."
+        )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Status", result.status)
+    c2.metric("Attempts", result.attempts)
+    c3.metric("Base", f"Tier {result.base.tier}")
     st.write(result.message)
+
     if result.rooms:
         svg = render_svg(result)
         st.components.v1.html(svg, height=result.base.height * 26 + 20, scrolling=False)
         st.download_button("Download layout SVG", svg, "alters-layout.svg", "image/svg+xml")
         st.json(
             {
-                "tier": result.base.tier,
-                "geometry_source": result.base.source,
+                "base": {
+                    "tier": result.base.tier,
+                    "width": result.base.width,
+                    "height": result.base.height,
+                    "organics_capacity": result.base.organics_capacity,
+                    "geometry_source": result.base.source,
+                    "geometry_verified": result.base.verified,
+                    "geometry_note": result.base.note,
+                },
                 "rooms": [
                     {
                         "instance_id": r.instance_id,
@@ -69,13 +83,19 @@ if st.button("Optimize layout", type="primary"):
                     for r in result.rooms
                 ],
                 "utilities": [
-                    {"kind": u.kind, "x": u.x, "y": u.y, "width": u.width, "height": u.height}
+                    {
+                        "kind": u.kind,
+                        "x": u.x,
+                        "y": u.y,
+                        "width": u.width,
+                        "height": u.height,
+                    }
                     for u in result.utilities
                 ],
             }
         )
 
 st.info(
-    "Corridors and elevators are never configured by the player. They are added automatically by the routing stage. "
-    "Built-in Tier I-IV masks are conservative approximations because no authoritative machine-readable grid coordinates are public yet."
+    "Geometry definitions live in `src/alters_base_planner/data/base_grids.json`. "
+    "This intentionally separates game-grid calibration from the optimization engine."
 )
