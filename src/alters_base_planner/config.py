@@ -61,19 +61,9 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
     if not isinstance(solver, dict):
         raise ValueError("solver must be a JSON object")
 
-    objective = str(solver.get("objective", "lexicographic_access"))
-    if objective != "lexicographic_access":
-        raise ValueError("solver.objective currently must be lexicographic_access")
-
-    min_elevators = _require_non_negative_int(solver.get("min_elevators", 3), "solver.min_elevators")
-    max_elevators_raw = solver.get("max_elevators")
-    max_elevators = (
-        None
-        if max_elevators_raw is None
-        else _require_non_negative_int(max_elevators_raw, "solver.max_elevators")
-    )
-    if max_elevators is not None and max_elevators < min_elevators:
-        raise ValueError("solver.max_elevators must be >= solver.min_elevators")
+    objective = str(solver.get("objective", "weighted_pair_distance"))
+    if objective != "weighted_pair_distance":
+        raise ValueError("solver.objective currently must be weighted_pair_distance")
 
     time_limit_s = float(solver.get("time_limit_s", 15.0))
     max_layout_attempts = int(solver.get("max_layout_attempts", 20))
@@ -95,8 +85,6 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
             tier=tier,
             room_counts=room_counts,
             objective=objective,
-            min_elevators=min_elevators,
-            max_elevators=max_elevators,
             time_limit_s=time_limit_s,
             max_layout_attempts=max_layout_attempts,
         ),
