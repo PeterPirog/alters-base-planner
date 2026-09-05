@@ -62,7 +62,9 @@ def _metrics_caption(result: PlanResult) -> str:
     )
 
 
-def render_svg(result: PlanResult, cell_w: int = 32, cell_h: int = 24) -> str:
+def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
+    """Render SVG using game-like rectangular cells: height = 2 * width."""
+
     base = result.base
     header_h = 38
     width_px = base.width * cell_w
@@ -88,7 +90,7 @@ def render_svg(result: PlanResult, cell_w: int = 32, cell_h: int = 24) -> str:
         )
         label = "C" if utility.kind == "corridor" else "E"
         parts.append(
-            f'<text x="{(utility.x+1)*cell_w}" y="{header_h+utility.y*cell_h+16}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0f172a">{label}</text>'
+            f'<text x="{(utility.x+1)*cell_w}" y="{header_h+utility.y*cell_h+cell_h/2+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0f172a">{label}</text>'
         )
 
     for room in result.rooms:
@@ -122,8 +124,8 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
     base = result.base
     used_module_keys = sorted({room.module_key for room in result.rooms})
     legend_rows = len(used_module_keys) + 4
-    fig_w = max(11.0, base.width * 0.42 + 4.5)
-    fig_h = max(7.0, base.height * 0.42 + 1.8, legend_rows * 0.28)
+    fig_w = max(10.5, base.width * 0.34 + 4.5)
+    fig_h = max(8.0, base.height * 0.68 + 2.2, legend_rows * 0.28)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("black")
@@ -187,7 +189,8 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
 
     ax.set_xlim(0, base.width)
     ax.set_ylim(base.height, 0)
-    ax.set_aspect("equal", adjustable="box")
+    # One y-grid unit is rendered twice as tall as one x-grid unit.
+    ax.set_aspect(2.0, adjustable="box")
     ax.set_xticks(range(base.width + 1))
     ax.set_yticks(range(base.height + 1))
     ax.tick_params(labelsize=6, length=2)
