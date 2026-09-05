@@ -13,6 +13,29 @@ The planner has two layers:
 
 The complete normative model is documented in `docs/OPTIMIZATION_MODEL.md`.
 
+## Editable Base I-IV geometry
+
+The four built-in base shapes are intentionally stored as separate CSV files so they can be corrected without changing Python code:
+
+```text
+src/alters_base_planner/data/base-size1.csv
+src/alters_base_planner/data/base-size2.csv
+src/alters_base_planner/data/base-size3.csv
+src/alters_base_planner/data/base-size4.csv
+```
+
+CSV semantics:
+
+```text
+0 = outside the usable base
+1 = buildable cell
+X = immovable Organics/core cell
+```
+
+The first row contains x coordinates and the first column contains y coordinates. **Width and height are inferred from the CSV itself.** Adding/removing columns or rows therefore changes the tier size automatically.
+
+The current masks remain provisional (`geometry_verified = false`) until calibrated against game-exact screenshots/assets. The CSV files are now the only built-in geometry source of truth; the old duplicated `base_grids.json` definition has been removed.
+
 ## Objective function
 
 Each room type has a gameplay usage weight `w` in `src/alters_base_planner/data/usage_weights.json`.
@@ -53,14 +76,6 @@ one Elevator module      = +1
 room internal traversal  = 0
 ```
 
-Therefore:
-
-```text
-[Airlock][Workshop]                    -> distance 0
-[Airlock][Corridor][Workshop]          -> distance 1
-[Airlock][Corridor][Corridor][Workshop]-> distance 2
-```
-
 A four-module Elevator stack contributes **4 points** if all four Elevator modules are used by the path. Every individual Elevator is `+1`.
 
 Storage rooms have weight `0`, so they are excluded from objective pairs, but they remain normal physical modules subject to all hard placement and connectivity rules.
@@ -71,33 +86,48 @@ The solver enforces or validates:
 
 - exact requested room counts;
 - mandatory story/core rooms automatically included;
-- selected Base I-IV irregular buildable mask;
-- no overlap with the immovable Organics/core obstruction;
+- selected Base I-IV irregular CSV mask;
+- no overlap with `X` cells of the immovable Organics/core obstruction;
 - no room/module overlap;
 - no unsupported module rotation;
 - legal left/right access ports at the documented connection level;
 - Corridors only for horizontal utility connectivity;
-- vertical connectivity only through contiguous Elevator modules at the same x-coordinate;
+- vertical connectivity only between immediately adjacent Elevator modules at the same `x`;
 - one connected access network rooted at the Airlock;
 - terminal/non-transit modules such as Rapidium Ark and Radiation Repulsor cannot be used as walk-through bridges;
 - every installed Corridor/Elevator belongs to the accessible network.
 
-## Base geometry status
+### Continuous vertical Elevator coverage
 
-Current public evidence supports the structural semantics:
+If room access levels span `n` floors, every floor in that span must contain at least one Elevator module. Therefore a multi-floor base spanning `n` levels needs at least `n` Elevator modules over that span.
 
-- circular/wheel-shaped base;
-- row-dependent usable horizontal width;
-- narrower top/bottom rows;
-- external rectangular holding area is temporary rearrangement space, not final usable base space;
-- immovable Organics/core obstruction;
-- Organics capacities 300 / 450 / 700 / 800 for Base I-IV.
+For every adjacent floor pair `(y, y+1)` there must be at least one Elevator x-coordinate shared by both floors:
 
-Exact cell-by-cell masks for Base I-IV are still not authoritative. The current profiles in `src/alters_base_planner/data/base_grids.json` are deliberately marked `verified: false` until calibrated from clean build-mode screenshots or extracted game data.
+```text
+ElevatorX[y] ∩ ElevatorX[y+1] != empty
+```
+
+A straight shaft is valid:
+
+```text
+floor 2: E(x=4)
+floor 1: E(x=4)
+floor 0: E(x=4)
+```
+
+A shifted shaft is also valid if the transfer floor contains both positions:
+
+```text
+floor 2:        E(x=8)
+floor 1: E(x=4) E(x=8)
+floor 0: E(x=4)
+```
+
+This prevents any used/intermediate level from being left without continuous vertical access.
 
 ## Base Mass and journey cost
 
-Every feasible layout also reports Base Mass because journey Organics equal total Base Mass.
+Every feasible layout reports Base Mass because journey Organics equal total Base Mass.
 
 ```text
 room_mass
@@ -189,7 +219,7 @@ For every connected solution the result includes optimization audit data:
 }
 ```
 
-The objective can therefore be audited directly:
+The objective can be audited directly:
 
 ```text
 weighted_distance_score = sum(pairwise_contributions.values())
@@ -199,13 +229,15 @@ weighted_distance_score = sum(pairwise_contributions.values())
 
 The current implementation:
 
-1. enumerates legal room placements with OR-Tools CP-SAT;
-2. rejects overlap/out-of-mask placements;
-3. constructs a legal Corridor/Elevator access network;
-4. computes exact shortest-path module distance for every positive-weight room pair;
-5. evaluates `F` exactly for that candidate;
-6. retains the smallest `F` among examined connected candidates;
-7. persists Base Mass and journey metrics.
+1. reads the selected Base tier from its editable CSV mask;
+2. enumerates legal room placements with OR-Tools CP-SAT;
+3. rejects overlap/out-of-mask placements;
+4. constructs a legal Corridor/Elevator access network;
+5. rejects layouts violating continuous vertical Elevator coverage;
+6. computes exact shortest-path module distance for every positive-weight room pair;
+7. evaluates `F` exactly for that candidate;
+8. retains the smallest `F` among examined connected candidates;
+9. persists Base Mass and journey metrics.
 
 The current placement + post-router architecture does **not yet prove** that the best examined `F` is the global optimum across the entire joint room + Corridor + Elevator search space. Results therefore expose:
 
@@ -260,7 +292,10 @@ src/alters_base_planner/
   cli.py
   config.py
   data/
-    base_grids.json
+    base-size1.csv
+    base-size2.csv
+    base-size3.csv
+    base-size4.csv
     usage_weights.json
   distance.py
   engine.py
