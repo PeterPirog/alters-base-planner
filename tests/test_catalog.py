@@ -1,4 +1,5 @@
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES
+from alters_base_planner.models import ConnectionLevel
 
 
 def test_module_keys_are_unique() -> None:
@@ -15,6 +16,19 @@ def test_known_dimensions() -> None:
     assert (MODULE_BY_KEY["quantum_computer"].width, MODULE_BY_KEY["quantum_computer"].height) == (4, 2)
     assert (MODULE_BY_KEY["radiation_repulsor"].width, MODULE_BY_KEY["radiation_repulsor"].height) == (2, 3)
     assert (MODULE_BY_KEY["kitchen"].width, MODULE_BY_KEY["kitchen"].height) == (5, 1)
+
+
+def test_verified_mass_values_and_special_connectivity() -> None:
+    # Current English wiki table incorrectly repeats the Dormitory's 40-Metal cost as its mass.
+    # Patch 1.4 empirical data, the Russian wiki and in-game player reports agree on mass 8.
+    assert MODULE_BY_KEY["dormitory"].mass == 8
+    assert MODULE_BY_KEY["radiation_repulsor"].mass == 16
+    assert MODULE_BY_KEY["rapidium_ark"].mass == 32
+
+    repulsor = MODULE_BY_KEY["radiation_repulsor"]
+    assert repulsor.connection_level is ConnectionLevel.TOP
+    assert repulsor.transit_allowed is False
+    assert MODULE_BY_KEY["rapidium_ark"].transit_allowed is False
 
 
 def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
