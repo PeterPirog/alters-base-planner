@@ -34,6 +34,8 @@ X = immovable Organics/core cell
 
 The first row contains x coordinates and the first column contains y coordinates. **Width and height are inferred from the CSV itself.** Adding/removing columns or rows therefore changes the tier size automatically.
 
+A step-by-step editing guide is in `docs/BASE_GRID_CSV.md`.
+
 The current masks remain provisional (`geometry_verified = false`) until calibrated against game-exact screenshots/assets. The CSV files are now the only built-in geometry source of truth; the old duplicated `base_grids.json` definition has been removed.
 
 ## Objective function
@@ -285,6 +287,7 @@ config/
   plan.schema.json
 app.py
 docs/
+  BASE_GRID_CSV.md
   OPTIMIZATION_MODEL.md
 src/alters_base_planner/
   base.py
