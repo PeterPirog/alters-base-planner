@@ -27,14 +27,22 @@ def _result_payload(result) -> dict[str, object]:
             "geometry_note": result.base.note,
         },
         "optimization": {
+            "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
+            "distance_rule": {
+                "direct_room_adjacency": 0,
+                "corridor_module": 1,
+                "elevator_module": 1,
+                "room_internal_length": 0,
+            },
+            "weighted_distance_score": result.weighted_distance_score,
+            "normalized_weighted_distance": result.normalized_weighted_distance,
+            "global_objective_optimum_proven": result.global_objective_optimum_proven,
             "elevator_module_count": result.elevator_module_count,
             "elevator_shaft_count": result.elevator_shaft_count,
             "corridor_count": result.corridor_count,
-            "weighted_distance_score": result.weighted_distance_score,
-            "normalized_weighted_distance": result.normalized_weighted_distance,
-            "exact_minimum_elevators_proven": result.exact_minimum_elevators_proven,
             "room_usage_weights": result.room_usage_weights,
             "pairwise_distances": result.pairwise_distances,
+            "pairwise_contributions": result.pairwise_contributions,
         },
         "journey": {
             "room_mass": result.room_mass,
@@ -63,6 +71,7 @@ def _result_payload(result) -> dict[str, object]:
             {
                 "kind": utility.kind,
                 "mass": 2,
+                "distance_cost": 1,
                 "x": utility.x,
                 "y": utility.y,
                 "width": utility.width,
