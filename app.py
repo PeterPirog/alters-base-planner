@@ -14,11 +14,11 @@ from alters_base_planner.render import render_svg
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
 st.title("The Alters Base Planner")
-st.caption("JSON-configured OR-Tools CP-SAT planner with automatic corridors and elevators")
+st.caption("JSON-configured OR-Tools planner with automatic corridors, elevators and travel scoring")
 
 st.markdown(
     "Room counts are configured **only in JSON for now**. Edit `config/plan.json` or upload "
-    "a compatible file below. Corridor and Elevator counts are never configured by the player."
+    "a compatible file below. Corridor and Elevator counts are solver-controlled."
 )
 
 uploaded = st.file_uploader("Plan configuration JSON", type=["json"])
@@ -39,7 +39,7 @@ if st.button("Optimize layout", type="primary"):
     try:
         loaded = load_plan_config(config_path)
         base = builtin_base(loaded.request.tier)
-        with st.spinner("Solving room packing, connectivity, utility mass and journey cost..."):
+        with st.spinner("Solving room packing, access network, travel score and journey mass..."):
             result = solve_plan(loaded.request, base)
     except (ValueError, json.JSONDecodeError, OSError) as exc:
         st.error(f"Invalid configuration: {exc}")
@@ -60,6 +60,24 @@ if st.button("Optimize layout", type="primary"):
     st.write(result.message)
 
     if result.rooms:
+        o1, o2, o3, o4 = st.columns(4)
+        o1.metric("Elevator modules", result.elevator_module_count)
+        o2.metric("Elevator shafts", result.elevator_shaft_count)
+        o3.metric("Corridors", result.corridor_count)
+        o4.metric(
+            "Weighted travel",
+            f"{result.normalized_weighted_distance:.3f}"
+            if result.normalized_weighted_distance is not None
+            else "n/a",
+        )
+
+        if not result.exact_minimum_elevators_proven:
+            st.info(
+                "Current candidate ranking is lexicographic (Elevators → weighted travel → mass), "
+                "but the post-router does not yet prove the global minimum Elevator count. "
+                "The exact joint CP-SAT/flow contract is documented in docs/OPTIMIZATION_MODEL.md."
+            )
+
         j1, j2, j3, j4 = st.columns(4)
         j1.metric("Room mass", result.room_mass)
         j2.metric("Corridor/elevator mass", result.utility_mass)
@@ -84,6 +102,16 @@ if st.button("Optimize layout", type="primary"):
                     "geometry_verified": result.base.verified,
                     "geometry_note": result.base.note,
                 },
+                "optimization": {
+                    "elevator_module_count": result.elevator_module_count,
+                    "elevator_shaft_count": result.elevator_shaft_count,
+                    "corridor_count": result.corridor_count,
+                    "weighted_distance_score": result.weighted_distance_score,
+                    "normalized_weighted_distance": result.normalized_weighted_distance,
+                    "exact_minimum_elevators_proven": result.exact_minimum_elevators_proven,
+                    "room_usage_weights": result.room_usage_weights,
+                    "pairwise_distances": result.pairwise_distances,
+                },
                 "journey": {
                     "room_mass": result.room_mass,
                     "utility_mass": result.utility_mass,
@@ -99,6 +127,7 @@ if st.button("Optimize layout", type="primary"):
                         "instance_id": r.instance_id,
                         "module_key": r.module_key,
                         "mass": MODULE_BY_KEY[r.module_key].mass,
+                        "usage_weight": MODULE_BY_KEY[r.module_key].visit_weight,
                         "x": r.x,
                         "y": r.y,
                         "width": r.width,
@@ -121,6 +150,6 @@ if st.button("Optimize layout", type="primary"):
         )
 
 st.info(
-    "Geometry definitions live in `src/alters_base_planner/data/base_grids.json`. "
-    "This intentionally separates game-grid calibration from the optimization engine."
+    "Geometry definitions live in `src/alters_base_planner/data/base_grids.json`; gameplay "
+    "usage weights live in `src/alters_base_planner/data/usage_weights.json`."
 )
