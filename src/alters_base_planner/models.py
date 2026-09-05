@@ -28,7 +28,7 @@ class ModuleSpec:
     module_type: ModuleType
     mandatory: bool = False
     configurable: bool = True
-    visit_weight: int = 1
+    visit_weight: float = 0.1
     connection_level: ConnectionLevel = ConnectionLevel.BOTTOM
     transit_allowed: bool = True
 
@@ -91,7 +91,9 @@ class BaseGeometry:
 class PlanRequest:
     tier: int
     room_counts: dict[str, int]
-    objective: str = "balanced"
+    objective: str = "lexicographic_access"
+    min_elevators: int = 3
+    max_elevators: int | None = None
     time_limit_s: float = 15.0
     max_layout_attempts: int = 20
 
@@ -112,6 +114,11 @@ class PlanResult:
     organics_capacity_margin: int = 0
     travel_feasible_at_full_tank: bool = False
     mass_breakdown: dict[str, int] = field(default_factory=dict)
+    elevator_module_count: int = 0
+    elevator_shaft_count: int = 0
+    corridor_count: int = 0
+    weighted_distance_score: float | None = None
+    normalized_weighted_distance: float | None = None
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:
