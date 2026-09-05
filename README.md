@@ -36,9 +36,7 @@ Width and height are inferred from the CSV itself. The current masks remain prov
 
 ## Objective function
 
-Each room type has a gameplay traffic weight `w` in `src/alters_base_planner/data/usage_weights.json`.
-
-Examples:
+Each room type has an accepted default gameplay traffic weight `w` in `src/alters_base_planner/data/usage_weights.json`.
 
 | Module | Weight |
 |---|---:|
@@ -46,11 +44,24 @@ Examples:
 | Workshop | 0.90 |
 | Kitchen | 0.80 |
 | Dormitory | 0.80 |
+| Captain's Cabin | 0.70 |
 | Research Lab | 0.65 |
-| Greenhouse / Refinery | 0.55 |
-| The Womb | 0.10 |
+| Social Room | 0.60 |
+| Greenhouse | 0.55 |
+| Refinery | 0.55 |
+| Command Center | 0.35 |
+| Machinery | 0.35 |
+| Communication Room | 0.25 |
+| Infirmary | 0.25 |
+| Contemplation Room | 0.25 |
+| Personal Cabin | 0.25 |
+| Gym | 0.20 |
+| Gamer's Den | 0.20 |
+| Park with Bench | 0.15 |
+| Materializer | 0.10 |
 | Quantum Computer | 0.10 |
-| Storage | 0.00 |
+| The Womb | 0.10 |
+| Recycler / passive modules / Storage | 0.00 |
 
 For every unordered pair of rooms with positive weight:
 
@@ -135,6 +146,24 @@ Mass is not part of primary `F`; for equal `F`, lower mass may be used as a tie-
 
 Room size/mass evidence and known public-source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
 
+## Example graphical result
+
+The planner generates a color-coded diagram with the Base Tier, optimization score, average distances, module legend and journey mass.
+
+![Example optimized base layout](docs/example-layout.svg)
+
+The example above is illustrative; the actual result is generated from the selected `base-sizeN.csv` mask and `config/plan.json`.
+
+PNG/SVG semantics:
+
+- **black** — unavailable cells, outside the base and the fixed core;
+- **white** — empty buildable cells;
+- distinct colors — room types;
+- grey — Corridor;
+- magenta — Elevator.
+
+The legend shows each room's **size, mass and usage weight**. The chart title reports Base Tier, `F`, arithmetic and weighted mean distance, room mass, utility mass, **TOTAL BASE MASS**, and journey Organics versus tank capacity.
+
 ## Player configuration
 
 Edit `config/plan.json`:
@@ -169,32 +198,70 @@ Edit `config/plan.json`:
 
 Mandatory rooms are added automatically. `corridor` and `elevator` are not valid player configuration keys.
 
-## Graphical result
+## Run from a fresh clone
 
-Every feasible CLI result writes `layout.png` and `layout.svg`.
+Python **3.11 or newer** is required.
 
-The PNG uses:
+### Windows PowerShell
 
-- **black** — unavailable cells, outside the base and the fixed core;
-- **white** — empty buildable cells;
-- distinct colors — room types;
-- grey — Corridor;
-- magenta — Elevator.
+Because this repository is private, clone it while authenticated to GitHub.
 
-The legend shows each room's **size, mass and usage weight**. The chart title reports:
+```powershell
+git clone https://github.com/PeterPirog/alters-base-planner.git
+cd alters-base-planner
 
-```text
-Base Tier
-F
-average pair distance
-weighted average distance
-room mass
-utility mass
-TOTAL BASE MASS
-journey Organics / tank capacity
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-The Streamlit app displays the same PNG and provides a download button.
+Edit `config/plan.json`, then run the calculation:
+
+```powershell
+python -m alters_base_planner.cli config/plan.json
+```
+
+Equivalent installed CLI command:
+
+```powershell
+alters-base-planner config/plan.json
+```
+
+Successful calculation writes the paths configured in `config/plan.json`, normally:
+
+```text
+layout.png   # graphical plan
+layout.svg   # vector graphical plan
+layout.json  # full machine-readable result and audit metrics
+```
+
+Open the generated PNG directly from PowerShell:
+
+```powershell
+Start-Process .\layout.png
+```
+
+### Linux / macOS
+
+```bash
+git clone https://github.com/PeterPirog/alters-base-planner.git
+cd alters-base-planner
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+python -m alters_base_planner.cli config/plan.json
+```
+
+## Streamlit UI
+
+The JSON configuration remains the source of room counts. The optional Streamlit interface runs the same solver and displays/downloads the generated diagram:
+
+```bash
+python -m streamlit run app.py
+```
 
 ## Result JSON
 
@@ -218,32 +285,6 @@ The current placement + post-router architecture does **not yet prove** global o
 
 ```text
 global_objective_optimum_proven = false
-```
-
-## Install
-
-```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-# source .venv/bin/activate
-
-pip install -e '.[dev]'
-```
-
-## CLI
-
-```bash
-alters-base-planner
-# or
-alters-base-planner path/to/my-plan.json
-```
-
-## Streamlit
-
-```bash
-streamlit run app.py
 ```
 
 ## Development
