@@ -119,6 +119,9 @@ class PlanResult:
     corridor_count: int = 0
     weighted_distance_score: float | None = None
     normalized_weighted_distance: float | None = None
+    pairwise_distances: dict[str, int] = field(default_factory=dict)
+    room_usage_weights: dict[str, float] = field(default_factory=dict)
+    exact_minimum_elevators_proven: bool = False
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:
