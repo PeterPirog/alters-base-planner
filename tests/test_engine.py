@@ -1,6 +1,11 @@
 from alters_base_planner.base import builtin_base
-from alters_base_planner.engine import _connection_row, _mass_metrics, solve_plan
-from alters_base_planner.models import Placement, PlanRequest, UtilityPlacement
+from alters_base_planner.engine import (
+    _connection_row,
+    _mass_metrics,
+    _route_utilities,
+    solve_plan,
+)
+from alters_base_planner.models import BaseGeometry, Placement, PlanRequest, UtilityPlacement
 
 
 def test_base_tiers_grow_but_exact_masks_remain_provisional() -> None:
@@ -22,6 +27,28 @@ def test_special_connection_rows() -> None:
     repulsor = Placement("repulsor-1", "radiation_repulsor", 4, 5, 2, 3)
     assert _connection_row(regular) == 6
     assert _connection_row(repulsor) == 5
+
+
+def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
+    allowed = frozenset((x, y) for y in range(2) for x in range(12))
+    base = BaseGeometry(
+        tier=1,
+        width=12,
+        height=2,
+        allowed_cells=allowed,
+        blocked_cells=frozenset(),
+        organics_capacity=300,
+        source="unit-test",
+        verified=True,
+    )
+    rooms = [
+        Placement("airlock-1", "airlock", 0, 1, 4, 1),
+        Placement("ark-1", "rapidium_ark", 4, 0, 4, 2),
+        Placement("workshop-1", "workshop", 8, 1, 4, 1),
+    ]
+    # Everything touches geometrically, but the Ark is sealed/non-transit and fills
+    # both rows, so there is no alternative corridor/elevator route around it.
+    assert _route_utilities(base, rooms) is None
 
 
 def test_mass_metrics_match_journey_organics_rule() -> None:
