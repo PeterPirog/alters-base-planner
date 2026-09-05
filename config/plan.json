@@ -30,6 +30,7 @@
   },
   "output": {
     "svg": "layout.svg",
+    "png": "layout.png",
     "json": "layout.json"
   }
 }
