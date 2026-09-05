@@ -15,7 +15,7 @@ Built-in grid extents and row spans remain explicitly marked `verified: false` i
 - Base tier in JSON: I-IV.
 - Room counts in JSON; no room-count UI is required.
 - JSON Schema for editor validation/autocomplete.
-- Mandatory story/core modules included automatically.
+- Mandatory story/core modules included automatically, including Kitchen and The Womb.
 - Corridor and Elevator counts are solver-controlled only.
 - OR-Tools CP-SAT placement on an irregular buildable-cell mask.
 - Immovable Organics Tank excluded from legal placements.
@@ -65,7 +65,6 @@ Example:
     "workshop": 1,
     "research_lab": 1,
     "dormitory": 1,
-    "kitchen": 1,
     "infirmary": 1,
     "greenhouse": 1,
     "refinery": 1,
