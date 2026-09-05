@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from ortools.sat.python import cp_model
 
 from .base import builtin_base
-from .catalog import MODULES, MODULE_BY_KEY
+from .catalog import MODULE_BY_KEY, MODULES
 from .models import (
     BaseGeometry,
     ModuleInstance,
