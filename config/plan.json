@@ -1,0 +1,36 @@
+{
+  "$schema": "./plan.schema.json",
+  "base_tier": 2,
+  "rooms": {
+    "workshop": 1,
+    "research_lab": 1,
+    "dormitory": 1,
+    "kitchen": 1,
+    "infirmary": 1,
+    "greenhouse": 1,
+    "refinery": 1,
+    "small_storage": 2,
+    "medium_storage": 0,
+    "large_storage": 0,
+    "social_room": 1,
+    "gym": 0,
+    "contemplation_room": 0,
+    "personal_cabin": 0,
+    "park_with_bench": 0,
+    "recycler": 1,
+    "radiation_repulsor": 0,
+    "rapidium_ark": 0,
+    "ark_sarcophagus": 0,
+    "materializer": 0,
+    "gamers_den": 0
+  },
+  "solver": {
+    "objective": "balanced",
+    "time_limit_s": 15,
+    "max_layout_attempts": 30
+  },
+  "output": {
+    "svg": "layout.svg",
+    "json": "layout.json"
+  }
+}
