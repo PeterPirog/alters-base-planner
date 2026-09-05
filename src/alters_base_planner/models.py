@@ -30,6 +30,7 @@ class ModuleSpec:
     configurable: bool = True
     visit_weight: int = 1
     connection_level: ConnectionLevel = ConnectionLevel.BOTTOM
+    transit_allowed: bool = True
 
 
 @dataclass(frozen=True, slots=True)
