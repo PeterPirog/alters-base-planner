@@ -27,10 +27,16 @@ class _Candidate:
     x: int
     y: int
     cells: frozenset[tuple[int, int]]
-    cost: int
+    search_cost: int
 
 
 def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
+    """Enumerate all legal room positions.
+
+    search_cost is only a CP-SAT candidate-ordering heuristic. It is NOT the
+    planner objective; final layouts are ranked exclusively by weighted pair distance.
+    """
+
     spec = instance.spec
     cx = (base.width - 1) / 2
     cy = (base.height - 1) / 2
@@ -47,8 +53,8 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             px = x + (spec.width - 1) / 2
             py = y + spec.height - 1
             distance = abs(px - cx) + 0.35 * abs(py - cy)
-            visit_cost = int(100 * spec.visit_weight * distance)
-            result.append(_Candidate(x, y, cells, visit_cost))
+            search_cost = int(100 * max(spec.visit_weight, 0.05) * distance)
+            result.append(_Candidate(x, y, cells, search_cost))
     return result
 
 
@@ -74,11 +80,7 @@ def _room_port_components(
     base: BaseGeometry,
     occupied: set[tuple[int, int]],
 ) -> tuple[dict[int, set[int]], dict[int, set[tuple[int, int]]], int] | None:
-    """Build connectivity components using left/right room access ports.
-
-    Walk-through rooms connect their two ports internally. Terminal-only modules such as
-    the Rapidium Ark do not, so they cannot become an accidental bridge between rooms.
-    """
+    """Build connectivity components from legal left/right access ports."""
 
     port_count = len(rooms) * 2
     parent = list(range(port_count))
@@ -175,6 +177,8 @@ def _shortest_path(
 def _route_utilities(
     base: BaseGeometry, rooms: list[Placement]
 ) -> list[UtilityPlacement] | None:
+    """Create a legal connected utility network for one room packing."""
+
     occupied: set[tuple[int, int]] = set().union(*(r.cells for r in rooms)) if rooms else set()
     valid_anchors: set[tuple[int, int]] = set()
     for y in range(base.height):
@@ -259,23 +263,28 @@ def _mass_metrics(
     return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
 
-def _candidate_rank(result: PlanResult) -> tuple[float, float, float, float]:
+def _candidate_rank(result: PlanResult) -> tuple[float, int, int, int]:
+    """User objective first; tie-break only among equal objective values."""
+
     return (
-        float(result.elevator_module_count),
         float(result.weighted_distance_score or 0.0),
-        float(result.total_mass),
-        float(result.objective_value or 0.0),
+        result.total_mass,
+        result.elevator_module_count,
+        result.corridor_count,
     )
 
 
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
-    """Generate connected candidate layouts and rank them lexicographically.
+    """Find hard-feasible candidates and minimize the user-defined objective.
 
-    The current router is still a heuristic post-router. It now ranks examined
-    connected layouts in the requested order (Elevators -> weighted travel -> mass),
-    but it deliberately does not claim proof that the minimum Elevator count is
-    globally optimal. The exact joint placement/flow formulation is specified in
-    docs/OPTIMIZATION_MODEL.md.
+    Objective:
+        sum_{i<j} weight(i) * weight(j) * distance(i,j)
+
+    Distance counts only communication modules between rooms:
+    directly adjacent rooms = 0; each Corridor = +1; each Elevator module = +1.
+    Room dimensions do not add distance. The current placement + post-router search
+    evaluates this objective exactly for every candidate it produces, but does not yet
+    prove the global optimum across the full joint placement/routing search space.
     """
 
     base = base or builtin_base(request.tier)
@@ -285,7 +294,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
     cell_vars: dict[tuple[int, int], list[cp_model.IntVar]] = {}
 
-    objective_terms = []
+    search_terms = []
     for inst in instances:
         cand = _candidate_positions(inst, base)
         if not cand:
@@ -303,12 +312,14 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         for var, pos in zip(variables, cand, strict=True):
             for cell in pos.cells:
                 cell_vars.setdefault(cell, []).append(var)
-            objective_terms.append(pos.cost * var)
+            search_terms.append(pos.search_cost * var)
 
     for variables in cell_vars.values():
         model.add(sum(variables) <= 1)
 
-    model.minimize(sum(objective_terms))
+    # Search-order heuristic only. The returned objective is calculated below from
+    # the final movement graph and never from this CP-SAT helper objective.
+    model.minimize(sum(search_terms))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max(1.0, request.time_limit_s)
     solver.parameters.num_search_workers = 8
@@ -354,10 +365,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             except ValueError:
                 distance_metrics = None
 
-            if distance_metrics is not None and (
-                request.max_elevators is None
-                or distance_metrics.elevator_module_count <= request.max_elevators
-            ):
+            if distance_metrics is not None:
                 connected_candidates += 1
                 room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
                     base, rooms, utilities
@@ -366,19 +374,19 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     room.instance_id: MODULE_BY_KEY[room.module_key].visit_weight for room in rooms
                 }
                 message = (
-                    f"Connected candidate found. Elevator modules "
-                    f"{distance_metrics.elevator_module_count}; weighted travel "
-                    f"{distance_metrics.normalized_weighted_distance:.3f}; base mass {total_mass}; "
-                    f"journey requires {total_mass} Organics; tank capacity "
-                    f"{base.organics_capacity}. Travel at full tank: "
-                    f"{'YES' if travel_ok else 'NO'}."
+                    f"Hard-feasible connected candidate. Objective "
+                    f"{distance_metrics.weighted_score:.4f}; Elevator modules "
+                    f"{distance_metrics.elevator_module_count}; Corridors "
+                    f"{distance_metrics.corridor_count}; Base Mass {total_mass}; journey requires "
+                    f"{total_mass} Organics; tank capacity {base.organics_capacity}. "
+                    f"Travel at full tank: {'YES' if travel_ok else 'NO'}."
                 )
                 candidate_result = PlanResult(
                     status="FEASIBLE",
                     base=base,
                     rooms=rooms,
                     utilities=utilities,
-                    objective_value=solver.objective_value,
+                    objective_value=distance_metrics.weighted_score,
                     attempts=attempt,
                     message=message,
                     room_mass=room_mass,
@@ -394,8 +402,9 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     weighted_distance_score=distance_metrics.weighted_score,
                     normalized_weighted_distance=distance_metrics.normalized_weighted_distance,
                     pairwise_distances=distance_metrics.pairwise_distances,
+                    pairwise_contributions=distance_metrics.pairwise_contributions,
                     room_usage_weights=room_usage_weights,
-                    exact_minimum_elevators_proven=False,
+                    global_objective_optimum_proven=False,
                 )
                 if best_result is None or _candidate_rank(candidate_result) < _candidate_rank(
                     best_result
@@ -406,10 +415,9 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
 
     if best_result is not None:
         best_result.message += (
-            f" Best of {connected_candidates} connected candidates examined. "
-            "Ranking order: Elevator modules, weighted travel distance, Base Mass, "
-            "placement score. Exact global minimum Elevator count is NOT yet proven by "
-            "the heuristic post-router."
+            f" Best objective among {connected_candidates} connected candidates examined. "
+            "Mass is used only as a tie-breaker when the objective is equal. Global optimality "
+            "is not yet proven until placement and routing are integrated in one exact model."
         )
         return best_result
 
