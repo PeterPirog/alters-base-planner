@@ -50,21 +50,30 @@ if st.button("Optimize layout", type="primary"):
     st.metric("Attempts", result.attempts)
     st.write(result.message)
     if result.rooms:
-        room_mass = sum(r.spec.mass if hasattr(r, "spec") else 0 for r in [])
-        st.components.v1.html(render_svg(result), height=result.base.height * 26 + 20, scrolling=False)
-        st.download_button("Download layout SVG", render_svg(result), "alters-layout.svg", "image/svg+xml")
-        st.json({
-            "tier": result.base.tier,
-            "geometry_source": result.base.source,
-            "rooms": [r.__dict__ if hasattr(r, "__dict__") else {
-                "instance_id": r.instance_id, "module_key": r.module_key, "x": r.x, "y": r.y,
-                "width": r.width, "height": r.height
-            } for r in result.rooms],
-            "utilities": [
-                {"kind": u.kind, "x": u.x, "y": u.y, "width": u.width, "height": u.height}
-                for u in result.utilities
-            ],
-        })
+        svg = render_svg(result)
+        st.components.v1.html(svg, height=result.base.height * 26 + 20, scrolling=False)
+        st.download_button("Download layout SVG", svg, "alters-layout.svg", "image/svg+xml")
+        st.json(
+            {
+                "tier": result.base.tier,
+                "geometry_source": result.base.source,
+                "rooms": [
+                    {
+                        "instance_id": r.instance_id,
+                        "module_key": r.module_key,
+                        "x": r.x,
+                        "y": r.y,
+                        "width": r.width,
+                        "height": r.height,
+                    }
+                    for r in result.rooms
+                ],
+                "utilities": [
+                    {"kind": u.kind, "x": u.x, "y": u.y, "width": u.width, "height": u.height}
+                    for u in result.utilities
+                ],
+            }
+        )
 
 st.info(
     "Corridors and elevators are never configured by the player. They are added automatically by the routing stage. "
