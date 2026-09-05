@@ -5,8 +5,7 @@ import math
 from dataclasses import dataclass
 
 from .catalog import MODULE_BY_KEY
-from .engine import _connection_row
-from .models import Placement, UtilityPlacement
+from .models import ConnectionLevel, Placement, UtilityPlacement
 
 Cell = tuple[int, int]
 
@@ -19,6 +18,13 @@ class DistanceMetrics:
     elevator_module_count: int
     elevator_shaft_count: int
     corridor_count: int
+
+
+def _connection_row(room: Placement) -> int:
+    spec = MODULE_BY_KEY[room.module_key]
+    if spec.connection_level is ConnectionLevel.TOP:
+        return room.y
+    return room.y + room.height - 1
 
 
 def _add_edge(graph: dict[Cell, dict[Cell, int]], a: Cell, b: Cell, cost: int) -> None:
