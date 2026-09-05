@@ -24,7 +24,9 @@
     "gamers_den": 0
   },
   "solver": {
-    "objective": "balanced",
+    "objective": "lexicographic_access",
+    "min_elevators": 3,
+    "max_elevators": null,
     "time_limit_s": 15,
     "max_layout_attempts": 30
   },
