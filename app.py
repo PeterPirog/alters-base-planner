@@ -10,7 +10,7 @@ from alters_base_planner.base import builtin_base
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.config import load_plan_config
 from alters_base_planner.engine import solve_plan
-from alters_base_planner.render import render_svg
+from alters_base_planner.render import average_pair_distance, render_png, render_svg
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
 st.title("The Alters Base Planner")
@@ -61,14 +61,19 @@ if st.button("Optimize layout", type="primary"):
     if result.rooms:
         o1, o2, o3, o4 = st.columns(4)
         o1.metric(
-            "Objective",
+            "Objective F",
             f"{result.weighted_distance_score:.4f}"
             if result.weighted_distance_score is not None
             else "n/a",
         )
-        o2.metric("Elevator modules", result.elevator_module_count)
-        o3.metric("Elevator shafts", result.elevator_shaft_count)
-        o4.metric("Corridors", result.corridor_count)
+        o2.metric("Average pair distance", f"{average_pair_distance(result):.2f}")
+        o3.metric(
+            "Weighted average distance",
+            f"{result.normalized_weighted_distance:.2f}"
+            if result.normalized_weighted_distance is not None
+            else "n/a",
+        )
+        o4.metric("Elevators / Corridors", f"{result.elevator_module_count} / {result.corridor_count}")
 
         st.caption(
             "Distance rule: adjacent rooms = 0; each Corridor = +1; each Elevator module = +1; "
@@ -95,8 +100,14 @@ if st.button("Optimize layout", type="primary"):
             delta="travel possible" if result.travel_feasible_at_full_tank else "too heavy",
         )
 
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as png_tmp:
+            png_path = Path(png_tmp.name)
+        render_png(result, png_path)
+        png_bytes = png_path.read_bytes()
+        st.image(png_bytes, caption="Color-coded optimized base layout", use_container_width=True)
+        st.download_button("Download layout PNG", png_bytes, "alters-layout.png", "image/png")
+
         svg = render_svg(result)
-        st.components.v1.html(svg, height=result.base.height * 26 + 20, scrolling=False)
         st.download_button("Download layout SVG", svg, "alters-layout.svg", "image/svg+xml")
         st.json(
             {
@@ -112,7 +123,8 @@ if st.button("Optimize layout", type="primary"):
                 "optimization": {
                     "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
                     "weighted_distance_score": result.weighted_distance_score,
-                    "normalized_weighted_distance": result.normalized_weighted_distance,
+                    "average_pair_distance": average_pair_distance(result),
+                    "weighted_average_pair_distance": result.normalized_weighted_distance,
                     "global_objective_optimum_proven": result.global_objective_optimum_proven,
                     "elevator_module_count": result.elevator_module_count,
                     "elevator_shaft_count": result.elevator_shaft_count,
