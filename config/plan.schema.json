@@ -37,7 +37,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "objective": {"type": "string", "enum": ["balanced", "compact", "minimum_travel"]},
+        "objective": {"const": "lexicographic_access"},
+        "min_elevators": {"type": "integer", "minimum": 0, "default": 3},
+        "max_elevators": {"type": ["integer", "null"], "minimum": 0},
         "time_limit_s": {"type": "number", "exclusiveMinimum": 0},
         "max_layout_attempts": {"type": "integer", "minimum": 1}
       }
