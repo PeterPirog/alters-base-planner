@@ -28,6 +28,70 @@ def _connection_row(room: Placement) -> int:
     return room.y + room.height - 1
 
 
+def _validate_vertical_elevator_coverage(
+    rooms: list[Placement], utilities: list[UtilityPlacement]
+) -> None:
+    """Enforce continuous elevator coverage over every used floor in the base.
+
+    If room access points occupy more than one floor, every floor from the lowest
+    used access level to the highest used access level must contain at least one
+    Elevator module. Therefore a span of ``n`` floors requires at least ``n``
+    Elevator modules.
+
+    Elevator shafts may shift horizontally between floors, but for every adjacent
+    pair of floors there must be at least one shared Elevator x-coordinate. A shift
+    is therefore legal only through a transfer floor that contains both the old and
+    the new shaft positions, allowing a horizontal connection between them.
+
+    Example of a legal shifted vertical network:
+
+        floor 2:        E(x=8)
+        floor 1: E(x=4) E(x=8)
+        floor 0: E(x=4)
+
+    because floors 0/1 share x=4 and floors 1/2 share x=8.
+    """
+
+    if not rooms:
+        return
+
+    used_levels = sorted({_connection_row(room) for room in rooms})
+    if len(used_levels) <= 1:
+        return
+
+    min_level = min(used_levels)
+    max_level = max(used_levels)
+    required_levels = list(range(min_level, max_level + 1))
+
+    elevator_x_by_level: dict[int, set[int]] = {}
+    for utility in utilities:
+        if utility.kind == "elevator":
+            elevator_x_by_level.setdefault(utility.y, set()).add(utility.x)
+
+    elevator_count = sum(len(elevator_x_by_level.get(y, set())) for y in required_levels)
+    if elevator_count < len(required_levels):
+        raise ValueError(
+            "Vertical hard constraint violated: a base spanning "
+            f"{len(required_levels)} floors requires at least {len(required_levels)} "
+            "Elevator modules across that floor span"
+        )
+
+    missing_levels = [y for y in required_levels if not elevator_x_by_level.get(y)]
+    if missing_levels:
+        raise ValueError(
+            "Vertical hard constraint violated: no Elevator stop on floor(s) "
+            + ", ".join(map(str, missing_levels))
+        )
+
+    for lower, upper in zip(required_levels, required_levels[1:], strict=True):
+        shared_x = elevator_x_by_level[lower] & elevator_x_by_level[upper]
+        if not shared_x:
+            raise ValueError(
+                "Vertical hard constraint violated: adjacent floors "
+                f"{lower} and {upper} do not share an Elevator at the same x-coordinate"
+            )
+
+
 def _directly_adjacent(a: Placement, a_side: int, b: Placement, b_side: int) -> bool:
     if _connection_row(a) != _connection_row(b):
         return False
@@ -211,6 +275,8 @@ def _dijkstra(
 def evaluate_distances(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> DistanceMetrics:
+    # Vertical continuity is a hard feasibility rule, not a soft objective.
+    _validate_vertical_elevator_coverage(rooms, utilities)
     graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
 
     # Objective pairs contain only rooms with positive usage weight. Storage and
