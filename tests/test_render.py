@@ -39,7 +39,9 @@ def test_average_pair_distance() -> None:
 
 def test_svg_contains_metrics_and_room_labels() -> None:
     svg = render_svg(_sample_result())
-    assert "avg distance=1.00" in svg
+    assert "Tier 1" in svg
+    assert "avg=1.00" in svg
+    assert "total mass=14" in svg
     assert "Airlock" in svg
     assert "Workshop" in svg
 
