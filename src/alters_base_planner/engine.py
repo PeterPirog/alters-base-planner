@@ -7,6 +7,7 @@ from ortools.sat.python import cp_model
 
 from .base import builtin_base
 from .catalog import MODULE_BY_KEY, MODULES
+from .distance import evaluate_distances
 from .models import (
     BaseGeometry,
     ConnectionLevel,
@@ -46,10 +47,8 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             px = x + (spec.width - 1) / 2
             py = y + spec.height - 1
             distance = abs(px - cx) + 0.35 * abs(py - cy)
-            edge = min(x, base.width - (x + spec.width))
             visit_cost = int(100 * spec.visit_weight * distance)
-            storage_bias = int(max(0, edge) * 20) if spec.visit_weight == 0 else 0
-            result.append(_Candidate(x, y, cells, visit_cost + storage_bias))
+            result.append(_Candidate(x, y, cells, visit_cost))
     return result
 
 
@@ -260,7 +259,25 @@ def _mass_metrics(
     return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
 
+def _candidate_rank(result: PlanResult) -> tuple[float, float, float, float]:
+    return (
+        float(result.elevator_module_count),
+        float(result.weighted_distance_score or 0.0),
+        float(result.total_mass),
+        float(result.objective_value or 0.0),
+    )
+
+
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
+    """Generate connected candidate layouts and rank them lexicographically.
+
+    The current router is still a heuristic post-router. It now ranks examined
+    connected layouts in the requested order (Elevators -> weighted travel -> mass),
+    but it deliberately does not claim proof that the minimum Elevator count is
+    globally optimal. The exact joint placement/flow formulation is specified in
+    docs/OPTIMIZATION_MODEL.md.
+    """
+
     base = base or builtin_base(request.tier)
     instances = expand_instances(MODULES, request.room_counts)
     model = cp_model.CpModel()
@@ -332,48 +349,67 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
 
         utilities = _route_utilities(base, rooms)
         if utilities is not None:
-            connected_candidates += 1
-            room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
-                base, rooms, utilities
-            )
-            message = (
-                f"Connected layout found. Base mass {total_mass}; journey requires "
-                f"{total_mass} Organics; tank capacity {base.organics_capacity}. "
-                f"Travel at full tank: {'YES' if travel_ok else 'NO'}."
-            )
-            candidate_result = PlanResult(
-                status="FEASIBLE",
-                base=base,
-                rooms=rooms,
-                utilities=utilities,
-                objective_value=solver.objective_value,
-                attempts=attempt,
-                message=message,
-                room_mass=room_mass,
-                utility_mass=utility_mass,
-                total_mass=total_mass,
-                organics_required_for_journey=total_mass,
-                organics_capacity_margin=margin,
-                travel_feasible_at_full_tank=travel_ok,
-                mass_breakdown=breakdown,
-            )
-            if best_result is None or (
-                candidate_result.total_mass,
-                candidate_result.objective_value or 0,
-            ) < (
-                best_result.total_mass,
-                best_result.objective_value or 0,
+            try:
+                distance_metrics = evaluate_distances(rooms, utilities)
+            except ValueError:
+                distance_metrics = None
+
+            if distance_metrics is not None and (
+                request.max_elevators is None
+                or distance_metrics.elevator_module_count <= request.max_elevators
             ):
-                best_result = candidate_result
-            if utility_mass == 0:
-                return candidate_result
+                connected_candidates += 1
+                room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
+                    base, rooms, utilities
+                )
+                room_usage_weights = {
+                    room.instance_id: MODULE_BY_KEY[room.module_key].visit_weight for room in rooms
+                }
+                message = (
+                    f"Connected candidate found. Elevator modules "
+                    f"{distance_metrics.elevator_module_count}; weighted travel "
+                    f"{distance_metrics.normalized_weighted_distance:.3f}; base mass {total_mass}; "
+                    f"journey requires {total_mass} Organics; tank capacity "
+                    f"{base.organics_capacity}. Travel at full tank: "
+                    f"{'YES' if travel_ok else 'NO'}."
+                )
+                candidate_result = PlanResult(
+                    status="FEASIBLE",
+                    base=base,
+                    rooms=rooms,
+                    utilities=utilities,
+                    objective_value=solver.objective_value,
+                    attempts=attempt,
+                    message=message,
+                    room_mass=room_mass,
+                    utility_mass=utility_mass,
+                    total_mass=total_mass,
+                    organics_required_for_journey=total_mass,
+                    organics_capacity_margin=margin,
+                    travel_feasible_at_full_tank=travel_ok,
+                    mass_breakdown=breakdown,
+                    elevator_module_count=distance_metrics.elevator_module_count,
+                    elevator_shaft_count=distance_metrics.elevator_shaft_count,
+                    corridor_count=distance_metrics.corridor_count,
+                    weighted_distance_score=distance_metrics.weighted_score,
+                    normalized_weighted_distance=distance_metrics.normalized_weighted_distance,
+                    pairwise_distances=distance_metrics.pairwise_distances,
+                    room_usage_weights=room_usage_weights,
+                    exact_minimum_elevators_proven=False,
+                )
+                if best_result is None or _candidate_rank(candidate_result) < _candidate_rank(
+                    best_result
+                ):
+                    best_result = candidate_result
 
         model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
 
     if best_result is not None:
         best_result.message += (
-            f" Best of {connected_candidates} connected layouts examined; automatic utility mass "
-            "was minimized among those candidates."
+            f" Best of {connected_candidates} connected candidates examined. "
+            "Ranking order: Elevator modules, weighted travel distance, Base Mass, "
+            "placement score. Exact global minimum Elevator count is NOT yet proven by "
+            "the heuristic post-router."
         )
         return best_result
 
