@@ -2,193 +2,128 @@
 
 This document is the normative solver contract for `alters-base-planner`.
 
-The planner is intentionally **lexicographic**. Feasibility and the minimum number of Elevator modules are never traded away for shorter walking distance.
+The optimization model has two layers only:
 
-## Terminology
+1. **hard feasibility constraints** — a layout is either physically valid in The Alters or rejected;
+2. **one soft objective** — minimize the weighted sum of pairwise room distances.
 
-- **Room module** - a requested or mandatory game module (Workshop, Airlock, Storage, etc.).
-- **Corridor module** - a 2×1 utility module used for horizontal connectivity.
-- **Elevator module** - a 2×1 utility module. Elevator modules directly above/below one another at the same x-coordinate form an **elevator shaft**.
-- **Elevator count** - number of installed 2×1 Elevator modules, not the number of shafts. This is the quantity minimized first because every Elevator module occupies cells and adds Base Mass.
-- **Tier mask** - exact set of buildable grid cells for Base I-IV, excluding the immovable core/Organics obstruction.
-- **Access port** - legal left/right connection point of a room on its connection level. Normal rooms use the bottom level; documented exceptions such as Radiation Repulsor use the top level.
-- **Transit module** - a room through which the walkable network may continue from one side to the other.
-- **Terminal module** - a module that must be connected but may not be used as a bridge to another module (e.g. Rapidium Ark, Radiation Repulsor).
-
-## Optimization hierarchy
-
-The exact priority order is:
-
-1. **HARD FEASIBILITY** - place every requested/mandatory module in the selected tier and create one valid accessible network.
-2. **MINIMUM ELEVATOR COUNT** - solve with a fixed Elevator count `i`, starting at configured lower bound `i = 3`, and increase `i` until the first feasible count is found.
-3. **MINIMUM WEIGHTED TRAVEL DISTANCE** - with the minimum Elevator count frozen, minimize gameplay-weighted pairwise shortest-path distance between rooms.
-4. **MINIMUM BASE MASS / CORRIDORS** - only as a tie-breaker after weighted travel distance; with room set and Elevator count fixed, this primarily minimizes unnecessary Corridor modules.
-5. **PLACEMENT TIE-BREAKERS** - deterministic tie-breaking / compactness only when all higher-priority criteria are equal.
-
-No weighted sum may combine item 2 with item 3. An extra Elevator is never allowed merely because it shortens travel.
+No separate objective minimizes Elevator count. Elevators and Corridors influence the objective through path distance, and they also contribute to Base Mass.
 
 ---
 
-# Hard constraints
+# 1. Hard constraints
 
-## H1. Exact room multiplicity
+## H1. Exact module multiplicity
 
-For every room type `r` requested in `config/plan.json`, exactly the requested number must be placed. Mandatory story/core modules are automatically included exactly once unless game data says otherwise.
+Every room requested in `config/plan.json` must be present exactly in the requested count. Mandatory story/core modules are included automatically.
 
-For placement candidates `p` of room instance `r`:
-
-```text
-Σ_p x[r,p] = 1
-```
-
-## H2. No room rotation unless game data explicitly permits it
-
-Current mobile-base modules keep their published orientation. A 4×1 Workshop is not interchangeable with a 1×4 Workshop.
-
-## H3. Tier-mask containment
-
-Every occupied cell of every room, Corridor and Elevator must lie inside the buildable-cell mask of the selected Base tier.
+For each room instance `r`:
 
 ```text
-footprint(module) ⊆ buildable_cells(tier)
+sum(place[r,p] for legal placements p) = 1
 ```
 
-The external rectangular holding/rearrangement grid is not part of the final buildable mask.
+## H2. Tier-specific irregular base mask
 
-## H4. Immovable core exclusion
-
-No movable module may overlap the blocked core/Organics obstruction.
+Every placed room, Corridor and Elevator must fit completely inside the buildable-cell mask of the selected Base tier (I, II, III or IV).
 
 ```text
-footprint(module) ∩ blocked_cells = ∅
+footprint(module) subset_of buildable_cells(tier)
 ```
 
-## H5. Non-overlap
+The external temporary rearrangement grid is not part of the final base.
 
-A grid cell may belong to at most one installed module.
+## H3. Immovable core exclusion
+
+No movable module may overlap the fixed Organics/core obstruction.
 
 ```text
-∀ cell c: Σ modules occupying c ≤ 1
+footprint(module) intersection blocked_cells = empty
 ```
+
+## H4. No overlap
+
+No grid cell may belong to more than one installed module.
+
+```text
+for every cell c:
+    sum(modules occupying c) <= 1
+```
+
+## H5. No unsupported rotation
+
+Published module orientation is preserved unless verified game data explicitly allows rotation.
 
 ## H6. Legal room access level
 
-A room exposes horizontal access only at its documented connection level:
+Rooms connect horizontally only at their documented access level.
 
-- default: bottom row,
-- Radiation Repulsor: top row,
-- other exceptions are data-driven.
+- normal rooms: bottom connection level;
+- documented exceptions such as Radiation Repulsor: top connection level.
 
-A geometric rectangle touching another rectangle at an illegal height does not create a connection.
+Geometric contact at an invalid height is not a connection.
 
-## H7. Legal horizontal connection
+## H7. Legal direct room-to-room connection
 
-A horizontal connection exists only if compatible left/right access ports are aligned on the same grid row and are directly adjacent, or are joined by one or more legal utility modules.
+Two rooms may connect directly only when compatible left/right ports meet on the same legal row.
 
-Normal room-to-room adjacency is allowed without a Corridor when the ports meet directly.
+A valid direct connection requires no Corridor.
 
-## H8. Corridor semantics
+## H8. Corridor rules
 
 A Corridor:
 
-- occupies exactly 2×1 cells,
-- can carry horizontal walking traffic,
-- may connect to a room, another Corridor, or an Elevator on the same floor,
-- cannot by itself provide vertical movement.
+- occupies 2x1 cells;
+- provides horizontal connectivity;
+- may connect rooms, Corridors and Elevators on the same level;
+- cannot provide vertical connectivity;
+- is added by the solver, never configured by the player.
 
-Corridor count is not configured by the player.
-
-## H9. Elevator semantics
+## H9. Elevator rules
 
 An Elevator module:
 
-- occupies exactly 2×1 cells,
-- may connect horizontally to rooms/Corridors/Elevators on its floor,
-- provides vertical connectivity only to an Elevator immediately above or below at the same x-coordinate,
-- therefore vertical travel requires a contiguous stack of Elevator modules.
+- occupies 2x1 cells;
+- may connect horizontally on its floor;
+- provides vertical connectivity only to an Elevator immediately above or below at the same x-coordinate;
+- therefore a multi-floor shaft is a contiguous stack of Elevator modules;
+- is added by the solver, never configured by the player.
 
-Two Elevator modules separated by an empty floor do **not** belong to the same shaft.
+Two Elevator modules separated by a missing floor do not form a valid shaft.
 
-## H10. Fixed Elevator count during feasibility search
+## H10. Single connected base network
 
-Let `E` be the number of installed 2×1 Elevator modules.
-
-For iteration `i`:
-
-```text
-E = i
-```
-
-The current policy starts at:
+Every installed room must be reachable from the Airlock through legal direct room connections, Corridors and/or Elevator modules.
 
 ```text
-i_min = 3
+for every room r:
+    path(Airlock, r) must exist
 ```
 
-and increments one by one:
+Disconnected islands are forbidden.
 
-```text
-3, 4, 5, ... E_max
-```
+## H11. Transit vs terminal modules
 
-The first `i` for which a feasible complete base exists is the globally preferred Elevator count for the second optimization stage.
+A module with `transit_allowed = false` may be an endpoint of a path but may not be used as an intermediate bridge.
 
-`i_min = 3` is a planner policy, not a claim that the game mechanically requires at least three Elevators. It can later be made configurable if a scenario needs a different lower bound.
+Current explicit examples:
 
-## H11. All installed modules belong to one accessible network
-
-The Airlock-connected network is the root network. Every requested and mandatory room must be connected to it by legal room passages, Corridors and/or Elevator shafts.
-
-No disconnected room is accepted.
-
-Formally, for every installed room `r` there must exist a valid path:
-
-```text
-Airlock -> ... -> r
-```
-
-## H12. Transit vs terminal modules
-
-If `transit_allowed = false`, the module may be the endpoint of a path but cannot connect traffic through itself from one side to the other.
-
-Current explicit terminal modules:
-
-- Rapidium Ark,
+- Rapidium Ark;
 - Radiation Repulsor.
 
-This prevents layouts such as:
+Thus this is invalid unless Workshop has another route:
 
 ```text
 Airlock -> Rapidium Ark -> Workshop
 ```
 
-from being accepted unless the Workshop has another valid route.
+## H12. Utility connectivity
 
-## H13. Every utility module is part of the connected utility network
+Every installed Corridor and Elevator must itself belong to the connected access network. Floating or unused utility islands are invalid.
 
-An installed Corridor/Elevator may not float disconnected from the Airlock-rooted network.
+## H13. Base Mass is always calculated
 
-Redundant utility branches are not useful and are removed by the tertiary mass/Corridor minimization.
-
-## H14. Walkable path integrity
-
-A valid connectivity path may use only:
-
-- walkable cells of transit rooms at their valid access level,
-- Corridor cells,
-- Elevator stops/shafts,
-- legal direct room-to-room port adjacency.
-
-It may not pass through:
-
-- blocked core cells,
-- outside-tier cells,
-- terminal-only modules as intermediate nodes,
-- non-walkable vertical space inside multi-height modules.
-
-## H15. Base mass is always calculated
-
-Mass is not currently a hard feasibility constraint unless explicitly enabled later, but every feasible layout must persist:
+For every feasible layout, persist:
 
 ```text
 room_mass
@@ -206,163 +141,203 @@ For the mobile base:
 organics_required_for_journey = total_base_mass
 ```
 
-Each Corridor and Elevator contributes mass 2.
+Each Corridor contributes mass 2.
+Each Elevator module contributes mass 2.
+
+Mass is reported for journey planning. It is not part of the primary optimization objective.
 
 ---
 
-# Secondary objective: travel distance
+# 2. Usage weights
 
-This stage runs **only after the minimum feasible Elevator count is known and frozen**.
-
-## Movement graph
-
-The final layout is converted to a weighted graph.
-
-### Horizontal movement
-
-Crossing one grid cell horizontally costs:
+Every room type receives a default usage weight in the range:
 
 ```text
-1 point
+0.0 <= weight <= 1.0
 ```
 
-This includes walking through rooms and Corridors.
+Interpretation:
 
-### Room traversal
+- `1.0` — extremely frequent/mandatory player route anchor;
+- `0.1` — rarely visited room;
+- `0.0` — room is not included in objective pairs because routine physical entry is unnecessary.
 
-For a transit room, its walkable access row is represented cell-by-cell. Crossing each successive grid cell costs 1 point.
-
-For a terminal room, the room may be reached but is not available as an intermediate path.
-
-### Elevator travel
-
-A contiguous vertical stack of Elevator modules at one x-coordinate forms one shaft.
-
-Entering/exiting the shaft still requires ordinary horizontal cell movement. Once inside the same shaft, travel from any served floor to any other served floor costs exactly:
-
-```text
-1 point
-```
-
-independent of the number of floors crossed.
-
-Implementation-wise, all stops in one contiguous shaft are connected by elevator edges of cost 1 (or via a shaft super-node that produces the same shortest-path metric).
-
-### Distance between rooms
-
-Each room has an **activity point** on its walkable connection row. Until game-extracted interaction coordinates are available, the activity point is the middle cell (or the better of the two middle cells for even-width rooms).
-
-`d(a,b)` is the shortest-path cost between the activity points of rooms `a` and `b` in the movement graph.
-
-The activity-point approximation is explicit and can later be replaced by per-room interaction coordinates without changing the objective definition.
-
----
-
-# Gameplay usage weights
-
-Weights are data, not hard-coded solver constants. The current calibrated heuristic values live in:
+The default weights are gameplay-informed planner assumptions, not hidden game constants. They are stored in:
 
 ```text
 src/alters_base_planner/data/usage_weights.json
 ```
 
-Scale:
+Required examples from the optimization specification:
 
 ```text
-0.10 = almost passive / rarely physically visited
-1.00 = extremely frequent route anchor
+Airlock             1.0
+Workshop            0.9
+The Womb            0.1
+Quantum Computer    0.1
+Small Storage       0.0
+Medium Storage      0.0
+Large Storage       0.0
 ```
 
-Current baseline:
-
-| Module | Weight |
-|---|---:|
-| Airlock | 1.00 |
-| Captain's Cabin | 0.95 |
-| Workshop | 0.90 |
-| Command Center | 0.80 |
-| Machinery | 0.70 |
-| Kitchen | 0.55 |
-| Social Room | 0.55 |
-| Research Lab | 0.50 |
-| Communication Room | 0.45 |
-| Infirmary | 0.45 |
-| Refinery | 0.30 |
-| Greenhouse | 0.30 |
-| Quantum Computer | 0.25 |
-| Gym | 0.25 |
-| Contemplation Room | 0.20 |
-| Gamer's Den | 0.20 |
-| Park with Bench | 0.20 |
-| Materializer | 0.20 |
-| The Womb | 0.15 |
-| Personal Cabin | 0.15 |
-| Dormitory | 0.10 |
-| any Storage | 0.10 |
-| Recycler | 0.10 |
-| Radiation Repulsor | 0.10 |
-| Rapidium Ark | 0.10 |
-| Ark Sarcophagus | 0.10 |
-
-These weights are gameplay-informed heuristics, not values stored by the game.
+Storage modules remain physical hard-constrained modules even though their objective weight is 0.
 
 ---
 
-# Weighted-distance objective
+# 3. Distance definition
 
-For every unordered room pair `(a,b)`:
+Distance is defined between two rooms using the minimum valid access path.
 
-```text
-pair_weight(a,b) = usage_weight(a) × usage_weight(b)
-```
+The important rule is that **room length itself does not add distance**.
 
-The optimization numerator is:
+## D1. Directly adjacent rooms
 
-```text
-WeightedDistance = Σ_{a<b} pair_weight(a,b) × d(a,b)
-```
-
-Because the room set is fixed during the second stage, the denominator below is constant and may be omitted inside the solver:
+If two rooms connect directly through legal ports:
 
 ```text
-NormalizedWeightedDistance =
-    Σ pair_weight(a,b) × d(a,b)
-    / Σ pair_weight(a,b)
+d(room_a, room_b) = 0
 ```
 
-The normalized value should be reported to the player as an intuitive expected weighted travel score.
+Example:
 
-Why the product is used: if room-visit frequencies approximate the probability that the next task is in a room, the frequency of a transition between two rooms is proportional to the product of their visit frequencies. This strongly rewards keeping Airlock/Cabin/Workshop close while making passive Storage placement almost irrelevant.
+```text
+[Airlock][Workshop]
+```
+
+Distance = 0.
+
+## D2. Corridor
+
+Every Corridor module traversed on the shortest path adds exactly:
+
+```text
++1
+```
+
+Example:
+
+```text
+[Airlock][Corridor][Workshop]
+```
+
+Distance = 1.
+
+Two Corridor modules:
+
+```text
+[Airlock][Corridor][Corridor][Workshop]
+```
+
+Distance = 2.
+
+## D3. Elevator
+
+Every individual Elevator module traversed adds exactly:
+
+```text
++1
+```
+
+This applies separately to every Elevator module in a shaft.
+
+Example: a path uses four stacked Elevator modules:
+
+```text
+E
+E
+E
+E
+```
+
+The Elevator contribution to distance is 4, not 1.
+
+## D4. Room traversal
+
+Passing through a transit-allowed room adds:
+
+```text
+0
+```
+
+regardless of whether the room is 2, 4, 6 or 8 cells wide.
+
+This is deliberate: the objective measures the number of communication elements required between room pairs, not the physical internal length of rooms.
+
+## D5. Shortest path
+
+For rooms `i` and `j`:
+
+```text
+d(i,j) = minimum number of Corridor + Elevator modules
+         required by any legal path between i and j
+```
+
+Direct room adjacency therefore yields 0.
 
 ---
 
-# Tertiary objective: mass and unnecessary Corridors
+# 4. Which pairs are included
 
-After minimum Elevator count and minimum weighted distance are frozen, minimize:
+Create all unordered pairs of installed rooms with positive usage weight.
+
+Do not include:
+
+- Corridors;
+- Elevators;
+- rooms with weight 0, especially passive Storage modules.
+
+Each room pair is counted exactly once:
 
 ```text
-total_base_mass
+i < j
 ```
 
-For a fixed room configuration and fixed Elevator count this is equivalent to minimizing unnecessary Corridor count, because room mass is constant and each Corridor/Elevator has mass 2.
+There is no double counting of `(i,j)` and `(j,i)`.
 
-This preserves journey efficiency without allowing mass to override the requested movement objective.
+Mandatory core rooms such as Airlock are included when their weight is positive, even though the player does not manually specify their count in JSON.
 
 ---
 
-# Required result metrics
+# 5. Objective function
 
-Every connected solution must report at least:
+For every unordered active room pair `(i,j)` define:
 
 ```text
-minimum_elevator_count
-elevator_module_count
-elevator_shaft_count
-corridor_count
+pair_score(i,j) = weight(i) * weight(j) * d(i,j)
+```
+
+The complete objective is:
+
+```text
+F = sum_{i<j} weight(i) * weight(j) * d(i,j)
+```
+
+The optimal layout is the hard-feasible layout with the smallest value of `F`.
+
+No independent Elevator-count term is added.
+No independent Corridor-count term is added.
+No Base-Mass term is added to `F`.
+
+Because each Corridor and each Elevator already adds 1 to relevant shortest paths, unnecessary communication modules are naturally disfavoured when they affect frequently used routes.
+
+If two layouts have exactly the same value of `F`, Base Mass may be used only as a deterministic tie-breaker. This does not change which objective values are optimal.
+
+---
+
+# 6. Required result metrics
+
+Every feasible result must report:
+
+```text
+objective_value
 weighted_distance_score
 normalized_weighted_distance
 pairwise_distances
+pairwise_contributions
 room_usage_weights
+elevator_module_count
+elevator_shaft_count
+corridor_count
 room_mass
 utility_mass
 total_base_mass
@@ -370,27 +345,36 @@ organics_required_for_journey
 organics_tank_capacity
 capacity_margin
 travel_feasible_at_full_tank
+geometry_verified
+geometry_source
 ```
 
-The result must also preserve geometry provenance (`geometry_verified`, source, notes) so a layout generated on a provisional Base I-IV mask cannot be confused with a game-exact calibrated result.
+For auditing, the result JSON must make it possible to reconstruct:
+
+```text
+F = sum(pairwise_contributions.values())
+```
 
 ---
 
-# Exact solver implementation target
+# 7. Current implementation and exact-solver target
 
-The intended exact implementation is a joint placement/connectivity model rather than a purely greedy post-router:
+The current engine:
 
-1. enumerate legal room placements,
-2. enumerate legal 2×1 utility anchors,
-3. create room-placement Boolean variables,
-4. create Corridor/Elevator Boolean variables per anchor,
-5. enforce cell non-overlap,
-6. enforce legal adjacency/ports,
-7. use flow/connectivity variables rooted at Airlock,
-8. fix `Σ Elevator = i`, starting with `i=3`,
-9. stop at first feasible `i`,
-10. freeze that `i`,
-11. minimize weighted shortest-path distance,
-12. then minimize mass/Corridors.
+1. enumerates legal room placements with CP-SAT;
+2. rejects overlap and out-of-mask placements;
+3. builds a legal connected Corridor/Elevator network;
+4. computes exact shortest module-distance for every active room pair;
+5. computes `F` exactly for that candidate;
+6. retains the candidate with the smallest `F` among examined candidates;
+7. reports Base Mass and journey Organics.
 
-Until this joint model is implemented, any heuristic router must clearly label results as heuristic rather than claiming proof of global minimum Elevator count.
+The current post-routing architecture does **not yet prove** that the smallest examined `F` is the global optimum over every possible joint room + Corridor + Elevator placement.
+
+The exact solver milestone is therefore a joint model in which room placement, Corridor placement, Elevator placement, connectivity and path variables are optimized in one search space. Only that implementation may set:
+
+```text
+global_objective_optimum_proven = true
+```
+
+Until then, objective evaluation is exact per candidate, while global optimality remains explicitly unproven.
