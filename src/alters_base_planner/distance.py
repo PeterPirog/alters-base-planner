@@ -31,26 +31,7 @@ def _connection_row(room: Placement) -> int:
 def _validate_vertical_elevator_coverage(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> None:
-    """Enforce continuous elevator coverage over every used floor in the base.
-
-    If room access points occupy more than one floor, every floor from the lowest
-    used access level to the highest used access level must contain at least one
-    Elevator module. Therefore a span of ``n`` floors requires at least ``n``
-    Elevator modules.
-
-    Elevator shafts may shift horizontally between floors, but for every adjacent
-    pair of floors there must be at least one shared Elevator x-coordinate. A shift
-    is therefore legal only through a transfer floor that contains both the old and
-    the new shaft positions, allowing a horizontal connection between them.
-
-    Example of a legal shifted vertical network:
-
-        floor 2:        E(x=8)
-        floor 1: E(x=4) E(x=8)
-        floor 0: E(x=4)
-
-    because floors 0/1 share x=4 and floors 1/2 share x=8.
-    """
+    """Enforce continuous elevator coverage over every used floor in the base."""
 
     if not rooms:
         return
@@ -112,13 +93,7 @@ def _connect_by_entry_cost(
     a: Node,
     b: Node,
 ) -> None:
-    """Connect two adjacent modules.
-
-    Distance is defined by modules traversed between rooms:
-    - entering a room costs 0,
-    - entering one Corridor costs 1,
-    - entering one Elevator module costs 1.
-    """
+    """Connect adjacent modules using the cost of entering the destination utility."""
 
     _add_directed(graph, a, b, node_cost[b])
     _add_directed(graph, b, a, node_cost[a])
@@ -132,6 +107,15 @@ def _room_nodes(
     dict[str, tuple[Node, ...]],
     dict[tuple[str, int], Node],
 ]:
+    """Create left/right access nodes for every room.
+
+    The start and destination rooms are free because shortest-path evaluation starts
+    at either side of the source and accepts either side of the destination. A room
+    used *between* those endpoints must be crossed from one side to the other, which
+    costs its horizontal length in grid cells. Non-transit rooms have no internal
+    left-right edge and therefore can never be used as bridges.
+    """
+
     graph: dict[Node, dict[Node, int]] = {}
     node_cost: dict[Node, int] = {}
     endpoints: dict[str, tuple[Node, ...]] = {}
@@ -139,23 +123,19 @@ def _room_nodes(
 
     for room in rooms:
         spec = MODULE_BY_KEY[room.module_key]
+        left = f"room:{room.instance_id}:left"
+        right = f"room:{room.instance_id}:right"
+        graph[left] = {}
+        graph[right] = {}
+        node_cost[left] = 0
+        node_cost[right] = 0
+        endpoints[room.instance_id] = (left, right)
+        side_nodes[(room.instance_id, 0)] = left
+        side_nodes[(room.instance_id, 1)] = right
+
         if spec.transit_allowed:
-            node = f"room:{room.instance_id}"
-            graph[node] = {}
-            node_cost[node] = 0
-            endpoints[room.instance_id] = (node,)
-            side_nodes[(room.instance_id, 0)] = node
-            side_nodes[(room.instance_id, 1)] = node
-        else:
-            left = f"room:{room.instance_id}:left"
-            right = f"room:{room.instance_id}:right"
-            graph[left] = {}
-            graph[right] = {}
-            node_cost[left] = 0
-            node_cost[right] = 0
-            endpoints[room.instance_id] = (left, right)
-            side_nodes[(room.instance_id, 0)] = left
-            side_nodes[(room.instance_id, 1)] = right
+            _add_directed(graph, left, right, room.width)
+            _add_directed(graph, right, left, room.width)
 
     return graph, node_cost, endpoints, side_nodes
 
@@ -163,11 +143,15 @@ def _room_nodes(
 def _build_module_graph(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> tuple[dict[Node, dict[Node, int]], dict[str, tuple[Node, ...]], int]:
-    """Build the exact graph used by the user-defined distance objective.
+    """Build the graph for the user-defined room-pair distance.
 
-    Room length has zero cost. Directly adjacent rooms therefore have distance 0.
-    Every Corridor module traversed contributes +1. Every Elevator module traversed
-    contributes +1, including each separate Elevator in a multi-floor shaft.
+    Rules:
+    - start and destination room lengths do not count;
+    - directly adjacent start/destination rooms therefore have distance 0;
+    - an intermediate transit room contributes its horizontal length in grid cells;
+    - each Corridor module traversed contributes +1;
+    - each individual Elevator module traversed contributes +1;
+    - non-transit modules cannot be used as bridges.
     """
 
     graph, node_cost, endpoints, side_nodes = _room_nodes(rooms)
@@ -181,23 +165,39 @@ def _build_module_graph(
         utility_nodes[(utility.x, utility.y)] = node
         utility_kind[node] = utility.kind
 
+    # Direct room-to-room adjacency adds no cost. If such a room is later crossed as
+    # an intermediate room, its own left-right internal edge supplies the width cost.
     for i, a in enumerate(rooms):
         for b in rooms[i + 1 :]:
             if _directly_adjacent(a, 1, b, 0):
-                _connect_by_entry_cost(
+                _add_directed(
                     graph,
-                    node_cost,
                     side_nodes[(a.instance_id, 1)],
                     side_nodes[(b.instance_id, 0)],
+                    0,
+                )
+                _add_directed(
+                    graph,
+                    side_nodes[(b.instance_id, 0)],
+                    side_nodes[(a.instance_id, 1)],
+                    0,
                 )
             elif _directly_adjacent(a, 0, b, 1):
-                _connect_by_entry_cost(
+                _add_directed(
                     graph,
-                    node_cost,
                     side_nodes[(a.instance_id, 0)],
                     side_nodes[(b.instance_id, 1)],
+                    0,
+                )
+                _add_directed(
+                    graph,
+                    side_nodes[(b.instance_id, 1)],
+                    side_nodes[(a.instance_id, 0)],
+                    0,
                 )
 
+    # A room connects to a utility only when the 2x1 utility occupies the legal
+    # anchor immediately left/right of the room access level.
     for room in rooms:
         row = _connection_row(room)
         anchors = {
@@ -214,11 +214,14 @@ def _build_module_graph(
                     utility_node,
                 )
 
+    # Horizontal utility adjacency. Corridor/Elevator modules each cost one unit,
+    # irrespective of their 2-cell footprint.
     for (x, y), node in utility_nodes.items():
         right = utility_nodes.get((x + 2, y))
         if right is not None:
             _connect_by_entry_cost(graph, node_cost, node, right)
 
+    # Vertical adjacency only for immediately stacked Elevator modules at the same x.
     for (x, y), node in utility_nodes.items():
         if utility_kind[node] != "elevator":
             continue
