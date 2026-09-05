@@ -91,9 +91,7 @@ class BaseGeometry:
 class PlanRequest:
     tier: int
     room_counts: dict[str, int]
-    objective: str = "lexicographic_access"
-    min_elevators: int = 3
-    max_elevators: int | None = None
+    objective: str = "weighted_pair_distance"
     time_limit_s: float = 15.0
     max_layout_attempts: int = 20
 
@@ -120,8 +118,9 @@ class PlanResult:
     weighted_distance_score: float | None = None
     normalized_weighted_distance: float | None = None
     pairwise_distances: dict[str, int] = field(default_factory=dict)
+    pairwise_contributions: dict[str, float] = field(default_factory=dict)
     room_usage_weights: dict[str, float] = field(default_factory=dict)
-    exact_minimum_elevators_proven: bool = False
+    global_objective_optimum_proven: bool = False
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:
