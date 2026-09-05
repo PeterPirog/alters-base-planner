@@ -1,6 +1,9 @@
 import pytest
 
-from alters_base_planner.distance import evaluate_distances
+from alters_base_planner.distance import (
+    _validate_vertical_elevator_coverage,
+    evaluate_distances,
+)
 from alters_base_planner.models import Placement, UtilityPlacement
 
 
@@ -43,7 +46,7 @@ def test_every_elevator_module_adds_one_distance_point() -> None:
     assert metrics.weighted_score == pytest.approx(1.0 * 0.90 * 4)
 
 
-def test_separated_elevators_do_not_create_vertical_connection() -> None:
+def test_missing_intermediate_elevator_level_is_hard_infeasible() -> None:
     rooms = [
         Placement("airlock-1", "airlock", 0, 0, 4, 1),
         Placement("workshop-1", "workshop", 6, 2, 4, 1),
@@ -52,8 +55,38 @@ def test_separated_elevators_do_not_create_vertical_connection() -> None:
         UtilityPlacement("elevator", 4, 0),
         UtilityPlacement("elevator", 4, 2),
     ]
-    with pytest.raises(ValueError, match="No walkable path"):
+    with pytest.raises(ValueError, match="requires at least 3 Elevator modules"):
         evaluate_distances(rooms, utilities)
+
+
+def test_shifted_shafts_must_overlap_on_each_adjacent_floor_pair() -> None:
+    rooms = [
+        Placement("airlock-1", "airlock", 0, 0, 4, 1),
+        Placement("workshop-1", "workshop", 0, 1, 4, 1),
+        Placement("research-1", "research_lab", 0, 2, 4, 1),
+    ]
+    utilities = [
+        UtilityPlacement("elevator", 4, 0),
+        UtilityPlacement("elevator", 6, 1),
+        UtilityPlacement("elevator", 6, 2),
+    ]
+    with pytest.raises(ValueError, match="floors 0 and 1 do not share"):
+        _validate_vertical_elevator_coverage(rooms, utilities)
+
+
+def test_shifted_shafts_are_legal_through_transfer_floor() -> None:
+    rooms = [
+        Placement("airlock-1", "airlock", 0, 0, 4, 1),
+        Placement("workshop-1", "workshop", 0, 1, 4, 1),
+        Placement("research-1", "research_lab", 0, 2, 4, 1),
+    ]
+    utilities = [
+        UtilityPlacement("elevator", 4, 0),
+        UtilityPlacement("elevator", 4, 1),
+        UtilityPlacement("elevator", 8, 1),
+        UtilityPlacement("elevator", 8, 2),
+    ]
+    _validate_vertical_elevator_coverage(rooms, utilities)
 
 
 def test_room_internal_length_does_not_add_distance() -> None:
