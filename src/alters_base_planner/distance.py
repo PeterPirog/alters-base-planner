@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .catalog import MODULE_BY_KEY
 from .models import ConnectionLevel, Placement, UtilityPlacement
 
-Cell = tuple[int, int]
+Node = str
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +15,7 @@ class DistanceMetrics:
     weighted_score: float
     normalized_weighted_distance: float
     pairwise_distances: dict[str, int]
+    pairwise_contributions: dict[str, float]
     elevator_module_count: int
     elevator_shaft_count: int
     corridor_count: int
@@ -27,130 +28,173 @@ def _connection_row(room: Placement) -> int:
     return room.y + room.height - 1
 
 
-def _add_edge(graph: dict[Cell, dict[Cell, int]], a: Cell, b: Cell, cost: int) -> None:
+def _directly_adjacent(a: Placement, a_side: int, b: Placement, b_side: int) -> bool:
+    if _connection_row(a) != _connection_row(b):
+        return False
+    if a_side == 1 and b_side == 0:
+        return a.x + a.width == b.x
+    if a_side == 0 and b_side == 1:
+        return b.x + b.width == a.x
+    return False
+
+
+def _add_directed(graph: dict[Node, dict[Node, int]], a: Node, b: Node, cost: int) -> None:
     graph.setdefault(a, {})[b] = min(cost, graph.get(a, {}).get(b, cost))
-    graph.setdefault(b, {})[a] = min(cost, graph.get(b, {}).get(a, cost))
 
 
-def _middle_offsets(width: int) -> tuple[int, ...]:
-    if width % 2:
-        return (width // 2,)
-    return (width // 2 - 1, width // 2)
+def _connect_by_entry_cost(
+    graph: dict[Node, dict[Node, int]],
+    node_cost: dict[Node, int],
+    a: Node,
+    b: Node,
+) -> None:
+    """Connect two adjacent modules.
 
-
-def _room_activity_sources(room: Placement) -> list[tuple[Cell, int]]:
-    """Return graph-entry cells and costs for the room's abstract activity point.
-
-    Transit rooms use their central walkable cell(s). Terminal rooms expose their
-    left/right boundary cells with the horizontal cost from the centre to that side,
-    but the two sides are not connected through the room and therefore cannot be
-    used as a shortcut.
+    Distance is defined by modules traversed between rooms:
+    - entering a room costs 0,
+    - entering one Corridor costs 1,
+    - entering one Elevator module costs 1.
     """
 
-    spec = MODULE_BY_KEY[room.module_key]
-    row = _connection_row(room)
-    centres = _middle_offsets(room.width)
-    if spec.transit_allowed:
-        return [((room.x + offset, row), 0) for offset in centres]
-
-    left_cost = min(abs(offset) for offset in centres)
-    right_offset = room.width - 1
-    right_cost = min(abs(right_offset - offset) for offset in centres)
-    if room.width == 1:
-        return [((room.x, row), 0)]
-    return [
-        ((room.x, row), left_cost),
-        ((room.x + room.width - 1, row), right_cost),
-    ]
+    _add_directed(graph, a, b, node_cost[b])
+    _add_directed(graph, b, a, node_cost[a])
 
 
-def _build_walk_graph(
-    rooms: list[Placement], utilities: list[UtilityPlacement]
-) -> tuple[dict[Cell, dict[Cell, int]], int]:
-    graph: dict[Cell, dict[Cell, int]] = {}
-    owner: dict[Cell, tuple[str, str, bool]] = {}
+def _room_nodes(
+    rooms: list[Placement],
+) -> tuple[
+    dict[Node, dict[Node, int]],
+    dict[Node, int],
+    dict[str, tuple[Node, ...]],
+    dict[tuple[str, int], Node],
+]:
+    graph: dict[Node, dict[Node, int]] = {}
+    node_cost: dict[Node, int] = {}
+    endpoints: dict[str, tuple[Node, ...]] = {}
+    side_nodes: dict[tuple[str, int], Node] = {}
 
     for room in rooms:
         spec = MODULE_BY_KEY[room.module_key]
-        row = _connection_row(room)
         if spec.transit_allowed:
-            cells = [(x, row) for x in range(room.x, room.x + room.width)]
-        elif room.width == 1:
-            cells = [(room.x, row)]
+            node = f"room:{room.instance_id}"
+            graph[node] = {}
+            node_cost[node] = 0
+            endpoints[room.instance_id] = (node,)
+            side_nodes[(room.instance_id, 0)] = node
+            side_nodes[(room.instance_id, 1)] = node
         else:
-            cells = [(room.x, row), (room.x + room.width - 1, row)]
-        for cell in cells:
-            graph.setdefault(cell, {})
-            owner[cell] = ("room", room.instance_id, spec.transit_allowed)
+            left = f"room:{room.instance_id}:left"
+            right = f"room:{room.instance_id}:right"
+            graph[left] = {}
+            graph[right] = {}
+            node_cost[left] = 0
+            node_cost[right] = 0
+            endpoints[room.instance_id] = (left, right)
+            side_nodes[(room.instance_id, 0)] = left
+            side_nodes[(room.instance_id, 1)] = right
 
-    elevator_anchors: set[Cell] = set()
+    return graph, node_cost, endpoints, side_nodes
+
+
+def _build_module_graph(
+    rooms: list[Placement], utilities: list[UtilityPlacement]
+) -> tuple[dict[Node, dict[Node, int]], dict[str, tuple[Node, ...]], int]:
+    """Build the exact graph used by the user-defined distance objective.
+
+    Room length has zero cost. Directly adjacent rooms therefore have distance 0.
+    Every Corridor module traversed contributes +1. Every Elevator module traversed
+    contributes +1, including each separate Elevator in a multi-floor shaft.
+    """
+
+    graph, node_cost, endpoints, side_nodes = _room_nodes(rooms)
+
+    utility_nodes: dict[tuple[int, int], Node] = {}
+    utility_kind: dict[Node, str] = {}
     for idx, utility in enumerate(utilities):
-        utility_id = f"{utility.kind}-{idx}"
-        for cell in utility.cells:
-            graph.setdefault(cell, {})
-            owner[cell] = ("utility", utility_id, True)
-        if utility.kind == "elevator":
-            elevator_anchors.add((utility.x, utility.y))
+        node = f"utility:{idx}"
+        graph[node] = {}
+        node_cost[node] = 1
+        utility_nodes[(utility.x, utility.y)] = node
+        utility_kind[node] = utility.kind
 
-    # Horizontal cell movement always costs one point. The only internal edge
-    # suppressed is the left-to-right bridge inside a terminal-only module.
-    for x, y in list(graph):
-        neighbour = (x + 1, y)
-        if neighbour not in graph:
+    # Direct legal room-to-room adjacency is free: d = 0.
+    for i, a in enumerate(rooms):
+        for b in rooms[i + 1 :]:
+            if _directly_adjacent(a, 1, b, 0):
+                _connect_by_entry_cost(
+                    graph,
+                    node_cost,
+                    side_nodes[(a.instance_id, 1)],
+                    side_nodes[(b.instance_id, 0)],
+                )
+            elif _directly_adjacent(a, 0, b, 1):
+                _connect_by_entry_cost(
+                    graph,
+                    node_cost,
+                    side_nodes[(a.instance_id, 0)],
+                    side_nodes[(b.instance_id, 1)],
+                )
+
+    # A room connects to a utility only when the 2x1 utility occupies the exact
+    # legal anchor immediately to the left/right of the room access level.
+    for room in rooms:
+        row = _connection_row(room)
+        anchors = {
+            0: (room.x - 2, row),
+            1: (room.x + room.width, row),
+        }
+        for side, anchor in anchors.items():
+            utility_node = utility_nodes.get(anchor)
+            if utility_node is not None:
+                _connect_by_entry_cost(
+                    graph,
+                    node_cost,
+                    side_nodes[(room.instance_id, side)],
+                    utility_node,
+                )
+
+    # Horizontal utility adjacency. A Corridor or Elevator is one distance unit,
+    # regardless of its 2-cell footprint.
+    for (x, y), node in utility_nodes.items():
+        right = utility_nodes.get((x + 2, y))
+        if right is not None:
+            _connect_by_entry_cost(graph, node_cost, node, right)
+
+    # Vertical adjacency exists only between immediately stacked Elevator modules.
+    # Each Elevator module is a separate +1 in the path length.
+    for (x, y), node in utility_nodes.items():
+        if utility_kind[node] != "elevator":
             continue
-        a_owner = owner[(x, y)]
-        b_owner = owner[neighbour]
-        same_terminal_room = (
-            a_owner[0] == "room"
-            and b_owner[0] == "room"
-            and a_owner[1] == b_owner[1]
-            and not a_owner[2]
-        )
-        if not same_terminal_room:
-            _add_edge(graph, (x, y), neighbour, 1)
+        above = utility_nodes.get((x, y + 1))
+        if above is not None and utility_kind[above] == "elevator":
+            _connect_by_entry_cost(graph, node_cost, node, above)
 
-    # A shaft is a contiguous run of Elevator modules at the same x anchor.
-    # Any ride between two served floors in that same run costs exactly 1,
-    # irrespective of the number of floors crossed.
+    # Report contiguous elevator shafts separately from Elevator module count.
     shaft_count = 0
     by_x: dict[int, list[int]] = {}
-    for x, y in elevator_anchors:
-        by_x.setdefault(x, []).append(y)
+    for utility in utilities:
+        if utility.kind == "elevator":
+            by_x.setdefault(utility.x, []).append(utility.y)
+    for ys in by_x.values():
+        previous: int | None = None
+        for y in sorted(set(ys)):
+            if previous is None or y != previous + 1:
+                shaft_count += 1
+            previous = y
 
-    for x, ys in by_x.items():
-        ys = sorted(set(ys))
-        run: list[int] = []
-        runs: list[list[int]] = []
-        for y in ys:
-            if not run or y == run[-1] + 1:
-                run.append(y)
-            else:
-                runs.append(run)
-                run = [y]
-        if run:
-            runs.append(run)
-
-        shaft_count += len(runs)
-        for floors in runs:
-            for idx, y1 in enumerate(floors):
-                for y2 in floors[idx + 1 :]:
-                    _add_edge(graph, (x, y1), (x, y2), 1)
-                    _add_edge(graph, (x + 1, y1), (x + 1, y2), 1)
-
-    return graph, shaft_count
+    return graph, endpoints, shaft_count
 
 
 def _dijkstra(
-    graph: dict[Cell, dict[Cell, int]], sources: list[tuple[Cell, int]]
-) -> dict[Cell, int]:
-    distances: dict[Cell, int] = {}
-    heap: list[tuple[int, Cell]] = []
-    for node, initial_cost in sources:
+    graph: dict[Node, dict[Node, int]], sources: tuple[Node, ...]
+) -> dict[Node, int]:
+    distances: dict[Node, int] = {}
+    heap: list[tuple[int, Node]] = []
+    for node in sources:
         if node not in graph:
             continue
-        if initial_cost < distances.get(node, math.inf):
-            distances[node] = initial_cost
-            heapq.heappush(heap, (initial_cost, node))
+        distances[node] = 0
+        heapq.heappush(heap, (0, node))
 
     while heap:
         distance, node = heapq.heappop(heap)
@@ -167,28 +211,39 @@ def _dijkstra(
 def evaluate_distances(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> DistanceMetrics:
-    graph, shaft_count = _build_walk_graph(rooms, utilities)
-    sources_by_room = {room.instance_id: _room_activity_sources(room) for room in rooms}
+    graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
+
+    # Objective pairs contain only rooms with positive usage weight. Storage and
+    # other passive modules with weight 0 still remain hard-constrained physical
+    # modules and may participate in the walkable topology if transit is legal.
+    active_rooms = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
+
     pairwise: dict[str, int] = {}
+    contributions: dict[str, float] = {}
     weighted_sum = 0.0
     pair_weight_sum = 0.0
 
-    for idx, room_a in enumerate(rooms):
-        distances = _dijkstra(graph, sources_by_room[room_a.instance_id])
+    for idx, room_a in enumerate(active_rooms):
+        distances = _dijkstra(graph, endpoints[room_a.instance_id])
         weight_a = MODULE_BY_KEY[room_a.module_key].visit_weight
-        for room_b in rooms[idx + 1 :]:
-            best = math.inf
-            for node, terminal_cost in sources_by_room[room_b.instance_id]:
-                if node in distances:
-                    best = min(best, distances[node] + terminal_cost)
+        for room_b in active_rooms[idx + 1 :]:
+            best = min(
+                (distances[node] for node in endpoints[room_b.instance_id] if node in distances),
+                default=math.inf,
+            )
             if math.isinf(best):
                 raise ValueError(
                     f"No walkable path between {room_a.instance_id} and {room_b.instance_id}"
                 )
+
             distance = int(best)
-            pairwise[f"{room_a.instance_id}|{room_b.instance_id}"] = distance
+            pair_key = f"{room_a.instance_id}|{room_b.instance_id}"
             pair_weight = weight_a * MODULE_BY_KEY[room_b.module_key].visit_weight
-            weighted_sum += pair_weight * distance
+            contribution = pair_weight * distance
+
+            pairwise[pair_key] = distance
+            contributions[pair_key] = contribution
+            weighted_sum += contribution
             pair_weight_sum += pair_weight
 
     normalized = weighted_sum / pair_weight_sum if pair_weight_sum else 0.0
@@ -196,6 +251,7 @@ def evaluate_distances(
         weighted_score=weighted_sum,
         normalized_weighted_distance=normalized,
         pairwise_distances=pairwise,
+        pairwise_contributions=contributions,
         elevator_module_count=sum(u.kind == "elevator" for u in utilities),
         elevator_shaft_count=shaft_count,
         corridor_count=sum(u.kind == "corridor" for u in utilities),
