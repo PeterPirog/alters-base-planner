@@ -4,42 +4,81 @@ import argparse
 import json
 from pathlib import Path
 
+from .base import builtin_base
+from .config import load_plan_config
 from .engine import solve_plan
-from .models import PlanRequest
 from .render import render_svg
 
 
-def _parse_rooms(values: list[str]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in values:
-        key, sep, value = item.partition("=")
-        if not sep:
-            raise argparse.ArgumentTypeError(f"Expected ROOM=COUNT, got {item!r}")
-        counts[key.strip()] = int(value)
-    return counts
+def _result_payload(result) -> dict[str, object]:
+    return {
+        "status": result.status,
+        "attempts": result.attempts,
+        "message": result.message,
+        "objective_value": result.objective_value,
+        "base": {
+            "tier": result.base.tier,
+            "width": result.base.width,
+            "height": result.base.height,
+            "organics_capacity": result.base.organics_capacity,
+            "geometry_source": result.base.source,
+            "geometry_verified": result.base.verified,
+            "geometry_note": result.base.note,
+        },
+        "rooms": [
+            {
+                "instance_id": room.instance_id,
+                "module_key": room.module_key,
+                "x": room.x,
+                "y": room.y,
+                "width": room.width,
+                "height": room.height,
+            }
+            for room in result.rooms
+        ],
+        "utilities": [
+            {
+                "kind": utility.kind,
+                "x": utility.x,
+                "y": utility.y,
+                "width": utility.width,
+                "height": utility.height,
+            }
+            for utility in result.utilities
+        ],
+    }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Optimize a The Alters base layout")
-    parser.add_argument("--tier", type=int, choices=(1, 2, 3, 4), default=2)
-    parser.add_argument("--room", action="append", default=[], metavar="ROOM=COUNT")
-    parser.add_argument("--time-limit", type=float, default=15.0)
-    parser.add_argument("--attempts", type=int, default=20)
-    parser.add_argument("--svg", type=Path, default=Path("layout.svg"))
+    parser = argparse.ArgumentParser(description="Optimize a The Alters base layout from JSON")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=Path("config/plan.json"),
+        help="JSON plan configuration (default: config/plan.json)",
+    )
     args = parser.parse_args()
 
-    result = solve_plan(
-        PlanRequest(
-            tier=args.tier,
-            room_counts=_parse_rooms(args.room),
-            time_limit_s=args.time_limit,
-            max_layout_attempts=args.attempts,
+    loaded = load_plan_config(args.config)
+    base = builtin_base(loaded.request.tier)
+    if not base.verified:
+        print(
+            "WARNING: selected built-in base geometry is provisional, not an authoritative "
+            "game-extracted grid. See src/alters_base_planner/data/base_grids.json."
         )
-    )
-    print(json.dumps({"status": result.status, "attempts": result.attempts, "message": result.message}, indent=2))
+
+    result = solve_plan(loaded.request, base)
+    payload = _result_payload(result)
+    print(json.dumps(payload, indent=2))
+
     if result.rooms:
-        args.svg.write_text(render_svg(result), encoding="utf-8")
-        print(f"Wrote {args.svg}")
+        loaded.output.svg.parent.mkdir(parents=True, exist_ok=True)
+        loaded.output.json.parent.mkdir(parents=True, exist_ok=True)
+        loaded.output.svg.write_text(render_svg(result), encoding="utf-8")
+        loaded.output.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Wrote {loaded.output.svg}")
+        print(f"Wrote {loaded.output.json}")
 
 
 if __name__ == "__main__":
