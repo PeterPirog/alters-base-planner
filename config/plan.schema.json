@@ -18,7 +18,6 @@
         "greenhouse": {"$ref": "#/$defs/count"},
         "gym": {"$ref": "#/$defs/count"},
         "infirmary": {"$ref": "#/$defs/count"},
-        "kitchen": {"$ref": "#/$defs/count"},
         "large_storage": {"$ref": "#/$defs/count"},
         "materializer": {"$ref": "#/$defs/count"},
         "medium_storage": {"$ref": "#/$defs/count"},
