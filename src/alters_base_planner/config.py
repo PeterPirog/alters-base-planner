@@ -14,6 +14,7 @@ _MANDATORY_KEYS = {m.key for m in MANDATORY_MODULES}
 @dataclass(frozen=True, slots=True)
 class OutputConfig:
     svg: Path = Path("layout.svg")
+    png: Path = Path("layout.png")
     json: Path = Path("layout.json")
 
 
@@ -77,6 +78,7 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
         raise ValueError("output must be a JSON object")
     output = OutputConfig(
         svg=Path(str(output_raw.get("svg", "layout.svg"))),
+        png=Path(str(output_raw.get("png", "layout.png"))),
         json=Path(str(output_raw.get("json", "layout.json"))),
     )
 
