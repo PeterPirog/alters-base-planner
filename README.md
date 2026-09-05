@@ -162,25 +162,24 @@ For a connected solution the output contains a persistent movement section simil
 ```json
 {
   "journey": {
-    "room_mass": 154,
-    "utility_mass": 18,
-    "total_base_mass": 172,
-    "organics_required": 172,
+    "room_mass": 16,
+    "utility_mass": 4,
+    "total_base_mass": 20,
+    "organics_required": 20,
     "organics_tank_capacity": 450,
-    "capacity_margin": 278,
+    "capacity_margin": 430,
     "travel_feasible_at_full_tank": true,
     "mass_breakdown": {
-      "airlock": 4,
       "dormitory": 8,
       "workshop": 8,
-      "corridor": 6,
-      "elevator": 12
+      "corridor": 2,
+      "elevator": 2
     }
   }
 }
 ```
 
-The numbers above are illustrative; the generated `layout.json` is authoritative for the selected configuration and solver result.
+The numbers above are a minimal arithmetic example; the generated `layout.json` is authoritative for the selected configuration and solver result and includes mandatory modules as well.
 
 ## Install
 
