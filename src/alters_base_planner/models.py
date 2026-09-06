@@ -13,9 +13,68 @@ class ModuleType(StrEnum):
     UTILITY = "utility"
 
 
-class ConnectionLevel(StrEnum):
-    BOTTOM = "bottom"
-    TOP = "top"
+class PortSide(StrEnum):
+    LEFT = "left"
+    RIGHT = "right"
+
+
+@dataclass(frozen=True, slots=True)
+class PortSpec:
+    """Logical room access port located on a concrete room cell.
+
+    `cell_x` and `cell_y` are offsets inside the module footprint. A 1x1 room therefore
+    has both logical LEFT and RIGHT ports on the same physical cell (0, 0), while the
+    side still distinguishes which outer boundary can connect to a neighbour/utility.
+    """
+
+    name: str
+    side: PortSide
+    cell_x: int
+    cell_y: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPort:
+    name: str
+    side: PortSide
+    cell_x: int
+    cell_y: int
+    edge_x: int
+    edge_y: int
+
+    @property
+    def cell(self) -> tuple[int, int]:
+        return (self.cell_x, self.cell_y)
+
+    @property
+    def edge(self) -> tuple[int, int]:
+        return (self.edge_x, self.edge_y)
+
+    @property
+    def utility_anchor(self) -> tuple[int, int]:
+        """Top-left 2x1 Corridor/Elevator anchor immediately outside this port."""
+
+        x = self.edge_x - 2 if self.side is PortSide.LEFT else self.edge_x
+        return (x, self.edge_y)
+
+
+def floor_ports(width: int, height: int) -> tuple[PortSpec, PortSpec]:
+    """Standard LEFT/RIGHT ports on the module floor (bottom footprint row)."""
+
+    floor_y = height - 1
+    return (
+        PortSpec("left", PortSide.LEFT, 0, floor_y),
+        PortSpec("right", PortSide.RIGHT, width - 1, floor_y),
+    )
+
+
+def top_ports(width: int) -> tuple[PortSpec, PortSpec]:
+    """LEFT/RIGHT ports on the top footprint row for verified game exceptions."""
+
+    return (
+        PortSpec("left", PortSide.LEFT, 0, 0),
+        PortSpec("right", PortSide.RIGHT, width - 1, 0),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +88,24 @@ class ModuleSpec:
     mandatory: bool = False
     configurable: bool = True
     visit_weight: float = 0.1
-    connection_level: ConnectionLevel = ConnectionLevel.BOTTOM
+    ports: tuple[PortSpec, ...] = ()
     transit_allowed: bool = True
+
+    def __post_init__(self) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError(f"Invalid module size for {self.key}: {self.width}x{self.height}")
+        if not self.ports:
+            raise ValueError(f"Module {self.key} must define explicit access ports")
+        names = {port.name for port in self.ports}
+        if len(names) != len(self.ports):
+            raise ValueError(f"Module {self.key} has duplicate port names")
+        for port in self.ports:
+            if not (0 <= port.cell_x < self.width and 0 <= port.cell_y < self.height):
+                raise ValueError(f"Port {self.key}.{port.name} lies outside the module footprint")
+            if port.side is PortSide.LEFT and port.cell_x != 0:
+                raise ValueError(f"LEFT port {self.key}.{port.name} must use the leftmost cell")
+            if port.side is PortSide.RIGHT and port.cell_x != self.width - 1:
+                raise ValueError(f"RIGHT port {self.key}.{port.name} must use the rightmost cell")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +130,27 @@ class Placement:
             for xx in range(self.x, self.x + self.width)
             for yy in range(self.y, self.y + self.height)
         )
+
+
+def resolve_ports(room: Placement, spec: ModuleSpec) -> tuple[ResolvedPort, ...]:
+    """Resolve relative port definitions to absolute floor-grid and boundary coordinates."""
+
+    result: list[ResolvedPort] = []
+    for port in spec.ports:
+        cell_x = room.x + port.cell_x
+        cell_y = room.y + port.cell_y
+        edge_x = room.x if port.side is PortSide.LEFT else room.x + room.width
+        result.append(
+            ResolvedPort(
+                name=port.name,
+                side=port.side,
+                cell_x=cell_x,
+                cell_y=cell_y,
+                edge_x=edge_x,
+                edge_y=cell_y,
+            )
+        )
+    return tuple(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +213,7 @@ class PlanResult:
     corridor_count: int = 0
     weighted_distance_score: float | None = None
     normalized_weighted_distance: float | None = None
+    modified_manhattan_lower_bound: float | None = None
     pairwise_distances: dict[str, int] = field(default_factory=dict)
     pairwise_contributions: dict[str, float] = field(default_factory=dict)
     room_usage_weights: dict[str, float] = field(default_factory=dict)
