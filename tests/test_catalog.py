@@ -1,5 +1,5 @@
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
-from alters_base_planner.models import ConnectionLevel
+from alters_base_planner.models import PortSide
 
 
 def test_module_keys_are_unique() -> None:
@@ -24,9 +24,25 @@ def test_verified_mass_values_and_special_connectivity() -> None:
     assert MODULE_BY_KEY["rapidium_ark"].mass == 32
 
     repulsor = MODULE_BY_KEY["radiation_repulsor"]
-    assert repulsor.connection_level is ConnectionLevel.TOP
+    assert {port.cell_y for port in repulsor.ports} == {0}
     assert repulsor.transit_allowed is False
     assert MODULE_BY_KEY["rapidium_ark"].transit_allowed is False
+
+
+def test_every_module_defines_extreme_left_and_right_ports() -> None:
+    for module in MODULES:
+        left = [port for port in module.ports if port.side is PortSide.LEFT]
+        right = [port for port in module.ports if port.side is PortSide.RIGHT]
+        assert left, module.key
+        assert right, module.key
+        assert all(port.cell_x == 0 for port in left)
+        assert all(port.cell_x == module.width - 1 for port in right)
+
+
+def test_normal_multirow_modules_use_floor_ports() -> None:
+    for key in ("quantum_computer", "small_storage", "large_storage", "materializer"):
+        module = MODULE_BY_KEY[key]
+        assert {port.cell_y for port in module.ports} == {module.height - 1}
 
 
 def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
