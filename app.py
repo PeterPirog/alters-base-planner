@@ -10,6 +10,7 @@ from alters_base_planner.base import builtin_base
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.config import load_plan_config
 from alters_base_planner.engine import solve_plan
+from alters_base_planner.models import resolve_ports
 from alters_base_planner.render import average_pair_distance, render_png, render_svg
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
@@ -59,29 +60,40 @@ if st.button("Optimize layout", type="primary"):
     st.write(result.message)
 
     if result.rooms:
-        o1, o2, o3, o4 = st.columns(4)
+        o1, o2, o3, o4, o5 = st.columns(5)
         o1.metric(
             "Objective F",
             f"{result.weighted_distance_score:.4f}"
             if result.weighted_distance_score is not None
             else "n/a",
         )
-        o2.metric("Average pair distance", f"{average_pair_distance(result):.2f}")
-        o3.metric(
-            "Weighted average distance",
+        o2.metric(
+            "Manhattan LB",
+            f"{result.modified_manhattan_lower_bound:.4f}"
+            if result.modified_manhattan_lower_bound is not None
+            else "n/a",
+        )
+        o3.metric("Average pair distance", f"{average_pair_distance(result):.2f}")
+        o4.metric(
+            "Weighted average",
             f"{result.normalized_weighted_distance:.2f}"
             if result.normalized_weighted_distance is not None
             else "n/a",
         )
-        o4.metric("Elevators / Corridors", f"{result.elevator_module_count} / {result.corridor_count}")
+        o5.metric("Elevators / Corridors", f"{result.elevator_module_count} / {result.corridor_count}")
 
         st.caption(
-            "Distance rule: adjacent endpoint rooms = 0; each Corridor = +1; each Elevator "
-            "module = +1; an intermediate transit room adds its width in grid cells. "
-            "Objective = Σ(i<j) wi·wj·dij."
+            "Distances are measured between explicit room ports. Standard multi-row rooms expose "
+            "LEFT/RIGHT ports on the floor row, never at the ceiling. Adjacent endpoint rooms = 0; "
+            "each Corridor = +1; each Elevator module = +1; an intermediate transit room adds its "
+            "full width. Objective = Σ(i<j) wi·wj·dij."
         )
         st.caption(
-            "Vertical hard rule: every floor in the used floor span needs an Elevator stop, "
+            "Modified Manhattan is an admissible explicit-port lower bound used only to prune "
+            "room packings that cannot beat the best exact F."
+        )
+        st.caption(
+            "Vertical hard rule: every floor in the used port-floor span needs an Elevator stop, "
             "and every adjacent floor pair must share at least one Elevator x-coordinate."
         )
         if not result.global_objective_optimum_proven:
@@ -124,6 +136,7 @@ if st.button("Optimize layout", type="primary"):
                 "optimization": {
                     "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
                     "weighted_distance_score": result.weighted_distance_score,
+                    "modified_manhattan_lower_bound": result.modified_manhattan_lower_bound,
                     "average_pair_distance": average_pair_distance(result),
                     "weighted_average_pair_distance": result.normalized_weighted_distance,
                     "global_objective_optimum_proven": result.global_objective_optimum_proven,
@@ -146,28 +159,38 @@ if st.button("Optimize layout", type="primary"):
                 },
                 "rooms": [
                     {
-                        "instance_id": r.instance_id,
-                        "module_key": r.module_key,
-                        "mass": MODULE_BY_KEY[r.module_key].mass,
-                        "usage_weight": MODULE_BY_KEY[r.module_key].visit_weight,
-                        "x": r.x,
-                        "y": r.y,
-                        "width": r.width,
-                        "height": r.height,
+                        "instance_id": room.instance_id,
+                        "module_key": room.module_key,
+                        "mass": MODULE_BY_KEY[room.module_key].mass,
+                        "usage_weight": MODULE_BY_KEY[room.module_key].visit_weight,
+                        "x": room.x,
+                        "y": room.y,
+                        "width": room.width,
+                        "height": room.height,
+                        "ports": [
+                            {
+                                "name": port.name,
+                                "side": port.side.value,
+                                "cell": [port.cell_x, port.cell_y],
+                                "edge": [port.edge_x, port.edge_y],
+                                "utility_anchor": list(port.utility_anchor),
+                            }
+                            for port in resolve_ports(room, MODULE_BY_KEY[room.module_key])
+                        ],
                     }
-                    for r in result.rooms
+                    for room in result.rooms
                 ],
                 "utilities": [
                     {
-                        "kind": u.kind,
+                        "kind": utility.kind,
                         "mass": 2,
                         "distance_cost": 1,
-                        "x": u.x,
-                        "y": u.y,
-                        "width": u.width,
-                        "height": u.height,
+                        "x": utility.x,
+                        "y": utility.y,
+                        "width": utility.width,
+                        "height": utility.height,
                     }
-                    for u in result.utilities
+                    for utility in result.utilities
                 ],
             }
         )
