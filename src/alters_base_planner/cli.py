@@ -8,11 +8,11 @@ from .base import builtin_base
 from .catalog import MODULE_BY_KEY
 from .config import load_plan_config
 from .engine import solve_plan
-from .models import resolve_ports
+from .models import PlanResult, resolve_ports
 from .render import average_pair_distance, render_png, render_svg
 
 
-def _result_payload(result) -> dict[str, object]:
+def _result_payload(result: PlanResult) -> dict[str, object]:
     return {
         "status": result.status,
         "attempts": result.attempts,
@@ -44,6 +44,12 @@ def _result_payload(result) -> dict[str, object]:
             "average_pair_distance": average_pair_distance(result),
             "weighted_average_pair_distance": result.normalized_weighted_distance,
             "global_objective_optimum_proven": result.global_objective_optimum_proven,
+            "connected_candidates_examined": result.connected_candidates_examined,
+            "room_packings_examined": result.attempts,
+            "manhattan_pruned_count": result.manhattan_pruned_count,
+            "search_time_s": result.search_time_s,
+            "time_limit_reached": result.time_limit_reached,
+            "search_exhausted": result.search_exhausted,
             "elevator_module_count": result.elevator_module_count,
             "elevator_shaft_count": result.elevator_shaft_count,
             "corridor_count": result.corridor_count,
@@ -120,18 +126,24 @@ def main() -> None:
 
     result = solve_plan(loaded.request, base)
     payload = _result_payload(result)
-    print(json.dumps(payload, indent=2))
+    payload_text = json.dumps(payload, indent=2)
+    print(payload_text)
+
+    # JSON is the machine-readable audit result and is always persisted, including
+    # infeasible/time-limit outcomes. PNG/SVG exist only when a feasible layout exists.
+    loaded.output.json.parent.mkdir(parents=True, exist_ok=True)
+    loaded.output.json.write_text(payload_text, encoding="utf-8")
+    print(f"Wrote {loaded.output.json}")
 
     if result.rooms:
         loaded.output.svg.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.png.parent.mkdir(parents=True, exist_ok=True)
-        loaded.output.json.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.svg.write_text(render_svg(result), encoding="utf-8")
         render_png(result, loaded.output.png)
-        loaded.output.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"Wrote {loaded.output.svg}")
         print(f"Wrote {loaded.output.png}")
-        print(f"Wrote {loaded.output.json}")
+    else:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
