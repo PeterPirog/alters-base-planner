@@ -3,6 +3,8 @@ import pytest
 from alters_base_planner.distance import (
     _validate_vertical_elevator_coverage,
     evaluate_distances,
+    modified_manhattan_room_lower_bound,
+    room_access_rows,
 )
 from alters_base_planner.models import Placement, UtilityPlacement
 
@@ -14,6 +16,7 @@ def test_directly_adjacent_rooms_have_zero_distance() -> None:
     ]
     metrics = evaluate_distances(rooms, [])
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 0
+    assert metrics.pairwise_manhattan_lower_bounds["airlock-1|workshop-1"] == 0
     assert metrics.weighted_score == 0
 
 
@@ -35,7 +38,6 @@ def test_intermediate_room_adds_its_grid_length() -> None:
     metrics = evaluate_distances(rooms, [])
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 0
     assert metrics.pairwise_distances["workshop-1|command-1"] == 0
-    # Workshop is an intermediate 4-cell room on the Airlock -> Command route.
     assert metrics.pairwise_distances["airlock-1|command-1"] == 4
 
 
@@ -47,6 +49,7 @@ def test_one_corridor_adds_one_distance_point() -> None:
     utilities = [UtilityPlacement("corridor", 4, 0)]
     metrics = evaluate_distances(rooms, utilities)
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 1
+    assert metrics.pairwise_manhattan_lower_bounds["airlock-1|workshop-1"] == 1
     assert metrics.weighted_score == pytest.approx(1.0 * 0.90 * 1)
 
 
@@ -65,7 +68,24 @@ def test_every_elevator_module_adds_one_distance_point() -> None:
     assert metrics.elevator_module_count == 4
     assert metrics.elevator_shaft_count == 1
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 4
+    assert modified_manhattan_room_lower_bound(rooms[0], rooms[1]) == 4
     assert metrics.weighted_score == pytest.approx(1.0 * 0.90 * 4)
+
+
+def test_multirow_room_is_entered_at_floor_not_ceiling() -> None:
+    quantum = Placement("quantum-1", "quantum_computer", 0, 0, 4, 2)
+    workshop = Placement("workshop-1", "workshop", 6, 1, 4, 1)
+    assert room_access_rows(quantum) == frozenset({1})
+    metrics = evaluate_distances(
+        [quantum, workshop],
+        [UtilityPlacement("corridor", 4, 1)],
+    )
+    assert metrics.pairwise_distances["quantum-1|workshop-1"] == 1
+
+
+def test_radiation_repulsor_retains_verified_top_access_exception() -> None:
+    repulsor = Placement("repulsor-1", "radiation_repulsor", 0, 0, 2, 3)
+    assert room_access_rows(repulsor) == frozenset({0})
 
 
 def test_missing_intermediate_elevator_level_is_hard_infeasible() -> None:
