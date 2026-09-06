@@ -52,6 +52,14 @@ def test_mandatory_rooms_cannot_be_configured(tmp_path) -> None:
         load_plan_config(path)
 
 
+@pytest.mark.parametrize("key", ["corridor", "corridors", "elevator", "elevators"])
+def test_solver_managed_utilities_cannot_be_configured(tmp_path, key: str) -> None:
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps({"base_tier": 2, "rooms": {key: 3}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="solver-managed"):
+        load_plan_config(path)
+
+
 def test_unknown_room_key_is_rejected(tmp_path) -> None:
     path = tmp_path / "plan.json"
     path.write_text(json.dumps({"base_tier": 1, "rooms": {"teleporter": 1}}), encoding="utf-8")
