@@ -8,6 +8,7 @@ from .base import builtin_base
 from .catalog import MODULE_BY_KEY
 from .config import load_plan_config
 from .engine import solve_plan
+from .models import resolve_ports
 from .render import average_pair_distance, render_png, render_svg
 
 
@@ -29,13 +30,17 @@ def _result_payload(result) -> dict[str, object]:
         "optimization": {
             "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
             "distance_rule": {
+                "measurement": "explicit room port to explicit room port",
+                "normal_room_ports": "extreme left/right cells on room floor",
                 "direct_room_adjacency": 0,
                 "corridor_module": 1,
                 "elevator_module": 1,
                 "endpoint_room_length": 0,
                 "intermediate_room_length": "room width in grid cells",
+                "modified_manhattan": "admissible explicit-port lower bound used for pruning",
             },
             "weighted_distance_score": result.weighted_distance_score,
+            "modified_manhattan_lower_bound": result.modified_manhattan_lower_bound,
             "average_pair_distance": average_pair_distance(result),
             "weighted_average_pair_distance": result.normalized_weighted_distance,
             "global_objective_optimum_proven": result.global_objective_optimum_proven,
@@ -66,6 +71,16 @@ def _result_payload(result) -> dict[str, object]:
                 "y": room.y,
                 "width": room.width,
                 "height": room.height,
+                "ports": [
+                    {
+                        "name": port.name,
+                        "side": port.side.value,
+                        "cell": [port.cell_x, port.cell_y],
+                        "edge": [port.edge_x, port.edge_y],
+                        "utility_anchor": list(port.utility_anchor),
+                    }
+                    for port in resolve_ports(room, MODULE_BY_KEY[room.module_key])
+                ],
             }
             for room in result.rooms
         ],
