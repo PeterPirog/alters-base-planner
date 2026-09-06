@@ -1,5 +1,5 @@
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
-from alters_base_planner.models import PortSide
+from alters_base_planner.models import PortSide, floor_ports
 
 
 def test_module_keys_are_unique() -> None:
@@ -37,6 +37,14 @@ def test_every_module_defines_extreme_left_and_right_ports() -> None:
         assert right, module.key
         assert all(port.cell_x == 0 for port in left)
         assert all(port.cell_x == module.width - 1 for port in right)
+
+
+def test_one_by_one_room_has_two_logical_ports_on_same_physical_cell() -> None:
+    left, right = floor_ports(1, 1)
+    assert (left.cell_x, left.cell_y) == (0, 0)
+    assert (right.cell_x, right.cell_y) == (0, 0)
+    assert left.side is PortSide.LEFT
+    assert right.side is PortSide.RIGHT
 
 
 def test_normal_multirow_modules_use_floor_ports() -> None:
