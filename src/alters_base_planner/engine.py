@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass
+from time import monotonic
 
 from ortools.sat.python import cp_model
 
@@ -146,7 +147,7 @@ def _shortest_path(
 ) -> list[tuple[int, int]] | None:
     if not starts or not goals:
         return None
-    q = deque(starts)
+    q = deque(sorted(starts))
     prev: dict[tuple[int, int], tuple[int, int] | None] = {s: None for s in starts}
     hit = None
     while q:
@@ -154,7 +155,7 @@ def _shortest_path(
         if cur in goals:
             hit = cur
             break
-        for nxt in _neighbors(cur, valid):
+        for nxt in sorted(_neighbors(cur, valid)):
             if nxt not in prev:
                 prev[nxt] = cur
                 q.append(nxt)
@@ -209,7 +210,7 @@ def _route_utilities(
             if component not in connected_components
         }
 
-        for component in candidate_components:
+        for component in sorted(candidate_components):
             starts = component_anchors.get(component, set())
             path = _shortest_path(starts, network, valid_anchors | used)
             if path is not None and (best_path is None or len(path) < len(best_path)):
@@ -265,15 +266,70 @@ def _candidate_rank(result: PlanResult) -> tuple[float, int, int, int]:
     )
 
 
+def _add_identical_instance_symmetry_breaking(
+    model: cp_model.CpModel,
+    instances: list[ModuleInstance],
+    vars_by_instance: dict[str, list[cp_model.IntVar]],
+) -> None:
+    """Remove pure label permutations between identical room instances.
+
+    Candidate lists are generated deterministically and identically for equal ModuleSpecs.
+    Enforcing increasing selected candidate indices means e.g. swapping `storage-1` and
+    `storage-2` can no longer consume a separate layout attempt.
+    """
+
+    groups: dict[str, list[ModuleInstance]] = {}
+    for instance in instances:
+        groups.setdefault(instance.spec.key, []).append(instance)
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        for left, right in zip(group, group[1:], strict=False):
+            left_vars = vars_by_instance[left.instance_id]
+            right_vars = vars_by_instance[right.instance_id]
+            if len(left_vars) != len(right_vars):
+                raise AssertionError("Identical module instances must have identical candidates")
+            left_rank = sum(index * var for index, var in enumerate(left_vars))
+            right_rank = sum(index * var for index, var in enumerate(right_vars))
+            model.add(left_rank < right_rank)
+
+
+def _finalize_search_diagnostics(
+    result: PlanResult,
+    *,
+    attempts: int,
+    connected_candidates: int,
+    manhattan_pruned: int,
+    started_at: float,
+    time_limit_reached: bool,
+    search_exhausted: bool,
+) -> None:
+    result.attempts = attempts
+    result.connected_candidates_examined = connected_candidates
+    result.manhattan_pruned_count = manhattan_pruned
+    result.search_time_s = monotonic() - started_at
+    result.time_limit_reached = time_limit_reached
+    result.search_exhausted = search_exhausted
+
+
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
     """Find hard-feasible layouts and minimize exact weighted room-pair travel distance.
 
-    Modified Manhattan is an admissible port-to-port lower bound used to prune room
-    packings whose theoretical best score is already worse than the best exact layout.
+    `time_limit_s` is a single wall-clock search budget for the whole solve operation,
+    not a fresh allowance for every no-good iteration. Modified Manhattan is an
+    admissible port-to-port lower bound used to prune room packings whose theoretical
+    best score is already worse than the best exact layout.
+
     The final objective always uses legal graph paths: endpoint rooms cost 0, each
     Corridor/Elevator costs +1, and an intermediate transit room costs its full width.
     """
 
+    started_at = monotonic()
+    if base is not None and base.tier != request.tier:
+        raise ValueError(
+            f"PlanRequest tier {request.tier} does not match supplied BaseGeometry tier {base.tier}"
+        )
     base = base or builtin_base(request.tier)
     instances = expand_instances(MODULES, request.room_counts)
     model = cp_model.CpModel()
@@ -285,11 +341,21 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     for inst in instances:
         cand = _candidate_positions(inst, base)
         if not cand:
-            return PlanResult(
+            result = PlanResult(
                 status="INFEASIBLE",
                 base=base,
                 message=f"No legal position for {inst.spec.name}",
             )
+            _finalize_search_diagnostics(
+                result,
+                attempts=0,
+                connected_candidates=0,
+                manhattan_pruned=0,
+                started_at=started_at,
+                time_limit_reached=False,
+                search_exhausted=True,
+            )
+            return result
         candidates[inst.instance_id] = cand
         variables = [
             model.new_bool_var(f"p_{inst.instance_id}_{idx}") for idx in range(len(cand))
@@ -304,27 +370,42 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     for variables in cell_vars.values():
         model.add(sum(variables) <= 1)
 
+    _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
     model.minimize(sum(search_terms))
+
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max(1.0, request.time_limit_s)
     solver.parameters.num_search_workers = 8
 
     best_result: PlanResult | None = None
     connected_candidates = 0
     manhattan_pruned = 0
+    room_packings_examined = 0
+    time_limit_reached = False
+    search_exhausted = False
+    attempt_limit_reached = False
+    deadline = started_at + float(request.time_limit_s)
 
-    for attempt in range(1, request.max_layout_attempts + 1):
+    for _ in range(request.max_layout_attempts):
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            time_limit_reached = True
+            break
+
+        solver.parameters.max_time_in_seconds = max(0.001, remaining)
         status = solver.solve(model)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            if best_result is not None:
-                return best_result
-            return PlanResult(
-                status="INFEASIBLE",
-                base=base,
-                attempts=attempt,
-                message="No feasible room packing found",
-            )
 
+        if status == cp_model.MODEL_INVALID:
+            raise RuntimeError("CP-SAT rejected the generated placement model as invalid")
+        if status == cp_model.UNKNOWN:
+            time_limit_reached = True
+            break
+        if status == cp_model.INFEASIBLE:
+            search_exhausted = True
+            break
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            raise RuntimeError(f"Unexpected CP-SAT status: {status}")
+
+        room_packings_examined += 1
         rooms: list[Placement] = []
         chosen_vars: list[cp_model.IntVar] = []
         for inst in instances:
@@ -344,6 +425,9 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     chosen_vars.append(var)
                     break
 
+        if len(chosen_vars) != len(instances):
+            raise AssertionError("CP-SAT solution did not select exactly one placement per room")
+
         manhattan_lb = weighted_modified_manhattan_lower_bound(rooms)
         if (
             best_result is not None
@@ -358,9 +442,11 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         if utilities is not None:
             try:
                 distance_metrics = evaluate_distances(rooms, utilities)
-            except (ValueError, AssertionError):
+            except ValueError:
                 distance_metrics = None
 
+            # AssertionError is deliberately not caught: it represents a violated internal
+            # solver invariant and must fail fast instead of silently discarding a valid layout.
             if distance_metrics is not None:
                 connected_candidates += 1
                 room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
@@ -384,7 +470,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     rooms=rooms,
                     utilities=utilities,
                     objective_value=distance_metrics.weighted_score,
-                    attempts=attempt,
+                    attempts=room_packings_examined,
                     message=message,
                     room_mass=room_mass,
                     utility_mass=utility_mass,
@@ -410,22 +496,80 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     best_result = candidate_result
 
         model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+    else:
+        attempt_limit_reached = True
+
+    if monotonic() >= deadline and not search_exhausted:
+        time_limit_reached = True
 
     if best_result is not None:
+        _finalize_search_diagnostics(
+            best_result,
+            attempts=room_packings_examined,
+            connected_candidates=connected_candidates,
+            manhattan_pruned=manhattan_pruned,
+            started_at=started_at,
+            time_limit_reached=time_limit_reached,
+            search_exhausted=search_exhausted,
+        )
+        if search_exhausted:
+            stop_reason = "room-packing search exhausted"
+        elif time_limit_reached:
+            stop_reason = f"global {request.time_limit_s:g}s search budget reached"
+        elif attempt_limit_reached:
+            stop_reason = f"{request.max_layout_attempts} layout-attempt limit reached"
+        else:
+            stop_reason = "search stopped"
         best_result.message += (
-            f" Best objective among {connected_candidates} connected candidates examined; "
-            f"{manhattan_pruned} additional room packings pruned by the admissible explicit-port "
-            "modified-Manhattan lower bound. Mass is a tie-breaker only. Global optimality is "
-            "not yet proven until placement and routing are integrated in one exact model."
+            f" Best objective among {connected_candidates} connected candidates examined from "
+            f"{room_packings_examined} unique room packings; {manhattan_pruned} additional "
+            "packings pruned by the admissible explicit-port modified-Manhattan lower bound; "
+            f"{stop_reason}. Identical-room label permutations are symmetry-broken. Mass is a "
+            "tie-breaker only. Global optimality is not yet proven until placement and routing "
+            "are integrated in one exact model."
         )
         return best_result
 
-    return PlanResult(
-        status="NO_CONNECTED_LAYOUT",
-        base=base,
-        attempts=request.max_layout_attempts,
-        message=(
-            "Room packings were feasible, but automatic corridor/elevator routing failed. "
-            "Try a larger tier or fewer rooms."
-        ),
+    if time_limit_reached:
+        result = PlanResult(
+            status="TIME_LIMIT",
+            base=base,
+            attempts=room_packings_examined,
+            message=(
+                f"No connected layout was found within the global {request.time_limit_s:g}s "
+                f"search budget after examining {room_packings_examined} unique room packings."
+            ),
+        )
+    elif search_exhausted and room_packings_examined == 0:
+        result = PlanResult(
+            status="INFEASIBLE",
+            base=base,
+            message="No feasible room packing exists for the selected base and room set",
+        )
+    else:
+        reason = (
+            "the complete room-packing search was exhausted"
+            if search_exhausted
+            else f"the {request.max_layout_attempts} layout-attempt limit was reached"
+        )
+        result = PlanResult(
+            status="NO_CONNECTED_LAYOUT",
+            base=base,
+            attempts=room_packings_examined,
+            message=(
+                "Room packings were physically feasible, but automatic corridor/elevator "
+                f"routing found no connected layout before {reason}. Try a larger tier, fewer "
+                "rooms, or a larger search budget."
+            ),
+        )
+
+    _finalize_search_diagnostics(
+        result,
+        attempts=room_packings_examined,
+        connected_candidates=connected_candidates,
+        manhattan_pruned=manhattan_pruned,
+        started_at=started_at,
+        time_limit_reached=time_limit_reached,
+        search_exhausted=search_exhausted,
     )
+    return result
