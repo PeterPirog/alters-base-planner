@@ -61,6 +61,50 @@ def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
     return a.edge_y == b.edge_y and a.edge_x == b.edge_x and a.side is not b.side
 
 
+def _anchor_cells(anchor: tuple[int, int]) -> frozenset[tuple[int, int]]:
+    x, y = anchor
+    return frozenset({(x, y), (x + 1, y)})
+
+
+def _anchor_is_compatible_with_used(
+    anchor: tuple[int, int], used: set[tuple[int, int]]
+) -> bool:
+    """An exact reused anchor is legal; a one-cell overlap with another 2x1 utility is not."""
+
+    if anchor in used:
+        return True
+    cells = _anchor_cells(anchor)
+    return all(not (cells & _anchor_cells(other)) for other in used)
+
+
+def _validate_utility_geometry(
+    base: BaseGeometry,
+    rooms: list[Placement],
+    utilities: list[UtilityPlacement],
+) -> None:
+    """Fail fast if generated utility modules violate physical occupancy constraints."""
+
+    room_cells = set().union(*(room.cells for room in rooms)) if rooms else set()
+    utility_cells: set[tuple[int, int]] = set()
+    seen_anchors: set[tuple[int, int]] = set()
+
+    for utility in utilities:
+        anchor = (utility.x, utility.y)
+        if anchor in seen_anchors:
+            raise AssertionError(f"Duplicate generated utility anchor at {anchor}")
+        seen_anchors.add(anchor)
+        if not utility.cells <= base.buildable_cells:
+            raise AssertionError(f"Generated utility lies outside buildable base cells: {anchor}")
+        if utility.cells & room_cells:
+            raise AssertionError(f"Generated utility overlaps a room at {anchor}")
+        overlap = utility.cells & utility_cells
+        if overlap:
+            raise AssertionError(
+                f"Generated utility modules overlap at cells {sorted(overlap)}; anchor={anchor}"
+            )
+        utility_cells.update(utility.cells)
+
+
 def _room_port_components(
     rooms: list[Placement],
     base: BaseGeometry,
@@ -171,7 +215,7 @@ def _shortest_path(
 def _route_utilities(
     base: BaseGeometry, rooms: list[Placement]
 ) -> list[UtilityPlacement] | None:
-    """Create Corridors/Elevators automatically from room ports; player never supplies them."""
+    """Create non-overlapping Corridors/Elevators automatically from explicit room ports."""
 
     occupied: set[tuple[int, int]] = set().union(*(r.cells for r in rooms)) if rooms else set()
     valid_anchors: set[tuple[int, int]] = set()
@@ -194,9 +238,18 @@ def _route_utilities(
         return bool(module_components[idx] & connected_components)
 
     while not all(module_is_connected(idx) for idx in range(len(rooms))):
+        routing_valid = {
+            anchor for anchor in valid_anchors if _anchor_is_compatible_with_used(anchor, used)
+        }
+        routing_valid.update(used)
+
         network = set(used)
         for component in connected_components:
-            network.update(component_anchors.get(component, set()))
+            network.update(
+                anchor
+                for anchor in component_anchors.get(component, set())
+                if anchor in routing_valid
+            )
         if not network:
             return None
 
@@ -211,8 +264,12 @@ def _route_utilities(
         }
 
         for component in sorted(candidate_components):
-            starts = component_anchors.get(component, set())
-            path = _shortest_path(starts, network, valid_anchors | used)
+            starts = {
+                anchor
+                for anchor in component_anchors.get(component, set())
+                if anchor in routing_valid
+            }
+            path = _shortest_path(starts, network, routing_valid)
             if path is not None and (best_path is None or len(path) < len(best_path)):
                 best_component = component
                 best_path = path
@@ -220,6 +277,8 @@ def _route_utilities(
         if best_component is None or best_path is None:
             return None
 
+        # A path moves horizontally in 2-cell steps or vertically at identical x. It cannot
+        # overlap itself; routing_valid additionally prevents overlap with earlier paths.
         used.update(best_path)
         for a, b in zip(best_path, best_path[1:], strict=False):
             if a[0] == b[0]:
@@ -227,10 +286,12 @@ def _route_utilities(
                 vertical.add(b)
         connected_components.add(best_component)
 
-    return [
+    utilities = [
         UtilityPlacement("elevator" if anchor in vertical else "corridor", anchor[0], anchor[1])
         for anchor in sorted(used)
     ]
+    _validate_utility_geometry(base, rooms, utilities)
+    return utilities
 
 
 def _mass_metrics(
@@ -271,12 +332,7 @@ def _add_identical_instance_symmetry_breaking(
     instances: list[ModuleInstance],
     vars_by_instance: dict[str, list[cp_model.IntVar]],
 ) -> None:
-    """Remove pure label permutations between identical room instances.
-
-    Candidate lists are generated deterministically and identically for equal ModuleSpecs.
-    Enforcing increasing selected candidate indices means e.g. swapping `storage-1` and
-    `storage-2` can no longer consume a separate layout attempt.
-    """
+    """Remove pure label permutations between identical room instances."""
 
     groups: dict[str, list[ModuleInstance]] = {}
     for instance in instances:
