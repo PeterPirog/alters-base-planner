@@ -42,6 +42,7 @@ def _module(
     configurable: bool = True,
     transit_allowed: bool = True,
     top_access: bool = False,
+    max_count: int | None = None,
 ) -> ModuleSpec:
     ports = top_ports(width) if top_access else floor_ports(width, height)
     return ModuleSpec(
@@ -56,6 +57,7 @@ def _module(
         visit_weight=_w(key),
         ports=ports,
         transit_allowed=transit_allowed,
+        max_count=max_count,
     )
 
 
@@ -99,7 +101,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         ModuleType.STORAGE,
         transit_allowed=False,
     ),
-    _module("recycler", "Recycler", 2, 1, 2, ModuleType.WELLBEING),
+    _module("recycler", "Recycler", 2, 1, 2, ModuleType.WELLBEING, max_count=1),
     _module("refinery", "Refinery", 4, 1, 8, ModuleType.WORK),
     _module("research_lab", "Research Lab", 4, 1, 8, ModuleType.WORK),
     _module("small_storage", "Small Storage", 2, 2, 28, ModuleType.STORAGE),
