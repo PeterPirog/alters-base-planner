@@ -207,8 +207,10 @@ class BaseGeometry:
     note: str = ""
 
     def __post_init__(self) -> None:
-        if self.tier not in (1, 2, 3, 4):
-            raise ValueError(f"Unsupported base tier: {self.tier}")
+        # BaseGeometry is also used by custom/imported grids, so its tier identifier is
+        # deliberately extensible. Only player-facing PlanRequest is restricted to I-IV.
+        if isinstance(self.tier, bool) or not isinstance(self.tier, int) or self.tier <= 0:
+            raise ValueError("Base geometry tier must be a positive integer")
         if self.width <= 0 or self.height <= 0:
             raise ValueError("Base geometry must have positive width and height")
         if self.organics_capacity < 0:
