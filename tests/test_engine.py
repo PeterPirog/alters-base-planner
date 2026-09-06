@@ -1,10 +1,6 @@
 from alters_base_planner.base import builtin_base
-from alters_base_planner.engine import (
-    _connection_row,
-    _mass_metrics,
-    _route_utilities,
-    solve_plan,
-)
+from alters_base_planner.distance import room_access_rows
+from alters_base_planner.engine import _mass_metrics, _route_utilities, solve_plan
 from alters_base_planner.models import BaseGeometry, Placement, PlanRequest, UtilityPlacement
 
 
@@ -22,11 +18,11 @@ def test_base_tiers_grow_but_exact_masks_remain_provisional() -> None:
     assert len(set(areas)) == 4
 
 
-def test_special_connection_rows() -> None:
+def test_explicit_port_access_rows_for_regular_and_special_modules() -> None:
     regular = Placement("storage-1", "small_storage", 4, 5, 2, 2)
     repulsor = Placement("repulsor-1", "radiation_repulsor", 4, 5, 2, 3)
-    assert _connection_row(regular) == 6
-    assert _connection_row(repulsor) == 5
+    assert room_access_rows(regular) == frozenset({6})
+    assert room_access_rows(repulsor) == frozenset({5})
 
 
 def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
