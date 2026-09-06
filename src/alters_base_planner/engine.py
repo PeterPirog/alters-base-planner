@@ -7,16 +7,18 @@ from ortools.sat.python import cp_model
 
 from .base import builtin_base
 from .catalog import MODULE_BY_KEY, MODULES
-from .distance import evaluate_distances
+from .distance import evaluate_distances, weighted_modified_manhattan_lower_bound
 from .models import (
     BaseGeometry,
-    ConnectionLevel,
     ModuleInstance,
     Placement,
     PlanRequest,
     PlanResult,
+    PortSide,
+    ResolvedPort,
     UtilityPlacement,
     expand_instances,
+    resolve_ports,
 )
 
 UTILITY_MASS = 2
@@ -31,16 +33,13 @@ class _Candidate:
 
 
 def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
-    """Enumerate all legal room positions.
-
-    search_cost is only a CP-SAT candidate-ordering heuristic. It is NOT the
-    planner objective; final layouts are ranked exclusively by weighted pair distance.
-    """
+    """Enumerate legal room positions using port-floor proximity only as search ordering."""
 
     spec = instance.spec
     cx = (base.width - 1) / 2
     cy = (base.height - 1) / 2
     result: list[_Candidate] = []
+    mean_port_y = sum(port.cell_y for port in spec.ports) / len(spec.ports)
     for y in range(base.height - spec.height + 1):
         for x in range(base.width - spec.width + 1):
             cells = frozenset(
@@ -51,28 +50,15 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             if not cells <= base.buildable_cells:
                 continue
             px = x + (spec.width - 1) / 2
-            py = y + spec.height - 1
+            py = y + mean_port_y
             distance = abs(px - cx) + 0.35 * abs(py - cy)
             search_cost = int(100 * max(spec.visit_weight, 0.05) * distance)
             result.append(_Candidate(x, y, cells, search_cost))
     return result
 
 
-def _connection_row(room: Placement) -> int:
-    spec = MODULE_BY_KEY[room.module_key]
-    if spec.connection_level is ConnectionLevel.TOP:
-        return room.y
-    return room.y + room.height - 1
-
-
-def _directly_adjacent(a: Placement, a_side: int, b: Placement, b_side: int) -> bool:
-    if _connection_row(a) != _connection_row(b):
-        return False
-    if a_side == 1 and b_side == 0:
-        return a.x + a.width == b.x
-    if a_side == 0 and b_side == 1:
-        return b.x + b.width == a.x
-    return False
+def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
+    return a.edge_y == b.edge_y and a.edge_x == b.edge_x and a.side is not b.side
 
 
 def _room_port_components(
@@ -80,10 +66,17 @@ def _room_port_components(
     base: BaseGeometry,
     occupied: set[tuple[int, int]],
 ) -> tuple[dict[int, set[int]], dict[int, set[tuple[int, int]]], int] | None:
-    """Build connectivity components from legal left/right access ports."""
+    """Build physical connectivity components from explicit room ports."""
 
-    port_count = len(rooms) * 2
-    parent = list(range(port_count))
+    room_ports = [resolve_ports(room, MODULE_BY_KEY[room.module_key]) for room in rooms]
+    port_index: dict[tuple[int, int], int] = {}
+    next_index = 0
+    for room_idx, ports in enumerate(room_ports):
+        for local_idx in range(len(ports)):
+            port_index[(room_idx, local_idx)] = next_index
+            next_index += 1
+
+    parent = list(range(next_index))
 
     def find(a: int) -> int:
         while parent[a] != a:
@@ -96,30 +89,31 @@ def _room_port_components(
         if ra != rb:
             parent[rb] = ra
 
-    for idx, room in enumerate(rooms):
-        if MODULE_BY_KEY[room.module_key].transit_allowed:
-            union(2 * idx, 2 * idx + 1)
+    # Inside a walk-through room all explicit ports belong to one physical component.
+    for room_idx, room in enumerate(rooms):
+        if not MODULE_BY_KEY[room.module_key].transit_allowed:
+            continue
+        indices = [port_index[(room_idx, i)] for i in range(len(room_ports[room_idx]))]
+        for other in indices[1:]:
+            union(indices[0], other)
 
-    for i, a in enumerate(rooms):
+    # Two rooms join directly only where compatible explicit boundary ports meet.
+    for i, ports_a in enumerate(room_ports):
         for j in range(i + 1, len(rooms)):
-            b = rooms[j]
-            if _directly_adjacent(a, 1, b, 0):
-                union(2 * i + 1, 2 * j)
-            elif _directly_adjacent(a, 0, b, 1):
-                union(2 * i, 2 * j + 1)
+            for local_a, port_a in enumerate(ports_a):
+                for local_b, port_b in enumerate(room_ports[j]):
+                    if _ports_directly_meet(port_a, port_b):
+                        union(port_index[(i, local_a)], port_index[(j, local_b)])
 
     module_components: dict[int, set[int]] = {}
     component_anchors: dict[int, set[tuple[int, int]]] = {}
 
-    for idx, room in enumerate(rooms):
+    for room_idx, ports in enumerate(room_ports):
         components: set[int] = set()
-        row = _connection_row(room)
-        for side in (0, 1):
-            port = 2 * idx + side
-            root = find(port)
+        for local_idx, port in enumerate(ports):
+            root = find(port_index[(room_idx, local_idx)])
             components.add(root)
-
-            x = room.x - 2 if side == 0 else room.x + room.width
+            x, row = port.utility_anchor
             cells = {(x, row), (x + 1, row)}
             if (
                 x >= 0
@@ -128,15 +122,15 @@ def _room_port_components(
                 and not (cells & occupied)
             ):
                 component_anchors.setdefault(root, set()).add((x, row))
-        module_components[idx] = components
+        module_components[room_idx] = components
 
     airlock_idx = next(
         (idx for idx, room in enumerate(rooms) if room.module_key == "airlock"),
         None,
     )
-    if airlock_idx is None:
+    if airlock_idx is None or not room_ports[airlock_idx]:
         return None
-    root_component = find(2 * airlock_idx)
+    root_component = find(port_index[(airlock_idx, 0)])
     return module_components, component_anchors, root_component
 
 
@@ -177,7 +171,7 @@ def _shortest_path(
 def _route_utilities(
     base: BaseGeometry, rooms: list[Placement]
 ) -> list[UtilityPlacement] | None:
-    """Create a legal connected utility network for one room packing."""
+    """Create Corridors/Elevators automatically from room ports; player never supplies them."""
 
     occupied: set[tuple[int, int]] = set().union(*(r.cells for r in rooms)) if rooms else set()
     valid_anchors: set[tuple[int, int]] = set()
@@ -264,8 +258,6 @@ def _mass_metrics(
 
 
 def _candidate_rank(result: PlanResult) -> tuple[float, int, int, int]:
-    """User objective first; tie-break only among equal objective values."""
-
     return (
         float(result.weighted_distance_score or 0.0),
         result.total_mass,
@@ -275,16 +267,12 @@ def _candidate_rank(result: PlanResult) -> tuple[float, int, int, int]:
 
 
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
-    """Find hard-feasible candidates and minimize the user-defined objective.
+    """Find hard-feasible layouts and minimize exact weighted room-pair travel distance.
 
-    Objective:
-        sum_{i<j} weight(i) * weight(j) * distance(i,j)
-
-    Distance counts only communication modules between rooms:
-    directly adjacent rooms = 0; each Corridor = +1; each Elevator module = +1.
-    Room dimensions do not add distance. The current placement + post-router search
-    evaluates this objective exactly for every candidate it produces, but does not yet
-    prove the global optimum across the full joint placement/routing search space.
+    Modified Manhattan is an admissible port-to-port lower bound used to prune room
+    packings whose theoretical best score is already worse than the best exact layout.
+    The final objective always uses legal graph paths: endpoint rooms cost 0, each
+    Corridor/Elevator costs +1, and an intermediate transit room costs its full width.
     """
 
     base = base or builtin_base(request.tier)
@@ -317,8 +305,6 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     for variables in cell_vars.values():
         model.add(sum(variables) <= 1)
 
-    # Search-order heuristic only. The returned objective is calculated below from
-    # the final movement graph and never from this CP-SAT helper objective.
     model.minimize(sum(search_terms))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max(1.0, request.time_limit_s)
@@ -326,6 +312,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
 
     best_result: PlanResult | None = None
     connected_candidates = 0
+    manhattan_pruned = 0
 
     for attempt in range(1, request.max_layout_attempts + 1):
         status = solver.solve(model)
@@ -358,11 +345,21 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     chosen_vars.append(var)
                     break
 
+        manhattan_lb = weighted_modified_manhattan_lower_bound(rooms)
+        if (
+            best_result is not None
+            and best_result.weighted_distance_score is not None
+            and manhattan_lb > best_result.weighted_distance_score + 1e-12
+        ):
+            manhattan_pruned += 1
+            model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+            continue
+
         utilities = _route_utilities(base, rooms)
         if utilities is not None:
             try:
                 distance_metrics = evaluate_distances(rooms, utilities)
-            except ValueError:
+            except (ValueError, AssertionError):
                 distance_metrics = None
 
             if distance_metrics is not None:
@@ -375,7 +372,8 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                 }
                 message = (
                     f"Hard-feasible connected candidate. Objective "
-                    f"{distance_metrics.weighted_score:.4f}; Elevator modules "
+                    f"{distance_metrics.weighted_score:.4f}; modified-Manhattan lower bound "
+                    f"{distance_metrics.weighted_manhattan_lower_bound:.4f}; Elevator modules "
                     f"{distance_metrics.elevator_module_count}; Corridors "
                     f"{distance_metrics.corridor_count}; Base Mass {total_mass}; journey requires "
                     f"{total_mass} Organics; tank capacity {base.organics_capacity}. "
@@ -401,6 +399,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                     corridor_count=distance_metrics.corridor_count,
                     weighted_distance_score=distance_metrics.weighted_score,
                     normalized_weighted_distance=distance_metrics.normalized_weighted_distance,
+                    modified_manhattan_lower_bound=distance_metrics.weighted_manhattan_lower_bound,
                     pairwise_distances=distance_metrics.pairwise_distances,
                     pairwise_contributions=distance_metrics.pairwise_contributions,
                     room_usage_weights=room_usage_weights,
@@ -415,9 +414,10 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
 
     if best_result is not None:
         best_result.message += (
-            f" Best objective among {connected_candidates} connected candidates examined. "
-            "Mass is used only as a tie-breaker when the objective is equal. Global optimality "
-            "is not yet proven until placement and routing are integrated in one exact model."
+            f" Best objective among {connected_candidates} connected candidates examined; "
+            f"{manhattan_pruned} additional room packings pruned by the admissible explicit-port "
+            "modified-Manhattan lower bound. Mass is a tie-breaker only. Global optimality is "
+            "not yet proven until placement and routing are integrated in one exact model."
         )
         return best_result
 
