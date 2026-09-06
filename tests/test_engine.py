@@ -2,7 +2,12 @@ import pytest
 
 from alters_base_planner.base import builtin_base
 from alters_base_planner.distance import room_access_rows
-from alters_base_planner.engine import _mass_metrics, _route_utilities, solve_plan
+from alters_base_planner.engine import (
+    _mass_metrics,
+    _route_utilities,
+    _validate_utility_geometry,
+    solve_plan,
+)
 from alters_base_planner.models import BaseGeometry, Placement, PlanRequest, UtilityPlacement
 
 
@@ -47,6 +52,28 @@ def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
     # Everything touches geometrically, but the Ark is sealed/non-transit and fills
     # both rows, so there is no alternative corridor/elevator route around it.
     assert _route_utilities(base, rooms) is None
+
+
+def test_generated_utilities_cannot_overlap_each_other() -> None:
+    base = BaseGeometry(
+        tier=1,
+        width=8,
+        height=2,
+        allowed_cells=frozenset((x, y) for y in range(2) for x in range(8)),
+        blocked_cells=frozenset(),
+        organics_capacity=300,
+        source="unit-test",
+        verified=True,
+    )
+    with pytest.raises(AssertionError, match="overlap"):
+        _validate_utility_geometry(
+            base,
+            [],
+            [
+                UtilityPlacement("corridor", 2, 0),  # cells 2,3
+                UtilityPlacement("corridor", 3, 0),  # cells 3,4: illegal one-cell overlap
+            ],
+        )
 
 
 def test_mass_metrics_match_journey_organics_rule() -> None:
