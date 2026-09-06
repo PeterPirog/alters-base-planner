@@ -29,6 +29,13 @@ def test_verified_mass_values_and_special_connectivity() -> None:
     assert MODULE_BY_KEY["rapidium_ark"].transit_allowed is False
 
 
+def test_verified_count_limits() -> None:
+    assert MODULE_BY_KEY["recycler"].max_count == 1
+    # Public Rapidium Ark sources/version reports conflict on precise count ceilings;
+    # do not invent a hard limit until game-exact data is available.
+    assert MODULE_BY_KEY["rapidium_ark"].max_count is None
+
+
 def test_every_module_defines_extreme_left_and_right_ports() -> None:
     for module in MODULES:
         left = [port for port in module.ports if port.side is PortSide.LEFT]
