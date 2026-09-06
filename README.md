@@ -8,8 +8,8 @@ The player selects the base tier and requested room counts in `config/plan.json`
 
 The planner has two layers:
 
-1. **hard constraints** — all requested/mandatory modules must fit the selected Base tier, avoid the immovable core and overlaps, use legal connections and belong to one walkable network rooted at the Airlock;
-2. **one soft objective** — minimize the weighted sum of pairwise room distances.
+1. **hard constraints** — all requested/mandatory modules must fit the selected Base tier, avoid the immovable core and overlaps, use legal explicit room ports and belong to one walkable network rooted at the Airlock;
+2. **one soft objective** — minimize the weighted sum of exact pairwise room travel distances.
 
 The normative model is in `docs/OPTIMIZATION_MODEL.md`.
 
@@ -33,6 +33,23 @@ X = immovable blocked/core cell
 ```
 
 Width and height are inferred from the CSV itself. The current masks remain provisional (`geometry_verified = false`) until calibrated against game-exact screenshots/assets.
+
+## Explicit room ports
+
+Every room type defines explicit logical LEFT/RIGHT access ports. For a normal room of width `W` and height `H` the ports occupy the extreme cells on the floor row:
+
+```text
+LEFT  = (0, H-1)
+RIGHT = (W-1, H-1)
+```
+
+The connection boundary is the corresponding outside left/right room edge. This matters for multi-row modules: **distance is measured to the real room floor, never to the centroid or ceiling**.
+
+For a 1x1 room both logical ports occupy the same physical cell `(0,0)`, but LEFT and RIGHT remain separate logical directions. Crossing such a room as an intermediate transit room still costs its full width (`1`).
+
+Verified exceptions are encoded directly in their port definitions. Radiation Repulsor currently retains top-row ports and is non-transit.
+
+Resolved port coordinates (`cell`, `edge`, `utility_anchor`) are persisted for every room in `layout.json` for auditability.
 
 ## Objective function
 
@@ -70,9 +87,9 @@ pair_score(i,j) = w(i) * w(j) * d(i,j)
 F = sum_{i<j} pair_score(i,j)
 ```
 
-### Distance semantics
+### Exact distance semantics
 
-The two endpoint rooms being measured do **not** contribute their own width. Transit rooms do.
+The endpoint rooms do **not** contribute their own width. Transit rooms do.
 
 ```text
 direct endpoint-room adjacency = 0
@@ -95,6 +112,31 @@ d(A,B) = 6
 
 Every individual Elevator is +1, so a four-module Elevator stack contributes 4 if all four modules are traversed.
 
+### Modified Manhattan lower bound
+
+Before expensive automatic routing, the planner calculates an admissible modified Manhattan lower bound **between explicit ports**.
+
+On the same floor, horizontal distance is scaled by the 2x1 Corridor footprint:
+
+```text
+horizontal_lb = ceil(abs(edge_x_a - edge_x_b) / 2)
+```
+
+Across floors, utility-anchor coordinates are used so Elevator width is not double-counted:
+
+```text
+horizontal_lb = ceil(abs(anchor_x_a - anchor_x_b) / 2)
+vertical_lb   = abs(port_y_a - port_y_b) + 1
+```
+
+The weighted bound is:
+
+```text
+F_LB = sum_{i<j} w(i) * w(j) * LB(i,j)
+```
+
+If `F_LB` is already worse than the best exact solution, that room packing is pruned. The final reported objective always uses the exact legal module graph, not Manhattan approximation.
+
 ## Hard constraints
 
 The solver enforces or validates:
@@ -105,13 +147,15 @@ The solver enforces or validates:
 - no overlap with the fixed `X` obstruction;
 - no room/module overlap;
 - documented module orientation;
-- legal left/right access ports and connection level;
+- explicit legal LEFT/RIGHT ports and their real floor rows;
+- direct room connections only where opposite-side port boundaries meet;
+- Corridors/Elevators only at valid external port anchors;
 - Corridors for horizontal utility connectivity;
 - vertical connectivity only between immediately adjacent Elevator modules at the same `x`;
 - one connected network rooted at Airlock;
 - non-transit terminal modules cannot be used as bridges;
 - all Corridors/Elevators belong to the access network;
-- continuous Elevator coverage across every used floor.
+- continuous Elevator coverage across every used port-floor span.
 
 For every adjacent floor pair `(y,y+1)`:
 
@@ -152,9 +196,7 @@ The planner generates a color-coded diagram with the Base Tier, optimization sco
 
 ![Example optimized base layout](docs/example-layout.svg)
 
-The example above is illustrative; the actual result is generated from the selected `base-sizeN.csv` mask and `config/plan.json`.
-
-PNG/SVG semantics:
+The actual result is generated from the selected `base-sizeN.csv` mask and JSON plan. PNG/SVG semantics:
 
 - **black** — unavailable cells, outside the base and the fixed core;
 - **white** — empty buildable cells;
@@ -162,7 +204,7 @@ PNG/SVG semantics:
 - grey — Corridor;
 - magenta — Elevator.
 
-The legend shows each room's **size, mass and usage weight**. The chart title reports Base Tier, `F`, arithmetic and weighted mean distance, room mass, utility mass, **TOTAL BASE MASS**, and journey Organics versus tank capacity.
+One y-grid cell is rendered twice as tall as one x-grid cell. The legend shows each room's **size, mass and usage weight**. The chart title reports Base Tier, `F`, arithmetic and weighted mean distance, room mass, utility mass, **TOTAL BASE MASS**, and journey Organics versus tank capacity.
 
 ## Player configuration
 
@@ -196,7 +238,7 @@ Edit `config/plan.json`:
 }
 ```
 
-Mandatory rooms are added automatically. `corridor` and `elevator` are not valid player configuration keys.
+Mandatory rooms are added automatically. `corridor`, `corridors`, `elevator` and `elevators` are invalid player configuration keys — utility count and placement are solver outputs.
 
 ## Run from a fresh clone
 
@@ -217,7 +259,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Edit `config/plan.json`, then run the calculation:
+Edit `config/plan.json`, then run:
 
 ```powershell
 python -m alters_base_planner.cli config/plan.json
@@ -234,7 +276,7 @@ Successful calculation writes the paths configured in `config/plan.json`, normal
 ```text
 layout.png   # graphical plan
 layout.svg   # vector graphical plan
-layout.json  # full machine-readable result and audit metrics
+layout.json  # full machine-readable result, ports and audit metrics
 ```
 
 Open the generated PNG directly from PowerShell:
@@ -265,7 +307,7 @@ python -m streamlit run app.py
 
 ## Result JSON
 
-The JSON output persists the objective, arithmetic mean distance, weighted mean distance, all pairwise distances/contributions, room usage weights, utility counts, geometry provenance, module masses and journey feasibility.
+The JSON output persists the exact objective, modified-Manhattan lower bound, arithmetic/weighted mean distance, pairwise distances/contributions, resolved explicit room ports, usage weights, generated utility counts, geometry provenance, module masses and journey feasibility.
 
 ## Optimization engine status
 
@@ -273,13 +315,15 @@ The current implementation:
 
 1. reads selected Base geometry from CSV;
 2. enumerates legal room placements with OR-Tools CP-SAT;
-3. constructs legal Corridor/Elevator routing;
-4. validates connectivity and continuous vertical Elevator coverage;
-5. computes shortest paths with intermediate-room traversal costs;
-6. evaluates `F` exactly for every connected candidate generated;
-7. retains the smallest examined `F`;
-8. persists Base Mass and journey metrics;
-9. renders PNG/SVG output.
+3. resolves explicit room ports at their real access rows;
+4. calculates weighted modified-Manhattan lower bounds and prunes dominated packings;
+5. constructs Corridors/Elevators automatically from external port anchors;
+6. validates connectivity and continuous vertical Elevator coverage;
+7. computes exact shortest paths with intermediate-room traversal costs;
+8. evaluates exact `F` for every connected candidate generated;
+9. retains the smallest examined `F`;
+10. persists Base Mass, port coordinates and journey metrics;
+11. renders PNG/SVG output.
 
 The current placement + post-router architecture does **not yet prove** global optimality across the full joint room + Corridor + Elevator search space, so:
 
