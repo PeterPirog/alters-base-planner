@@ -14,7 +14,6 @@ from .models import (
     Placement,
     PlanRequest,
     PlanResult,
-    PortSide,
     ResolvedPort,
     UtilityPlacement,
     expand_instances,
