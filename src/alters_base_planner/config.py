@@ -9,6 +9,7 @@ from .models import PlanRequest
 
 _CONFIGURABLE_KEYS = {m.key for m in CONFIGURABLE_MODULES}
 _MANDATORY_KEYS = {m.key for m in MANDATORY_MODULES}
+_SOLVER_MANAGED_KEYS = {"corridor", "corridors", "elevator", "elevators"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,13 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
     room_counts_raw = raw.get("rooms", {})
     if not isinstance(room_counts_raw, dict):
         raise ValueError("rooms must be a JSON object mapping module keys to counts")
+
+    solver_managed_requested = sorted(set(room_counts_raw) & _SOLVER_MANAGED_KEYS)
+    if solver_managed_requested:
+        raise ValueError(
+            "Corridor and Elevator counts are solver-managed and must not be configured by the "
+            "player. Remove: " + ", ".join(solver_managed_requested)
+        )
 
     unknown = sorted(set(room_counts_raw) - _CONFIGURABLE_KEYS - _MANDATORY_KEYS)
     if unknown:
