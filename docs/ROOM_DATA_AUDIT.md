@@ -2,7 +2,7 @@
 
 Verification date: 2026-09-06.
 
-This file records the evidence behind the planner's dimensions, masses and default traffic weights.
+This file records the evidence behind the planner's dimensions, masses, count limits and default traffic weights.
 
 ## Dimension and mass audit
 
@@ -63,6 +63,20 @@ Some older/community tables disagree with current direct module pages:
 
 For current planner geometry the direct/current module data is used. Future clean in-game measurements or extracted data should override public wiki data.
 
+## Module-count limits
+
+Count ceilings are hard gameplay rules only when sufficiently verified. They are represented by `ModuleSpec.max_count`; `None` means that the planner deliberately has no verified hard ceiling, not that the game necessarily allows an unlimited number.
+
+Current decisions:
+
+| Module | Planner max_count | Decision |
+|---|---:|---|
+| Recycler | 1 | enforced; current direct wiki page states only one can be built for the base |
+| Rapidium Ark | none | not hard-coded; public/current reports agree it is progression/tier restricted but disagree on precise count ceilings across acts/versions |
+| Radiation Repulsor | none | no universal hard ceiling encoded; public guidance says four are needed for complete efficiency at maximum base size, which is a coverage requirement rather than evidence of a global build-count ceiling |
+
+For Rapidium Ark, the planner intentionally fails open on the exact numeric ceiling until current in-game data or extracted game assets establish the tier/version mapping. Inventing a limit would make feasible layouts incorrectly infeasible.
+
 ## Public references
 
 - Current module table: https://the-alters.fandom.com/wiki/Modules
@@ -75,6 +89,7 @@ For current planner geometry the direct/current module data is used. Future clea
 - Research Lab: https://the-alters.fandom.com/wiki/Research_Lab
 - Radiation Repulsor: https://the-alters.fandom.com/wiki/Radiation_Repulsor
 - Rapidium Ark: https://the-alters.fandom.com/wiki/Rapidium_Ark
+- Recycler: https://the-alters.fandom.com/wiki/Recycler
 
 ## Usage-weight audit
 
