@@ -1,3 +1,5 @@
+import pytest
+
 from alters_base_planner.base import builtin_base
 from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import _mass_metrics, _route_utilities, solve_plan
@@ -69,7 +71,39 @@ def test_mass_metrics_match_journey_organics_rule() -> None:
     assert sum(breakdown.values()) == total_mass
 
 
-def test_solver_returns_persisted_mass_metrics_when_connected() -> None:
+def test_programmatic_unknown_room_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown room keys"):
+        solve_plan(
+            PlanRequest(
+                tier=4,
+                room_counts={"teleporter": 1},
+                time_limit_s=0.1,
+                max_layout_attempts=1,
+            )
+        )
+
+
+def test_programmatic_recycler_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="recycler allows at most 1"):
+        solve_plan(
+            PlanRequest(
+                tier=4,
+                room_counts={"recycler": 2},
+                time_limit_s=0.1,
+                max_layout_attempts=1,
+            )
+        )
+
+
+def test_supplied_base_must_match_requested_tier() -> None:
+    with pytest.raises(ValueError, match="does not match"):
+        solve_plan(
+            PlanRequest(tier=1, room_counts={}, time_limit_s=0.1, max_layout_attempts=1),
+            builtin_base(2),
+        )
+
+
+def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> None:
     result = solve_plan(
         PlanRequest(
             tier=2,
@@ -78,9 +112,15 @@ def test_solver_returns_persisted_mass_metrics_when_connected() -> None:
             max_layout_attempts=8,
         )
     )
-    assert result.status in {"FEASIBLE", "NO_CONNECTED_LAYOUT", "INFEASIBLE"}
+    assert result.status in {"FEASIBLE", "NO_CONNECTED_LAYOUT", "INFEASIBLE", "TIME_LIMIT"}
     assert result.base.tier == 2
+    assert result.search_time_s >= 0
+    assert 0 <= result.attempts <= 8
+    assert result.connected_candidates_examined >= 0
+    assert result.manhattan_pruned_count >= 0
     if result.rooms:
+        assert result.status == "FEASIBLE"
+        assert result.connected_candidates_examined >= 1
         assert result.total_mass == result.room_mass + result.utility_mass
         assert result.organics_required_for_journey == result.total_mass
         assert result.organics_capacity_margin == result.base.organics_capacity - result.total_mass
