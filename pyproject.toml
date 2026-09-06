@@ -11,7 +11,6 @@ requires-python = ">=3.11"
 dependencies = [
   "matplotlib>=3.9",
   "ortools>=9.11",
-  "pydantic>=2.9",
   "streamlit>=1.40",
 ]
 
