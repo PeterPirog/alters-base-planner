@@ -6,7 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "$schema": {"type": "string"},
+    "$schema": {"type": "string", "minLength": 1},
     "base_tier": {
       "type": "integer",
       "enum": [1, 2, 3, 4],
@@ -31,7 +31,12 @@
         "personal_cabin": {"$ref": "#/$defs/count"},
         "radiation_repulsor": {"$ref": "#/$defs/count"},
         "rapidium_ark": {"$ref": "#/$defs/count"},
-        "recycler": {"$ref": "#/$defs/count"},
+        "recycler": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "The game permits at most one Recycler in the base."
+        },
         "refinery": {"$ref": "#/$defs/count"},
         "research_lab": {"$ref": "#/$defs/count"},
         "small_storage": {"$ref": "#/$defs/count"},
@@ -45,8 +50,16 @@
       "additionalProperties": false,
       "properties": {
         "objective": {"const": "weighted_pair_distance"},
-        "time_limit_s": {"type": "number", "exclusiveMinimum": 0},
-        "max_layout_attempts": {"type": "integer", "minimum": 1}
+        "time_limit_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Global wall-clock budget for the complete solve operation, in seconds. It is not reset for each room-packing attempt."
+        },
+        "max_layout_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of unique room packings examined. Pure label permutations of identical room instances are symmetry-broken."
+        }
       }
     },
     "output": {
