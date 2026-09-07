@@ -1,5 +1,5 @@
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
-from alters_base_planner.models import PortSide, floor_ports
+from alters_base_planner.models import Placement, PortSide, floor_ports, resolve_ports
 
 
 def test_module_keys_are_unique() -> None:
@@ -24,7 +24,8 @@ def test_verified_mass_values_and_special_connectivity() -> None:
     assert MODULE_BY_KEY["rapidium_ark"].mass == 32
 
     repulsor = MODULE_BY_KEY["radiation_repulsor"]
-    assert {port.cell_y for port in repulsor.ports} == {0}
+    # PortSpec.cell_y is floor-relative: y=0 is floor, height-1 is top.
+    assert {port.cell_y for port in repulsor.ports} == {repulsor.height - 1}
     assert repulsor.transit_allowed is False
     assert MODULE_BY_KEY["rapidium_ark"].transit_allowed is False
 
@@ -54,10 +55,24 @@ def test_one_by_one_room_has_two_logical_ports_on_same_physical_cell() -> None:
     assert right.side is PortSide.RIGHT
 
 
-def test_normal_multirow_modules_use_floor_ports() -> None:
+def test_normal_multirow_modules_use_floor_relative_y_zero() -> None:
     for key in ("quantum_computer", "small_storage", "large_storage", "materializer"):
         module = MODULE_BY_KEY[key]
-        assert {port.cell_y for port in module.ports} == {module.height - 1}
+        assert {port.cell_y for port in module.ports} == {0}
+
+
+def test_floor_relative_ports_resolve_to_bottom_world_row() -> None:
+    spec = MODULE_BY_KEY["materializer"]  # 4x3 regular floor-access room
+    room = Placement("materializer-1", "materializer", 10, 5, spec.width, spec.height)
+    resolved = resolve_ports(room, spec)
+    assert {port.cell_y for port in resolved} == {7}  # world y = 5 + (3 - 1)
+
+
+def test_top_relative_ports_resolve_to_top_world_row() -> None:
+    spec = MODULE_BY_KEY["radiation_repulsor"]  # 2x3 verified top-access exception
+    room = Placement("repulsor-1", "radiation_repulsor", 10, 5, spec.width, spec.height)
+    resolved = resolve_ports(room, spec)
+    assert {port.cell_y for port in resolved} == {5}
 
 
 def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
