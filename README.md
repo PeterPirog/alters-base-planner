@@ -36,20 +36,33 @@ Width and height are inferred from the CSV itself. The current masks remain prov
 
 ## Explicit room ports
 
-Every room type defines explicit logical LEFT/RIGHT access ports. For a normal room of width `W` and height `H` the ports occupy the extreme cells on the floor row:
+Every room type defines explicit logical LEFT/RIGHT access ports. Port definitions use **module-local floor-relative coordinates**:
 
 ```text
-LEFT  = (0, H-1)
-RIGHT = (W-1, H-1)
+local y = 0     -> room floor
+local y = H - 1 -> room top
 ```
 
-The connection boundary is the corresponding outside left/right room edge. This matters for multi-row modules: **distance is measured to the real room floor, never to the centroid or ceiling**.
+For a normal room of width `W` and height `H`, LEFT/RIGHT ports therefore are:
 
-For a 1x1 room both logical ports occupy the same physical cell `(0,0)`, but LEFT and RIGHT remain separate logical directions. Crossing such a room as an intermediate transit room still costs its full width (`1`).
+```text
+LEFT  = (0, 0)
+RIGHT = (W-1, 0)
+```
 
-Verified exceptions are encoded directly in their port definitions. Radiation Repulsor currently retains top-row ports and is non-transit.
+This is intentionally different from the absolute Base grid, whose `y=0` row is at the top and whose `y` grows downward. When a local port is resolved into the Base grid:
 
-Resolved port coordinates (`cell`, `edge`, `utility_anchor`) are persisted for every room in `layout.json` for auditability.
+```text
+world_y = room.y + (H - 1 - local_y)
+```
+
+Thus a normal floor port still resolves to the physical bottom row of a multi-row room, while a verified top-access exception resolves to its physical top row. The connection boundary is the corresponding outside left/right room edge. This matters for multi-row modules: **distance is measured to the real room floor, never to the centroid or ceiling**.
+
+For a 1x1 room both logical ports occupy the same local and physical cell `(0,0)`, but LEFT and RIGHT remain separate logical directions. Crossing such a room as an intermediate transit room still costs its full width (`1`).
+
+Verified exceptions are encoded directly in their port definitions. Radiation Repulsor retains top-row ports, which means local `y=H-1`, and is non-transit.
+
+Resolved absolute port coordinates (`cell`, `edge`, `utility_anchor`) are persisted for every room in `layout.json` for auditability.
 
 ## Objective function
 
@@ -315,7 +328,7 @@ The current implementation:
 
 1. reads selected Base geometry from CSV;
 2. enumerates legal room placements with OR-Tools CP-SAT;
-3. resolves explicit room ports at their real access rows;
+3. resolves floor-relative module ports into absolute Base-grid access rows;
 4. calculates weighted modified-Manhattan lower bounds and prunes dominated packings;
 5. constructs Corridors/Elevators automatically from external port anchors;
 6. validates connectivity and continuous vertical Elevator coverage;
