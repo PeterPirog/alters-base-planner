@@ -21,11 +21,17 @@ class PortSide(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PortSpec:
-    """Logical room access port located on a concrete room cell.
+    """Logical room access port in module-local coordinates.
 
-    `cell_x` and `cell_y` are offsets inside the module footprint. A 1x1 room therefore
-    has both logical LEFT and RIGHT ports on the same physical cell (0, 0), while the
-    side still distinguishes which outer boundary can connect to a neighbour/utility.
+    ``cell_x`` is measured from the module's left edge.
+    ``cell_y`` is measured *upward from the room floor*: ``0`` is the floor row and
+    ``height - 1`` is the top row. This local semantic coordinate system is intentionally
+    different from the base-grid/world coordinate system, where ``y=0`` is the top row and
+    ``y`` grows downward.
+
+    A 1x1 room therefore has both logical LEFT and RIGHT ports on the same physical local
+    cell (0, 0), while the side still distinguishes which outer boundary can connect to a
+    neighbour or utility module.
     """
 
     name: str
@@ -60,21 +66,21 @@ class ResolvedPort:
 
 
 def floor_ports(width: int, height: int) -> tuple[PortSpec, PortSpec]:
-    """Standard LEFT/RIGHT ports on the module floor (bottom footprint row)."""
-
-    floor_y = height - 1
-    return (
-        PortSpec("left", PortSide.LEFT, 0, floor_y),
-        PortSpec("right", PortSide.RIGHT, width - 1, floor_y),
-    )
-
-
-def top_ports(width: int) -> tuple[PortSpec, PortSpec]:
-    """LEFT/RIGHT ports on the top footprint row for verified game exceptions."""
+    """Standard LEFT/RIGHT ports on the module floor (local y=0)."""
 
     return (
         PortSpec("left", PortSide.LEFT, 0, 0),
         PortSpec("right", PortSide.RIGHT, width - 1, 0),
+    )
+
+
+def top_ports(width: int, height: int) -> tuple[PortSpec, PortSpec]:
+    """LEFT/RIGHT ports on the module top row (local y=height-1)."""
+
+    top_y = height - 1
+    return (
+        PortSpec("left", PortSide.LEFT, 0, top_y),
+        PortSpec("right", PortSide.RIGHT, width - 1, top_y),
     )
 
 
@@ -147,7 +153,7 @@ class Placement:
 
 
 def resolve_ports(room: Placement, spec: ModuleSpec) -> tuple[ResolvedPort, ...]:
-    """Resolve relative port definitions to absolute floor-grid and boundary coordinates."""
+    """Resolve floor-relative module ports into absolute top-origin base-grid coordinates."""
 
     if room.width != spec.width or room.height != spec.height:
         raise ValueError(
@@ -158,7 +164,10 @@ def resolve_ports(room: Placement, spec: ModuleSpec) -> tuple[ResolvedPort, ...]
     result: list[ResolvedPort] = []
     for port in spec.ports:
         cell_x = room.x + port.cell_x
-        cell_y = room.y + port.cell_y
+        # PortSpec.cell_y is floor-relative (0 = floor), while Placement.y/world y is
+        # top-origin and grows downward. Convert explicitly at this boundary.
+        world_y_offset = room.height - 1 - port.cell_y
+        cell_y = room.y + world_y_offset
         edge_x = room.x if port.side is PortSide.LEFT else room.x + room.width
         result.append(
             ResolvedPort(
