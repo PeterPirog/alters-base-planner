@@ -44,7 +44,9 @@ def _module(
     top_access: bool = False,
     max_count: int | None = None,
 ) -> ModuleSpec:
-    ports = top_ports(width, height) if top_access else floor_ports(width, height)
+    # Standard LEFT/RIGHT floor ports are derived directly from room width:
+    # LEFT=(0,0), RIGHT=(width-1,0). Only verified exceptions need height.
+    ports = top_ports(width, height) if top_access else floor_ports(width)
     return ModuleSpec(
         key,
         name,
