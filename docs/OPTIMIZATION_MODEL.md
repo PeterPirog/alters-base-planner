@@ -24,7 +24,14 @@ cell_x
 cell_y
 ```
 
-`cell_x` and `cell_y` are coordinates relative to the room footprint. A normal room exposes:
+Port definitions use **module-local coordinates**. `cell_x` is measured from the left edge. `cell_y` is measured upward from the room floor:
+
+```text
+local y = 0     -> room floor
+local y = H - 1 -> room top
+```
+
+A normal room therefore exposes:
 
 ```text
 LEFT  port = leftmost cell on the floor row
@@ -34,23 +41,26 @@ RIGHT port = rightmost cell on the floor row
 For a room of width `W` and height `H`:
 
 ```text
-LEFT  cell = (0, H-1)
-RIGHT cell = (W-1, H-1)
+LEFT  local cell = (0, 0)
+RIGHT local cell = (W-1, 0)
 ```
 
-The physical boundary used for connection checks is:
+The absolute Base grid intentionally uses the opposite vertical convention: `world y=0` is the top row and `world y` grows downward. Local port coordinates are converted explicitly when resolving a room placement:
 
 ```text
+world_cell_x = room.x + local_cell_x
+world_cell_y = room.y + (H - 1 - local_cell_y)
+
 LEFT  edge_x = room.x
 RIGHT edge_x = room.x + room.width
-edge_y       = room.y + port.cell_y
+edge_y       = world_cell_y
 ```
 
-Therefore high rooms are entered at their actual floor, not at their centroid or ceiling.
+Therefore a standard local `cell_y=0` floor port resolves to the physical bottom row of a high room. A top-access port has local `cell_y=H-1` and resolves to the physical top row. This separation prevents semantic ambiguity between "height above the room floor" and the top-origin storage/rendering coordinates used by the Base grid.
 
-For a 1x1 room both logical ports occupy the same physical cell `(0,0)`, but remain distinct LEFT and RIGHT logical ports. If such a room is used as an intermediate transit room, crossing it still costs its full width, i.e. `1`.
+For a 1x1 room both logical ports occupy the same local and physical cell `(0,0)`, but remain distinct LEFT and RIGHT logical ports. If such a room is used as an intermediate transit room, crossing it still costs its full width, i.e. `1`.
 
-Verified game exceptions may define ports on a different row. Radiation Repulsor currently retains top-row ports and remains non-transit.
+Verified game exceptions may define ports on a different local height. Radiation Repulsor currently uses top-row ports (`local y=H-1`) and remains non-transit.
 
 ---
 
@@ -112,9 +122,9 @@ Published room orientation is preserved unless verified game data explicitly all
 
 ## H7. Legal direct room-to-room connection
 
-Two rooms connect directly only when explicit ports:
+Two rooms connect directly only when resolved explicit ports:
 
-- are on the same `edge_y`,
+- are on the same absolute `edge_y`,
 - have the same boundary `edge_x`,
 - have opposite sides (`LEFT` versus `RIGHT`).
 
@@ -122,7 +132,7 @@ Direct room adjacency has distance cost `0`.
 
 ## H8. Legal room-to-utility connection
 
-A 2x1 Corridor/Elevator may attach only at the utility anchor immediately outside an explicit port:
+A 2x1 Corridor/Elevator may attach only at the utility anchor immediately outside a resolved explicit port:
 
 ```text
 LEFT  port anchor = (edge_x - 2, edge_y)
@@ -143,7 +153,7 @@ Each traversed Elevator module contributes distance `+1`.
 
 ## H11. Continuous vertical Elevator coverage
 
-Let all explicit room-port rows span `Lmin ... Lmax`. If more than one row is used:
+Let all resolved room-port rows span `Lmin ... Lmax`. If more than one row is used:
 
 1. every row in the span must contain at least one Elevator module;
 2. at least one Elevator must therefore exist on every used/intermediate floor;
@@ -235,7 +245,7 @@ Rooms with weight `0` remain subject to all hard constraints but are excluded fr
 
 # 5. Exact distance definition
 
-Distance `d(i,j)` is the minimum legal path cost between **explicit ports** of endpoint rooms `i` and `j`.
+Distance `d(i,j)` is the minimum legal path cost between **resolved explicit ports** of endpoint rooms `i` and `j`.
 
 The endpoint room dimensions do not count. Intermediate transit rooms do.
 
@@ -291,13 +301,19 @@ d(A,B) = 6
 
 ## D5. High rooms
 
-Distance is measured to the room's explicit port row. For standard high rooms that row is the floor (`H-1` relative to the footprint), so a route cannot enter through the ceiling. Any verified exception must be represented explicitly in the module's port definitions.
+Distance is measured to the room's resolved physical port row. For standard high rooms the local port height is `0` (the floor), which resolves to absolute Base-grid row:
+
+```text
+room.y + H - 1
+```
+
+A route therefore cannot enter a normal room through the ceiling. Any verified exception must be represented explicitly in the module-local port definition; for example a top-row port uses local `cell_y=H-1` and resolves to absolute `room.y`.
 
 ---
 
 # 6. Modified Manhattan lower bound
 
-The solver also calculates an admissible modified Manhattan lower bound between explicit room ports.
+The solver also calculates an admissible modified Manhattan lower bound between resolved explicit room ports.
 
 For ports on the same floor:
 
@@ -418,7 +434,7 @@ geometry_source
 
 Every run, including failure/time-limit outcomes, persists machine-readable JSON search diagnostics through the CLI. PNG/SVG are emitted only when a feasible layout exists.
 
-Each feasible room in `layout.json` also persists every resolved port:
+Each feasible room in `layout.json` also persists every **resolved absolute** port:
 
 ```text
 name
@@ -443,7 +459,7 @@ The current engine:
 
 1. enumerates legal room placements with CP-SAT;
 2. symmetry-breaks physically identical label permutations;
-3. resolves explicit room ports;
+3. resolves floor-relative module ports into absolute top-origin Base-grid coordinates;
 4. computes the weighted modified-Manhattan lower bound;
 5. prunes packings that cannot beat the current exact best score;
 6. generates non-overlapping Corridors/Elevators automatically;
