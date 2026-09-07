@@ -44,7 +44,7 @@ def _module(
     top_access: bool = False,
     max_count: int | None = None,
 ) -> ModuleSpec:
-    ports = top_ports(width) if top_access else floor_ports(width, height)
+    ports = top_ports(width, height) if top_access else floor_ports(width, height)
     return ModuleSpec(
         key,
         name,
