@@ -65,9 +65,16 @@ class ResolvedPort:
         return (x, self.edge_y)
 
 
-def floor_ports(width: int, height: int) -> tuple[PortSpec, PortSpec]:
-    """Standard LEFT/RIGHT ports on the module floor (local y=0)."""
+def floor_ports(width: int) -> tuple[PortSpec, PortSpec]:
+    """Derive standard floor ports directly from room width.
 
+    Standard room geometry has one access port at each extreme side of the floor:
+    LEFT=(0,0) and RIGHT=(width-1,0). Height is intentionally irrelevant because local
+    y=0 always means the room floor.
+    """
+
+    if width <= 0:
+        raise ValueError("Room width must be positive when deriving floor ports")
     return (
         PortSpec("left", PortSide.LEFT, 0, 0),
         PortSpec("right", PortSide.RIGHT, width - 1, 0),
