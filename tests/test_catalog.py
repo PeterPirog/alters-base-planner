@@ -1,3 +1,5 @@
+import pytest
+
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
 from alters_base_planner.models import Placement, PortSide, floor_ports, resolve_ports
 
@@ -47,18 +49,31 @@ def test_every_module_defines_extreme_left_and_right_ports() -> None:
         assert all(port.cell_x == module.width - 1 for port in right)
 
 
+def test_standard_floor_ports_are_derived_from_width_only() -> None:
+    left, right = floor_ports(6)
+    assert (left.cell_x, left.cell_y) == (0, 0)
+    assert (right.cell_x, right.cell_y) == (5, 0)
+    assert left.side is PortSide.LEFT
+    assert right.side is PortSide.RIGHT
+
+
+def test_floor_ports_reject_non_positive_width() -> None:
+    with pytest.raises(ValueError, match="width must be positive"):
+        floor_ports(0)
+
+
 def test_one_by_one_room_has_two_logical_ports_on_same_physical_cell() -> None:
-    left, right = floor_ports(1, 1)
+    left, right = floor_ports(1)
     assert (left.cell_x, left.cell_y) == (0, 0)
     assert (right.cell_x, right.cell_y) == (0, 0)
     assert left.side is PortSide.LEFT
     assert right.side is PortSide.RIGHT
 
 
-def test_normal_multirow_modules_use_floor_relative_y_zero() -> None:
-    for key in ("quantum_computer", "small_storage", "large_storage", "materializer"):
+def test_normal_modules_match_width_derived_floor_ports() -> None:
+    for key in ("quantum_computer", "small_storage", "large_storage", "materializer", "workshop"):
         module = MODULE_BY_KEY[key]
-        assert {port.cell_y for port in module.ports} == {0}
+        assert module.ports == floor_ports(module.width)
 
 
 def test_floor_relative_ports_resolve_to_bottom_world_row() -> None:
