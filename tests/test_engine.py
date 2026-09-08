@@ -1,14 +1,22 @@
 import pytest
 
 from alters_base_planner.base import builtin_base
+from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import (
+    _candidate_positions,
     _mass_metrics,
     _route_utilities,
     _validate_utility_geometry,
     solve_plan,
 )
-from alters_base_planner.models import BaseGeometry, Placement, PlanRequest, UtilityPlacement
+from alters_base_planner.models import (
+    BaseGeometry,
+    ModuleInstance,
+    Placement,
+    PlanRequest,
+    UtilityPlacement,
+)
 
 
 def test_base_tiers_grow_but_exact_masks_remain_provisional() -> None:
@@ -30,6 +38,25 @@ def test_explicit_port_access_rows_for_regular_and_special_modules() -> None:
     repulsor = Placement("repulsor-1", "radiation_repulsor", 4, 5, 2, 3)
     assert room_access_rows(regular) == frozenset({6})
     assert room_access_rows(repulsor) == frozenset({5})
+
+
+def test_candidate_ordering_resolves_floor_relative_port_to_world_y() -> None:
+    # Base centre is y=2. A 4x3 Materializer placed at top y=0 has its floor at world y=2,
+    # so the corrected port-aware ordering must prefer it to the same room placed at y=2.
+    base = BaseGeometry(
+        tier=9,
+        width=4,
+        height=5,
+        allowed_cells=frozenset((x, y) for y in range(5) for x in range(4)),
+        blocked_cells=frozenset(),
+        organics_capacity=0,
+        source="unit-test",
+        verified=True,
+    )
+    spec = MODULE_BY_KEY["materializer"]
+    candidates = _candidate_positions(ModuleInstance("materializer-1", spec), base)
+    cost_by_y = {candidate.y: candidate.search_cost for candidate in candidates if candidate.x == 0}
+    assert cost_by_y[0] < cost_by_y[2]
 
 
 def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
