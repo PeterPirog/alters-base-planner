@@ -166,7 +166,11 @@ A module with `transit_allowed = false` may be connected and reached as a termin
 
 Every generated Corridor and Elevator must itself be reachable from the Airlock network. Floating utility islands are invalid even if every positive-weight room remains mutually reachable.
 
-## H15. Base Mass and journey feasibility
+---
+
+# 3. Required mass and journey reporting
+
+Mass accounting is mandatory for every feasible layout, but **tank capacity is not currently a hard layout-feasibility constraint**. A geometrically and topologically valid Base may therefore have `status=FEASIBLE` while `travel_feasible_at_full_tank=false`.
 
 Every feasible result persists:
 
@@ -188,11 +192,11 @@ Corridor mass = 2
 Elevator mass = 2 per module
 ```
 
-Mass is not part of primary `F`; lower mass is only a deterministic tie-breaker when `F` is equal.
+Mass is not part of primary `F`; lower mass is only a deterministic tie-breaker when `F` is equal. If a future gameplay requirement says plans that exceed full-tank capacity must be rejected, that must be introduced explicitly as a new hard constraint rather than inferred from the reporting metric.
 
 ---
 
-# 3. Configuration and domain validation
+# 4. Configuration and domain validation
 
 Runtime validation is intentionally at least as strict as `config/plan.schema.json`.
 
@@ -214,7 +218,7 @@ Internal invariants fail fast. In particular, `AssertionError` raised by solver/
 
 ---
 
-# 4. Usage weights
+# 5. Usage weights
 
 Every player/story room type receives a default gameplay traffic weight in:
 
@@ -232,7 +236,7 @@ Weights are planner parameters, not hidden game constants. They affect only the 
 
 ---
 
-# 5. Exact distance definition
+# 6. Exact distance definition
 
 Distance `d(i,j)` is the minimum legal path cost between resolved explicit ports of endpoint rooms `i` and `j`.
 
@@ -300,7 +304,7 @@ A normal route therefore cannot enter through the ceiling. Verified exceptions m
 
 ---
 
-# 6. Modified Manhattan lower bound
+# 7. Modified Manhattan lower bound
 
 The solver calculates an admissible modified-Manhattan lower bound between resolved endpoint ports.
 
@@ -340,7 +344,7 @@ F_LB > best_exact_F
 
 ---
 
-# 7. Gameplay soft objective
+# 8. Gameplay soft objective
 
 Create all unordered pairs of installed rooms with positive usage weight. Corridor, Elevator and zero-weight rooms do not form objective pairs.
 
@@ -362,7 +366,7 @@ This `F` is the only gameplay soft objective. Base Mass, Elevator count and Corr
 
 ---
 
-# 8. Current OR-Tools CP-SAT formulation
+# 9. Current OR-Tools CP-SAT formulation
 
 The current CP-SAT model represents only the room-placement subproblem.
 
@@ -434,11 +438,9 @@ Therefore the current OR-Tools formulation must not be described as a joint exac
 
 ---
 
-# 9. Search budget and enumeration semantics
+# 10. Search budget and enumeration semantics
 
-`solver.time_limit_s` is a single global wall-clock budget for the complete `solve_plan()` call. It is not reset for every CP-SAT no-good iteration.
-
-Before each CP-SAT solve, only the remaining global budget is supplied to OR-Tools.
+`solver.time_limit_s` is a single global wall-clock budget for the complete `solve_plan()` call. It is not reset for every CP-SAT no-good iteration. Before each CP-SAT solve, only the remaining budget is supplied to OR-Tools. Python-side routing/evaluation is cooperative rather than preemptive, so a single in-progress post-processing step may finish slightly after the nominal deadline; diagnostics record the actual wall-clock search time.
 
 Search results distinguish:
 
@@ -466,7 +468,7 @@ A feasible result may have `time_limit_reached = true`: a valid incumbent exists
 
 ---
 
-# 10. Required result metrics
+# 11. Required result metrics
 
 Every feasible result reports at least:
 
@@ -516,7 +518,7 @@ all generated utilities reachable from Airlock
 
 ---
 
-# 11. Current implementation and exact-solver target
+# 12. Current implementation and exact-solver target
 
 The current engine:
 
@@ -543,7 +545,9 @@ CP-SAT room placement
 
 The router generates one utility network for a room packing rather than optimizing all legal Corridor/Elevator networks jointly with placement. Consequently a room packing can be rejected by the greedy router even if another legal utility routing might exist, and the best returned solution is not a proof of the global optimum over the complete joint search space.
 
-The target architecture is one integrated exact model (or an exact decomposition with valid optimality bounds) covering room placement, solver-managed Corridor/Elevator placement, connectivity and the true objective. Only then may the project set:
+The target architecture is one integrated exact model (or an exact decomposition with valid optimality bounds) covering room placement, solver-managed Corridor/Elevator placement, connectivity and the true objective. Corridor and Elevator may then be represented naturally as solver-managed module types in the same optimization domain, rather than being partially unified before the joint model exists.
+
+Only then may the project set:
 
 ```text
 global_objective_optimum_proven = true
