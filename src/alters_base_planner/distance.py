@@ -278,11 +278,47 @@ def _dijkstra(
     return distances
 
 
+def _validate_single_access_network(
+    rooms: list[Placement],
+    graph: dict[Node, dict[Node, int]],
+    endpoints: dict[str, tuple[Node, ...]],
+) -> None:
+    """Require every installed module and generated utility to belong to the Airlock network.
+
+    Objective weights are deliberately irrelevant here. Passive/terminal modules such as
+    Storage, Radiation Repulsor and Rapidium Ark still have to be connected to the Base;
+    ``transit_allowed=False`` only prevents using them as bridges between other modules.
+    """
+
+    airlock = next((room for room in rooms if room.module_key == "airlock"), None)
+    if airlock is None:
+        raise ValueError("Hard connectivity constraint violated: Airlock is missing")
+
+    reachable = _dijkstra(graph, endpoints[airlock.instance_id])
+    for room in rooms:
+        room_nodes = endpoints.get(room.instance_id, ())
+        if not any(node in reachable for node in room_nodes):
+            raise ValueError(
+                "Hard connectivity constraint violated: module "
+                f"{room.instance_id} has no port reachable from the Airlock"
+            )
+
+    unreachable_utilities = sorted(
+        node for node in graph if node.startswith("utility:") and node not in reachable
+    )
+    if unreachable_utilities:
+        raise ValueError(
+            "Hard connectivity constraint violated: generated utility module(s) are floating: "
+            + ", ".join(unreachable_utilities)
+        )
+
+
 def evaluate_distances(
     rooms: list[Placement], utilities: list[UtilityPlacement]
 ) -> DistanceMetrics:
     _validate_vertical_elevator_coverage(rooms, utilities)
     graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
+    _validate_single_access_network(rooms, graph, endpoints)
 
     active_rooms = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
     pairwise: dict[str, int] = {}
