@@ -1,7 +1,7 @@
 import pytest
 
 from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
-from alters_base_planner.models import Placement, PortSide, floor_ports, resolve_ports
+from alters_base_planner.models import ModuleType, Placement, PortSide, floor_ports, resolve_ports
 
 
 def test_module_keys_are_unique() -> None:
@@ -94,6 +94,13 @@ def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
     keys = {m.key for m in MANDATORY_MODULES}
     assert "kitchen" in keys
     assert "womb" in keys
+
+
+def test_mandatory_state_does_not_override_game_module_type() -> None:
+    assert MODULE_BY_KEY["kitchen"].module_type is ModuleType.WORK
+    assert MODULE_BY_KEY["womb"].module_type is ModuleType.WORK
+    assert MODULE_BY_KEY["kitchen"].mandatory is True
+    assert MODULE_BY_KEY["womb"].mandatory is True
 
 
 def test_every_module_has_gameplay_usage_weight() -> None:
