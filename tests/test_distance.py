@@ -73,12 +73,13 @@ def test_every_elevator_module_adds_one_distance_point() -> None:
 
 
 def test_multirow_room_is_entered_at_floor_not_ceiling() -> None:
-    quantum = Placement("quantum-1", "quantum_computer", 0, 0, 4, 2)
-    workshop = Placement("workshop-1", "workshop", 6, 1, 4, 1)
+    airlock = Placement("airlock-1", "airlock", 0, 1, 4, 1)
+    quantum = Placement("quantum-1", "quantum_computer", 4, 0, 4, 2)
+    workshop = Placement("workshop-1", "workshop", 10, 1, 4, 1)
     assert room_access_rows(quantum) == frozenset({1})
     metrics = evaluate_distances(
-        [quantum, workshop],
-        [UtilityPlacement("corridor", 4, 1)],
+        [airlock, quantum, workshop],
+        [UtilityPlacement("corridor", 8, 1)],
     )
     assert metrics.pairwise_distances["quantum-1|workshop-1"] == 1
 
