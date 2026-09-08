@@ -187,7 +187,7 @@ def build_hard_constraint_layer(
     placement: dict[str, cp_model.IntVar] = {}
     for option in placement_options:
         placement[option.option_id] = model.new_bool_var(f"room_place__{option.option_id}")
-    for instance_id, options in options_by_instance.items():
+    for options in options_by_instance.values():
         model.add_exactly_one(placement[option.option_id] for option in options)
 
     # H6: Corridor and Elevator are solver-managed 2x1 modules. They share the same anchor,
@@ -396,9 +396,7 @@ def build_hard_constraint_layer(
         model.add(source <= max_flow * node.active)
         source_flow[node.node_id] = source
 
-    all_demand_terms = [
-        term for terms in demand_terms_by_node.values() for term in terms
-    ]
+    all_demand_terms = [term for terms in demand_terms_by_node.values() for term in terms]
 
     for node_id in node_active:
         node_in = sum(incoming[node_id])
