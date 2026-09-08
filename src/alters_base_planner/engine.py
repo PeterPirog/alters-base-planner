@@ -33,13 +33,21 @@ class _Candidate:
 
 
 def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
-    """Enumerate legal room positions using port-floor proximity only as search ordering."""
+    """Enumerate legal room positions using port proximity only as candidate ordering.
+
+    ``PortSpec.cell_y`` is floor-relative, while the Base grid is top-origin. The
+    candidate-order surrogate must therefore resolve the port row into world coordinates
+    before measuring vertical proximity to the Base centre. This score is not the planner's
+    soft objective F; it only biases which hard-feasible room packings CP-SAT exposes first.
+    """
 
     spec = instance.spec
     cx = (base.width - 1) / 2
     cy = (base.height - 1) / 2
     result: list[_Candidate] = []
-    mean_port_y = sum(port.cell_y for port in spec.ports) / len(spec.ports)
+    mean_world_port_offset = sum(
+        spec.height - 1 - port.cell_y for port in spec.ports
+    ) / len(spec.ports)
     for y in range(base.height - spec.height + 1):
         for x in range(base.width - spec.width + 1):
             cells = frozenset(
@@ -50,7 +58,7 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             if not cells <= base.buildable_cells:
                 continue
             px = x + (spec.width - 1) / 2
-            py = y + mean_port_y
+            py = y + mean_world_port_offset
             distance = abs(px - cx) + 0.35 * abs(py - cy)
             search_cost = int(100 * max(spec.visit_weight, 0.05) * distance)
             result.append(_Candidate(x, y, cells, search_cost))
@@ -377,8 +385,10 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     admissible port-to-port lower bound used to prune room packings whose theoretical
     best score is already worse than the best exact layout.
 
-    The final objective always uses legal graph paths: endpoint rooms cost 0, each
-    Corridor/Elevator costs +1, and an intermediate transit room costs its full width.
+    CP-SAT currently solves the discrete room-placement feasibility problem. Its small
+    centre/proximity objective is only a candidate-order surrogate; it is not the planner's
+    soft objective. The final objective always uses legal graph paths: endpoint rooms cost 0,
+    each Corridor/Elevator costs +1, and an intermediate transit room costs its full width.
     """
 
     started_at = monotonic()
@@ -393,7 +403,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
     cell_vars: dict[tuple[int, int], list[cp_model.IntVar]] = {}
 
-    search_terms = []
+    candidate_order_terms = []
     for inst in instances:
         cand = _candidate_positions(inst, base)
         if not cand:
@@ -417,17 +427,24 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             model.new_bool_var(f"p_{inst.instance_id}_{idx}") for idx in range(len(cand))
         ]
         vars_by_instance[inst.instance_id] = variables
-        model.add(sum(variables) == 1)
+        model.add_exactly_one(variables)
         for var, pos in zip(variables, cand, strict=True):
             for cell in pos.cells:
                 cell_vars.setdefault(cell, []).append(var)
-            search_terms.append(pos.search_cost * var)
+            candidate_order_terms.append(pos.search_cost * var)
 
     for variables in cell_vars.values():
-        model.add(sum(variables) <= 1)
+        model.add_at_most_one(variables)
 
     _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
-    model.minimize(sum(search_terms))
+
+    # This is deliberately not the planner objective F. It only orders the sequence of
+    # room packings explored by the current placement-then-routing architecture.
+    model.minimize(sum(candidate_order_terms))
+
+    validation_error = model.validate()
+    if validation_error:
+        raise RuntimeError(f"Invalid generated CP-SAT placement model: {validation_error}")
 
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = 8
