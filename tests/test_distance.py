@@ -131,7 +131,7 @@ def test_shifted_shafts_are_legal_through_transfer_floor() -> None:
     _validate_vertical_elevator_coverage(rooms, utilities)
 
 
-def test_zero_weight_storage_is_excluded_from_pairs() -> None:
+def test_zero_weight_storage_is_excluded_from_pairs_but_remains_connected() -> None:
     rooms = [
         Placement("airlock-1", "airlock", 0, 0, 4, 1),
         Placement("workshop-1", "workshop", 6, 0, 4, 1),
@@ -141,6 +141,25 @@ def test_zero_weight_storage_is_excluded_from_pairs() -> None:
     metrics = evaluate_distances(rooms, utilities)
     assert set(metrics.pairwise_distances) == {"airlock-1|workshop-1"}
     assert metrics.weighted_score == pytest.approx(0.90)
+
+
+def test_zero_weight_module_still_requires_airlock_connectivity() -> None:
+    rooms = [
+        Placement("airlock-1", "airlock", 0, 0, 4, 1),
+        Placement("storage-1", "medium_storage", 8, 0, 8, 1),
+    ]
+    with pytest.raises(ValueError, match="storage-1 has no port reachable from the Airlock"):
+        evaluate_distances(rooms, [])
+
+
+def test_floating_solver_utility_is_hard_infeasible() -> None:
+    rooms = [
+        Placement("airlock-1", "airlock", 0, 0, 4, 1),
+        Placement("workshop-1", "workshop", 4, 0, 4, 1),
+    ]
+    utilities = [UtilityPlacement("corridor", 12, 0)]
+    with pytest.raises(ValueError, match="utility module.*floating"):
+        evaluate_distances(rooms, utilities)
 
 
 def test_unordered_pair_sum_counts_each_pair_once_with_intermediate_room_cost() -> None:
