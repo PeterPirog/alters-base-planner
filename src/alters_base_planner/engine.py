@@ -202,6 +202,7 @@ def _finalize_search_diagnostics(
     connected_candidates: int,
     fixed_objective_optima_proven: int,
     manhattan_pruned: int,
+    incumbent_bound_pruned: int,
     fixed_diagnostics: _FixedDiagnosticsAggregate,
     started_at: float,
     time_limit_reached: bool,
@@ -211,6 +212,7 @@ def _finalize_search_diagnostics(
     result.connected_candidates_examined = connected_candidates
     result.fixed_objective_optima_proven = fixed_objective_optima_proven
     result.manhattan_pruned_count = manhattan_pruned
+    result.incumbent_bound_pruned_count = incumbent_bound_pruned
     result.search_time_s = monotonic() - started_at
     result.time_limit_reached = time_limit_reached
     result.search_exhausted = search_exhausted
@@ -279,6 +281,7 @@ def _solve_instances(
                 connected_candidates=0,
                 fixed_objective_optima_proven=0,
                 manhattan_pruned=0,
+                incumbent_bound_pruned=0,
                 fixed_diagnostics=fixed_diagnostics,
                 started_at=started_at,
                 time_limit_reached=False,
@@ -315,6 +318,7 @@ def _solve_instances(
     connected_candidates = 0
     fixed_objective_optima_proven = 0
     manhattan_pruned = 0
+    incumbent_bound_pruned = 0
     room_packings_examined = 0
     time_limit_reached = False
     search_exhausted = False
@@ -376,11 +380,12 @@ def _solve_instances(
             )
 
         scaled_lower_bound = scaled_modified_manhattan_lower_bound(rooms, objective)
+        incumbent_scaled: int | None = None
         if best_result is not None:
-            incumbent = best_result.scaled_objective_value
-            if incumbent is None:
+            incumbent_scaled = best_result.scaled_objective_value
+            if incumbent_scaled is None:
                 raise AssertionError("Incumbent is missing its exact scaled objective")
-            if scaled_lower_bound > incumbent:
+            if scaled_lower_bound > incumbent_scaled:
                 manhattan_pruned += 1
                 model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
                 continue
@@ -396,6 +401,7 @@ def _solve_instances(
             tuple(rooms),
             time_limit_s=remaining,
             root_instance_id=root_instance_id,
+            scaled_objective_upper_bound=incumbent_scaled,
         )
         fixed_diagnostics.observe(fixed_result.diagnostics)
         if fixed_result.status == "TIME_LIMIT":
@@ -403,6 +409,18 @@ def _solve_instances(
             all_fixed_objectives_resolved = False
             break
         if fixed_result.status == "INFEASIBLE":
+            if incumbent_scaled is not None:
+                raise AssertionError(
+                    "Bounded fixed subproblem reported unqualified INFEASIBLE status"
+                )
+            model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+            continue
+        if fixed_result.status == "OBJECTIVE_BOUND_INFEASIBLE":
+            if incumbent_scaled is None:
+                raise AssertionError(
+                    "Unbounded fixed subproblem reported objective-bound infeasibility"
+                )
+            incumbent_bound_pruned += 1
             model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
             continue
         if fixed_result.status not in {"OPTIMAL", "FEASIBLE"}:
@@ -529,6 +547,7 @@ def _solve_instances(
             connected_candidates=connected_candidates,
             fixed_objective_optima_proven=fixed_objective_optima_proven,
             manhattan_pruned=manhattan_pruned,
+            incumbent_bound_pruned=incumbent_bound_pruned,
             fixed_diagnostics=fixed_diagnostics,
             started_at=started_at,
             time_limit_reached=time_limit_reached,
@@ -546,7 +565,8 @@ def _solve_instances(
         proof_text = (
             "Global exact lexicographic optimum PROVEN: every physical room packing was either "
             "solved to its exact fixed-packing objective optimum, proven infrastructure-"
-            "infeasible, or excluded by a strict exact integer admissible lower bound."
+            "infeasible, excluded by a strict exact integer admissible lower bound, or proven "
+            "unable to match the incumbent by the exact bounded fixed subproblem."
             if global_optimum_proven
             else "Global objective optimality is not proven for this run."
         )
@@ -555,6 +575,7 @@ def _solve_instances(
             f"{room_packings_examined} unique room packings; {fixed_objective_optima_proven} "
             f"fixed-packing lexicographic optima proven; {manhattan_pruned} additional packings "
             "pruned by the strict exact-integer modified-Manhattan lower bound; "
+            f"{incumbent_bound_pruned} packings excluded by the exact incumbent objective cut; "
             f"{stop_reason}. Identical-module label permutations are symmetry-broken. "
             f"{proof_text}"
         )
@@ -599,6 +620,7 @@ def _solve_instances(
         connected_candidates=connected_candidates,
         fixed_objective_optima_proven=fixed_objective_optima_proven,
         manhattan_pruned=manhattan_pruned,
+        incumbent_bound_pruned=incumbent_bound_pruned,
         fixed_diagnostics=fixed_diagnostics,
         started_at=started_at,
         time_limit_reached=time_limit_reached,
@@ -617,12 +639,13 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
        infrastructure and proves the accepted fixed-packing lexicographic objective;
     3. exact integer modified-Manhattan lower bounds to prune only when a packing cannot match
        the incumbent primary objective;
-    4. exact integer objective ranking across fixed-packing optima.
+    4. the current exact scaled incumbent as an equality-preserving fixed-subproblem upper bound;
+    5. exact integer objective ranking across fixed-packing optima.
 
     A run reports `global_objective_optimum_proven=True` only after the master is exhausted and
-    every unpruned fixed packing has been solved exactly or proven infrastructure-infeasible.
-    Time or layout-attempt limits therefore preserve best-known semantics rather than creating a
-    false global proof.
+    every relevant fixed packing has been solved exactly, proven infrastructure-infeasible or
+    excluded by an exact proof-safe bound. Time or layout-attempt limits therefore preserve
+    best-known semantics rather than creating a false global proof.
     """
 
     started_at = monotonic()
