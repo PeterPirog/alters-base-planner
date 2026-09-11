@@ -369,6 +369,8 @@ def solve_fixed_layout_flow_objective(
     compiled.model.minimize(primary_expr)
 
     primary_proto = compiled.model.Proto()
+    primary_variable_count = len(primary_proto.variables)
+    primary_constraint_count = len(primary_proto.constraints)
     model_build_time_s = max(0.0, monotonic() - started_at)
 
     def diagnostics() -> FixedFlowObjectiveDiagnostics:
@@ -376,8 +378,8 @@ def solve_fixed_layout_flow_objective(
             graph_node_count=len(nodes),
             graph_arc_count=len(arcs),
             objective_pair_count=len(objective.pairs),
-            cp_sat_variable_count=len(primary_proto.variables),
-            cp_sat_constraint_count=len(primary_proto.constraints),
+            cp_sat_variable_count=primary_variable_count,
+            cp_sat_constraint_count=primary_constraint_count,
             model_build_time_s=model_build_time_s,
             cp_sat_solve_time_s=cp_sat_solve_time_s,
             total_time_s=max(0.0, monotonic() - started_at),
