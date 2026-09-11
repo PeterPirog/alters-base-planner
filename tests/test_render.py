@@ -42,6 +42,15 @@ def _sample_result() -> PlanResult:
         travel_feasible_at_full_tank=True,
         corridor_count=1,
         fixed_objective_optima_proven=3,
+        fixed_subproblem_count=4,
+        max_fixed_graph_nodes=61,
+        max_fixed_graph_arcs=120,
+        max_fixed_objective_pairs=28,
+        max_fixed_cp_sat_variables=3500,
+        max_fixed_cp_sat_constraints=6100,
+        fixed_model_build_time_s=0.12,
+        fixed_cp_sat_solve_time_s=0.51,
+        fixed_subproblem_time_s=0.69,
     )
 
 
@@ -85,7 +94,19 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
         "scaled_value": 9,
         "scaled_modified_manhattan_lower_bound": 9,
     }
-    assert optimization["search_diagnostics"]["fixed_objective_optima_proven"] == 3
+    diagnostics = optimization["search_diagnostics"]
+    assert diagnostics["fixed_objective_optima_proven"] == 3
+    assert diagnostics["fixed_subproblems"] == {
+        "count": 4,
+        "max_graph_nodes": 61,
+        "max_graph_arcs": 120,
+        "max_objective_pairs": 28,
+        "max_cp_sat_variables": 3500,
+        "max_cp_sat_constraints": 6100,
+        "model_build_time_s": 0.12,
+        "cp_sat_solve_time_s": 0.51,
+        "total_time_s": 0.69,
+    }
 
 
 def test_svg_contains_metrics_and_room_labels() -> None:
