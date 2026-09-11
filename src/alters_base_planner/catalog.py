@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import ModuleSpec, ModuleType, floor_ports, top_ports
+from .models import ModuleSpec, ModuleType, PlacementAuthority, floor_ports, top_ports
 
 _WEIGHTS_PATH = Path(__file__).with_name("data") / "usage_weights.json"
 
@@ -38,13 +38,13 @@ def _module(
     mass: int,
     module_type: ModuleType,
     *,
-    mandatory: bool = False,
-    configurable: bool = True,
+    authority: PlacementAuthority = PlacementAuthority.PLAYER,
     transit_allowed: bool = True,
     top_access: bool = False,
+    vertical_connectivity: bool = False,
     max_count: int | None = None,
 ) -> ModuleSpec:
-    # Standard LEFT/RIGHT floor ports are derived directly from room width:
+    # Standard LEFT/RIGHT floor ports are derived directly from module width:
     # LEFT=(0,0), RIGHT=(width-1,0). Only verified exceptions need height.
     ports = top_ports(width, height) if top_access else floor_ports(width)
     return ModuleSpec(
@@ -54,24 +54,44 @@ def _module(
         height,
         mass,
         module_type,
-        mandatory=mandatory,
-        configurable=configurable,
+        authority=authority,
         visit_weight=_w(key),
         ports=ports,
         transit_allowed=transit_allowed,
+        vertical_connectivity=vertical_connectivity,
         max_count=max_count,
     )
 
 
+SYSTEM = PlacementAuthority.SYSTEM
+PLAYER = PlacementAuthority.PLAYER
+SOLVER = PlacementAuthority.SOLVER
+
 MODULES: tuple[ModuleSpec, ...] = (
-    _module("airlock", "Airlock", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("captains_cabin", "Captain's Cabin", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("command_center", "Command Center", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("communication_room", "Communication Room", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("kitchen", "Kitchen", 5, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("machinery", "Machinery", 4, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("quantum_computer", "Quantum Computer", 4, 2, 8, ModuleType.CORE, mandatory=True, configurable=False),
-    _module("womb", "The Womb", 5, 1, 4, ModuleType.CORE, mandatory=True, configurable=False),
+    _module("airlock", "Airlock", 4, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module("captains_cabin", "Captain's Cabin", 4, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module("command_center", "Command Center", 4, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module(
+        "communication_room",
+        "Communication Room",
+        4,
+        1,
+        4,
+        ModuleType.CORE,
+        authority=SYSTEM,
+    ),
+    _module("kitchen", "Kitchen", 5, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module("machinery", "Machinery", 4, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module(
+        "quantum_computer",
+        "Quantum Computer",
+        4,
+        2,
+        8,
+        ModuleType.CORE,
+        authority=SYSTEM,
+    ),
+    _module("womb", "The Womb", 5, 1, 4, ModuleType.CORE, authority=SYSTEM),
     _module("ark_sarcophagus", "Ark Sarcophagus", 4, 2, 13, ModuleType.STORAGE),
     _module("contemplation_room", "Contemplation Room", 6, 1, 20, ModuleType.WELLBEING),
     _module("dormitory", "Dormitory", 6, 1, 8, ModuleType.WELLBEING),
@@ -110,8 +130,24 @@ MODULES: tuple[ModuleSpec, ...] = (
     _module("small_storage", "Small Storage", 2, 2, 28, ModuleType.STORAGE),
     _module("social_room", "Social Room", 6, 1, 14, ModuleType.WELLBEING),
     _module("workshop", "Workshop", 4, 1, 8, ModuleType.WORK),
+    _module("corridor", "Corridor", 2, 1, 2, ModuleType.UTILITY, authority=SOLVER),
+    _module(
+        "elevator",
+        "Elevator",
+        2,
+        1,
+        2,
+        ModuleType.UTILITY,
+        authority=SOLVER,
+        vertical_connectivity=True,
+    ),
 )
 
 MODULE_BY_KEY = {m.key: m for m in MODULES}
-CONFIGURABLE_MODULES = tuple(m for m in MODULES if m.configurable)
-MANDATORY_MODULES = tuple(m for m in MODULES if m.mandatory)
+SYSTEM_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.SYSTEM)
+PLAYER_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.PLAYER)
+SOLVER_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.SOLVER)
+
+# Backward-compatible collection names used by config/UI code.
+MANDATORY_MODULES = SYSTEM_MODULES
+CONFIGURABLE_MODULES = PLAYER_MODULES
