@@ -142,8 +142,11 @@ def _build_compiled_model(
     placement_by_option_id: dict[str, ModulePlacement],
     *,
     root_instance_id: str,
+    utility_anchors: tuple[UtilityAnchorSpec, ...] | None = None,
 ) -> IntegratedHardModel:
-    utility_anchors = enumerate_utility_anchors(base)
+    if utility_anchors is None:
+        utility_anchors = enumerate_utility_anchors(base)
+
     model = cp_model.CpModel()
     variables = build_hard_constraint_layer(
         model,
@@ -199,6 +202,11 @@ def compile_fixed_layout_hard_model(
     This is the exact Stage-2 decomposition boundary used to replace greedy routing: room
     placement may still come from the transitional master model, but Corridor/Elevator hard
     feasibility is decided by CP-SAT rather than by one deterministic path construction.
+
+    Because room placements are fixed here, any utility anchor overlapping an occupied room
+    cell is impossible by H3 and can be removed before variable creation. This is an exact
+    domain reduction, not a heuristic: it removes only assignments that the shared occupancy
+    constraints would otherwise force to zero.
     """
 
     if not rooms:
@@ -248,11 +256,15 @@ def compile_fixed_layout_hard_model(
         )
         placement_by_option_id[option_id] = room
 
+    utility_anchors = tuple(
+        anchor for anchor in enumerate_utility_anchors(base) if not (anchor.cells & occupied)
+    )
     compiled = _build_compiled_model(
         base,
         tuple(placement_options),
         placement_by_option_id,
         root_instance_id=root_instance_id,
+        utility_anchors=utility_anchors,
     )
 
     # Search hint only: prefer inactive infrastructure first. This does not constrain
