@@ -6,6 +6,7 @@ from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import (
     _candidate_positions,
     _mass_metrics,
+    _solve_instances,
     _validate_utility_geometry,
     solve_plan,
 )
@@ -235,6 +236,40 @@ def test_supplied_base_must_match_requested_tier() -> None:
         )
 
 
+def test_fixed_subproblem_diagnostics_are_aggregated_by_exact_master() -> None:
+    base = BaseGeometry(
+        tier=99,
+        width=10,
+        height=1,
+        allowed_cells=frozenset((x, 0) for x in range(10)),
+        blocked_cells=frozenset(),
+        organics_capacity=999,
+        source="stage4-engine-diagnostics-test",
+        verified=True,
+    )
+    instances = [
+        ModuleInstance("airlock-1", MODULE_BY_KEY["airlock"]),
+        ModuleInstance("workshop-1", MODULE_BY_KEY["workshop"]),
+    ]
+
+    result = _solve_instances(
+        base,
+        instances,
+        time_limit_s=5.0,
+        max_layout_attempts=1,
+    )
+
+    assert result.fixed_subproblem_count == 1
+    assert result.max_fixed_graph_nodes > 0
+    assert result.max_fixed_graph_arcs > 0
+    assert result.max_fixed_objective_pairs == 1
+    assert result.max_fixed_cp_sat_variables > 0
+    assert result.max_fixed_cp_sat_constraints > 0
+    assert result.fixed_model_build_time_s >= 0
+    assert result.fixed_cp_sat_solve_time_s >= 0
+    assert result.fixed_subproblem_time_s >= result.fixed_model_build_time_s
+
+
 def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> None:
     result = solve_plan(
         PlanRequest(
@@ -250,10 +285,12 @@ def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> N
     assert 0 <= result.attempts <= 8
     assert result.connected_candidates_examined >= 0
     assert result.manhattan_pruned_count >= 0
+    assert result.fixed_subproblem_count >= 0
 
     if result.status == "FEASIBLE":
         assert result.modules
         assert result.connected_candidates_examined >= 1
+        assert result.fixed_subproblem_count >= 1
         assert result.total_mass == result.room_mass + result.utility_mass
         assert result.organics_required_for_journey == result.total_mass
         assert result.organics_capacity_margin == result.base.organics_capacity - result.total_mass
