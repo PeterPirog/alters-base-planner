@@ -9,3 +9,5 @@ build/
 /layout.png
 /layout.svg
 /layout.json
+/benchmark-results.json
+/benchmark-results.md
