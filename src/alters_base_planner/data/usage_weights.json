@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "scale": "0.00 to 1.00; higher means higher expected physical traffic to/from this module during normal play",
-  "method": "Gameplay-informed default traffic weights for the weighted room-pair objective. They are not hidden game constants. The calibration prioritizes repeated physical use by Jan and Alters: mandatory entry/exit and daily routine are highest; staffed workrooms are medium-high; episodic/story and optional wellbeing rooms are lower; passive rooms are zero. Weight 0 excludes a module from objective pairs while it remains subject to all hard placement/connectivity constraints.",
+  "method": "Gameplay-informed default traffic weights for the weighted room-pair objective. They are not hidden game constants. The calibration prioritizes repeated physical use by Jan and Alters: mandatory entry/exit and daily routine are highest; staffed workrooms are medium-high; episodic/story and optional wellbeing rooms are lower; passive rooms are zero. Solver-managed infrastructure also has weight 0 because Corridor/Elevator are path elements rather than endpoint destinations. Weight 0 excludes a module from objective pairs while it remains subject to all hard placement/connectivity constraints.",
   "weights": {
     "airlock": {"weight": 1.00, "confidence": "high", "rationale": "Primary entry/exit for surface activity; the strongest recurring movement anchor."},
     "workshop": {"weight": 0.90, "confidence": "high", "rationale": "Repeated crafting of consumables and quest items; Worker commonly spends full work shifts here and Jan can craft manually."},
@@ -30,6 +30,8 @@
     "medium_storage": {"weight": 0.00, "confidence": "high", "rationale": "Passive storage; inventory does not require physically entering the module."},
     "large_storage": {"weight": 0.00, "confidence": "high", "rationale": "Passive storage; inventory does not require physically entering the module."},
     "ark_sarcophagus": {"weight": 0.00, "confidence": "high", "rationale": "Mission storage/terminal module; excluded from routine traffic pairs."},
-    "rapidium_ark": {"weight": 0.00, "confidence": "high", "rationale": "Hermetic Rapidium storage module; excluded from routine traffic pairs."}
+    "rapidium_ark": {"weight": 0.00, "confidence": "high", "rationale": "Hermetic Rapidium storage module; excluded from routine traffic pairs."},
+    "corridor": {"weight": 0.00, "confidence": "high", "rationale": "Solver-managed path infrastructure; traversed in distance calculation but never an endpoint objective destination."},
+    "elevator": {"weight": 0.00, "confidence": "high", "rationale": "Solver-managed path infrastructure; traversed in distance calculation but never an endpoint objective destination."}
   }
 }
