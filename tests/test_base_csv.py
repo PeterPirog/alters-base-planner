@@ -14,8 +14,28 @@ def test_builtin_tiers_are_loaded_from_separate_csv_files() -> None:
         base = builtin_base(tier)
         assert (base.width, base.height) == (width, height)
         assert base.source == source
+        assert base.verified is True
         assert base.blocked_cells
         assert base.blocked_cells <= base.allowed_cells
+
+
+def test_builtin_core_coordinates_match_validated_spatial_analysis() -> None:
+    expected_core = {
+        1: frozenset((x, y) for y in (6, 7) for x in range(8, 12)),
+        2: frozenset((x, y) for y in (7, 8) for x in range(10, 14)),
+        3: frozenset((x, y) for y in (8, 9) for x in range(12, 16)),
+        4: frozenset((x, y) for y in (9, 10) for x in range(14, 18)),
+    }
+    for tier, blocked in expected_core.items():
+        base = builtin_base(tier)
+        assert base.blocked_cells == blocked
+        assert len(base.blocked_cells) == 8
+
+
+def test_base_i_row_width_profile_matches_reference_matrix() -> None:
+    base = builtin_base(1)
+    row_widths = [sum((x, y) in base.allowed_cells for x in range(base.width)) for y in range(base.height)]
+    assert row_widths == [14, 18, 20, 22, 22, 22, 22, 22, 22, 20, 18, 14]
 
 
 def test_csv_dimensions_are_inferred_from_rows_and_columns(tmp_path: Path) -> None:
