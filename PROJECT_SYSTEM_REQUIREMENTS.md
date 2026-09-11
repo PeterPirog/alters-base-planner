@@ -5,26 +5,24 @@ Repository: `PeterPirog/alters-base-planner`
 Primary implementation language: Python >= 3.11  
 Optimization engine: Google OR-Tools CP-SAT
 
-This file is the highest-level repository source of truth for product intent, accepted game/domain mechanics, mathematical semantics, solver requirements, development stages and acceptance criteria.
+This file is the highest-level source of truth for product intent, accepted game/domain mechanics, mathematical semantics, solver requirements, development stages and acceptance criteria.
 
 ---
 
 ## 1. Purpose and authority
 
-The repository shall implement a reliable optimization-based planner for the mobile Base in **The Alters**. The user selects the Base tier and counts of optional rooms. The planner automatically injects mandatory modules and determines the number and placement of Corridors and Elevators.
+The repository implements a reliable optimization-based planner for the mobile Base in **The Alters**. The user selects Base Tier I-IV and exact counts of optional rooms. The planner automatically injects mandatory modules and chooses all Corridor/Elevator infrastructure.
 
-More detailed implementation documents (`docs/OPTIMIZATION_MODEL.md`, `docs/ROOM_DATA_AUDIT.md`, `docs/BASE_GEOMETRY_REFERENCE.md`) plus code/tests must remain consistent with this contract.
+Detailed contracts must remain consistent with this file:
 
-When verified evidence changes mechanics, do not silently change one layer. Update the evidence/audit material, this specification when the project contract changes, implementation and tests together.
+1. `docs/OPTIMIZATION_MODEL.md` — mathematical/solver contract;
+2. `docs/ROOM_DATA_AUDIT.md` — module/game evidence;
+3. `docs/BASE_GEOMETRY_REFERENCE.md` — Base geometry;
+4. current code and tests.
 
-Never invent missing game mechanics. Distinguish:
+When verified evidence changes mechanics, update documentation, implementation and tests together. Never invent missing game rules. Distinguish verified facts, explicit modelling decisions, heuristics and unknown/provisional data.
 
-- **verified game/domain facts** — may define hard constraints;
-- **project modelling decisions** — explicit abstractions/approximations;
-- **heuristics** — may guide search but must not invalidate an otherwise legal layout;
-- **unknown/provisional data** — must be labelled and never presented as verified.
-
-The project is unofficial and must not claim access to hidden game constants unless independently verified.
+The project is unofficial and must not claim hidden game constants without evidence.
 
 ---
 
@@ -33,31 +31,32 @@ The project is unofficial and must not claim access to hidden game constants unl
 Given:
 
 1. Base tier I, II, III or IV;
-2. exact requested counts of optional PLAYER modules;
+2. exact requested counts of PLAYER modules;
 3. solver budget/configuration;
 
 produce a layout that:
 
 - fits the exact irregular Base mask;
-- contains all baseline mandatory SYSTEM modules and exactly the requested PLAYER modules;
-- contains solver-generated Corridor/Elevator modules as required;
-- obeys module geometry, ports, connectivity, occupancy and special module rules;
+- contains every baseline mandatory SYSTEM module exactly once;
+- contains exactly the requested PLAYER modules;
+- generates Corridor/Elevator modules automatically;
+- obeys exact geometry, ports, occupancy, connectivity and special rules;
 - forms one legal network rooted at Airlock;
-- computes exact travel distances;
-- minimizes the accepted gameplay travel objective;
+- computes exact legal travel distances;
+- minimizes the accepted weighted travel objective and tie-breakers;
 - reports Base Mass and Organics journey feasibility separately from structural feasibility;
-- emits auditable JSON and graphical PNG/SVG output;
-- clearly distinguishes a best-known feasible result from a proven global optimum.
+- emits auditable JSON and graphical PNG/SVG;
+- clearly distinguishes best-known feasible results from mathematically proven global optima.
 
-The target architecture is one **joint exact optimizer**, or an **exact decomposition with valid bounds**, over module placement, solver infrastructure, connectivity and the true gameplay objective.
+The accepted target architecture is one joint exact optimizer or an exact decomposition with valid bounds and proof semantics. Heuristic post-routing is not a correctness boundary.
 
-The former deterministic placement -> greedy post-router architecture is no longer acceptable as a correctness boundary. Stage 2 now uses an exact hard-feasibility decomposition. Stage 3 must extend exactness to the true objective rather than reintroducing heuristic routing.
+The current production architecture is an **exact room-packing / fixed-objective decomposition**. A configured time or attempt limit may stop it before proof completion; in that case the result remains best-known feasible.
 
 ---
 
-## 3. Coordinate systems and Base geometry
+## 3. Coordinates and Base geometry
 
-### 3.1 Global Base coordinates
+### 3.1 Global coordinates
 
 ```text
 origin (0,0) = top-left
@@ -68,16 +67,14 @@ y increases down
 CSV semantics:
 
 ```text
-0 = outside Base / unavailable
-1 = buildable Base cell
-X = immovable blocked core cell
+0 = unavailable/outside Base
+1 = buildable
+X = fixed blocked core
 ```
 
-The CSV masks are hard geometry. They MUST NOT be symmetrized, centred, smoothed or inferred from an ideal circle.
+The CSV masks are hard geometry. Never symmetrize, smooth, recenter or infer them from an idealized shape.
 
-A grid cell corresponds approximately to 2 m width × 3 m height in the supplied spatial analysis; optimization uses module/grid travel units, not metres.
-
-### 3.2 Canonical Base I-IV masks
+### 3.2 Canonical masks
 
 ```text
 src/alters_base_planner/data/base-size1.csv
@@ -86,54 +83,49 @@ src/alters_base_planner/data/base-size3.csv
 src/alters_base_planner/data/base-size4.csv
 ```
 
-Validated dimensions, fixed 4x2 core and current Organics capacity:
-
-| Tier | Width x Height | Core coordinates | Organics capacity |
+| Tier | Width x Height | Fixed 4x2 core | Organics capacity |
 |---|---:|---|---:|
 | I | 22 x 12 | x=8..11, y=6..7 | 300* |
 | II | 26 x 14 | x=10..13, y=7..8 | 450 |
 | III | 30 x 16 | x=12..15, y=8..9 | 700 |
 | IV | 34 x 18 | x=14..17, y=9..10 | 800 |
 
-`*` Tier-I value 300 is the current planner value. The supplied project analysis validates 450/700/800 more directly than the Tier-I numeric value; Tier-I provenance must remain explicit until stronger game-exact evidence is available.
+`*` Tier-I capacity is the current planner value and has weaker provenance than Tier II-IV. Preserve that audit distinction until stronger evidence exists.
 
-The core is intentionally asymmetric relative to the rectangular grid. Do not force it to the geometric centre.
+The blocked core is intentionally asymmetric relative to the rectangular grid.
 
 ---
 
-## 4. Canonical Module domain model
+## 4. Canonical Module model
 
-### 4.1 Abstraction
+The canonical abstraction is `ModuleSpec`; every installed object uses `ModulePlacement`.
 
-The canonical abstraction is **Module**, not separate room/utility geometry types. A module has at least:
+A module describes at least:
 
 ```text
 key/name
 width, height
 mass
-occupied cells
 ports
 transit behaviour
-traffic/visit weight
+traffic weight
 count limits
 placement authority
 ```
 
-Placement authority is:
+Placement authority:
 
 ```text
-SYSTEM  = baseline mandatory; injected automatically
-PLAYER  = optional; exact count selected by the user
+SYSTEM  = mandatory planner baseline; injected automatically
+PLAYER  = optional; exact count selected by user
 SOLVER  = generated infrastructure; count/placement chosen by optimization
 ```
 
-`ModuleType` is independent from placement authority. Authority says **who decides existence**; module type says **what the module is**.
+`ModuleType` is independent from placement authority.
 
-Corridor and Elevator are SOLVER modules and are never user count inputs.
+### 4.1 Mandatory SYSTEM modules
 
-### 4.2 Baseline mandatory SYSTEM modules
-
-Exactly one of each:
+Exactly one each:
 
 | Key | Module | Size | Mass |
 |---|---|---:|---:|
@@ -146,11 +138,9 @@ Exactly one of each:
 | `quantum_computer` | Quantum Computer | 4x2 | 8 |
 | `womb` | The Womb | 5x1 | 4 |
 
-The player MUST NOT configure these counts or set them to zero. They are injected automatically.
+The player cannot configure these counts or set them to zero. This is the current planning baseline, not a claim that all exist at minute zero of every story state.
 
-This is the **planner baseline**, not a claim that every module physically exists at minute zero of every story state. Progression-aware modelling belongs to a later explicit `act/game_state` stage.
-
-### 4.3 PLAYER catalogue
+### 4.2 PLAYER catalogue
 
 | Key | Module | Size | Mass | Special rule |
 |---|---|---:|---:|---|
@@ -166,7 +156,7 @@ This is the **planner baseline**, not a claim that every module physically exist
 | `medium_storage` | Medium Storage | 8x1 | 65 | passive traffic |
 | `park_with_bench` | Park with Bench | 6x1 | 20 | — |
 | `personal_cabin` | Personal Cabin | 3x1 | 10 | — |
-| `radiation_repulsor` | Radiation Repulsor | 2x3 | 16 | **top access**, non-transit |
+| `radiation_repulsor` | Radiation Repulsor | 2x3 | 16 | top access, non-transit |
 | `rapidium_ark` | Rapidium Ark | 4x2 | 32 | non-transit, max 5 |
 | `recycler` | Recycler | 2x1 | 2 | max 1 |
 | `refinery` | Refinery | 4x1 | 8 | — |
@@ -175,204 +165,169 @@ This is the **planner baseline**, not a claim that every module physically exist
 | `social_room` | Social Room | 6x1 | 14 | — |
 | `workshop` | Workshop | 4x1 | 8 | — |
 
-### 4.4 SOLVER modules
+### 4.3 SOLVER modules
 
-| Module | Size | Mass | Authority |
-|---|---:|---:|---|
-| Corridor | 2x1 | 2 | SOLVER |
-| Elevator | 2x1 | 2 | SOLVER |
+| Module | Size | Mass |
+|---|---:|---:|
+| Corridor | 2x1 | 2 |
+| Elevator | 2x1 | 2 |
 
-Their multiplicity and placement are optimization results.
+Their multiplicity and placement are optimization results and never player inputs.
 
 ---
 
 ## 5. Port model
 
-### 5.1 Local coordinates
-
-Local port coordinates are floor-relative:
+Local module ports are floor-relative:
 
 ```text
-local y = 0     => floor
-local y = H - 1 => top
-x increases right
+local y = 0     -> floor
+local y = H - 1 -> top
 ```
 
-For every standard horizontally connected module of width `W`:
+Standard ports for width `W`:
 
 ```text
 LEFT  = (0, 0)
 RIGHT = (W - 1, 0)
 ```
 
-Standard ports MUST be derived from width, not redundantly stored per module.
-
-For a 1x1 module, LEFT and RIGHT share physical local cell `(0,0)` but remain separate logical sides.
-
-### 5.2 Local-to-world transform
+World conversion:
 
 ```text
-world_cell_x = module.x + local_x
-world_cell_y = module.y + (H - 1 - local_y)
+world_x = module.x + local_x
+world_y = module.y + (H - 1 - local_y)
 ```
 
-A standard high module is therefore entered at its physical floor, never through its ceiling or centroid.
+Ordinary tall modules connect at their floor, not centroid or ceiling.
 
-### 5.3 Verified exception
+For a 1x1 module, LEFT and RIGHT share one physical cell but remain separate logical sides.
 
-Radiation Repulsor is 2x3 and connects from its **top**, so its access uses `local y=H-1` rather than floor `y=0`.
+Verified exception: Radiation Repulsor is 2x3, connects at its top and is non-transit.
 
-Do not generalize exceptions without evidence.
-
-### 5.4 Utility semantics
-
-In the canonical model:
-
-- Corridor provides horizontal LEFT/RIGHT connectivity;
-- Elevator provides horizontal attachment plus vertical UP/DOWN connectivity to immediately adjacent stacked Elevator modules.
-
-These semantics must remain expressible through canonical module/port compatibility rather than a separate heuristic router.
+Corridor provides horizontal connectivity. Elevator provides horizontal attachment plus vertical connectivity to immediately adjacent stacked Elevator modules.
 
 ---
 
-## 6. Connectivity and transit semantics
+## 6. Connectivity and transit
 
-Every installed module must belong to one Base network rooted at Airlock.
+Every installed module belongs to one network rooted at Airlock.
 
 For every installed required module:
 
 ```text
-at least one legal port connects to the network
+at least one legal port connection
 reachable(Airlock, module) = true
 ```
 
-Legal graph connections may include:
+Legal graph connections may include room-room, room-Corridor, room-Elevator, Corridor-Corridor, Corridor-Elevator and legal Elevator-Elevator edges.
 
-```text
-Room-like module <-> Room-like module
-Room-like module <-> Corridor
-Room-like module <-> Elevator
-Corridor <-> Corridor
-Corridor <-> Elevator
-Elevator <-> Elevator (horizontal and legal vertical stacking)
-```
-
-`transit_allowed=false` means a module may be reached as a terminal but its opposite horizontal ports are not internally joined for through-traffic.
+`transit_allowed=false` means the module may be a reachable terminal but its opposite horizontal ports are not internally joined for through-traffic.
 
 Current non-transit modules:
 
 - Radiation Repulsor;
 - Rapidium Ark.
 
-They are not exempt from Base connectivity.
-
-Every generated Corridor/Elevator must itself be part of the Airlock-rooted network. Floating infrastructure is invalid.
+Every generated Corridor/Elevator must itself be Airlock-reachable. Floating infrastructure is invalid.
 
 ---
 
 ## 7. Hard constraints
 
-A candidate is structurally feasible only if all applicable rules hold.
+A structurally feasible layout enforces all applicable rules.
 
 ### H1 — Exact multiplicity
 
 - exactly one of each SYSTEM module;
 - exactly the requested count of each PLAYER module;
-- `Recycler <= 1`;
-- `Rapidium Ark <= 5`;
-- Corridor/Elevator multiplicity decided only by the solver.
+- Recycler <= 1;
+- Rapidium Ark <= 5;
+- Corridor/Elevator decided only by solver.
 
 ### H2 — Base-mask legality
 
-Every occupied cell of every module must be `1` in the selected Base CSV. No movable module may occupy `0` or `X`.
+Every occupied cell is buildable (`1`). No movable module occupies `0` or `X`.
 
 ### H3 — No overlap
 
-Each physical grid cell may be occupied by at most one installed module, including every room/Corridor/Elevator combination.
+Each grid cell is occupied by at most one installed module, including infrastructure.
 
 ### H4 — Orientation
 
-No rotation unless verified game evidence explicitly supports it.
+No rotation unless verified future evidence supports it.
 
 ### H5 — Legal ports
 
-Connectivity exists only through compatible resolved ports/utility anchors. Ordinary high modules connect at floor level; verified top-access exceptions remain explicit.
+Connectivity exists only through compatible resolved ports/utility anchors. High rooms use floor-level access except explicit verified exceptions.
 
-### H6 — Local connection requirement
+### H6 — Local connection
 
-Every installed module required in the Base network has at least one active legal connection. This strengthens but does not replace global reachability.
+Every installed network module has at least one legal connection. This does not replace global reachability.
 
-### H7 — Global Airlock reachability
+### H7 — Airlock reachability
 
-All installed modules must be reachable from Airlock through the legal module graph.
+All installed modules are reachable from Airlock.
 
 ### H8 — Non-transit behaviour
 
-A non-transit module may terminate a route but may not be used as an intermediate side-to-side bridge.
+Non-transit modules may terminate routes but cannot bridge opposite sides.
 
-### H9 — Corridor semantics
+### H9 — Corridor
 
-Corridor is 2x1, solver-managed, horizontal, must fit the Base, avoid overlaps, connect legally and belong to the reachable network.
+Corridor is solver-managed 2x1 horizontal infrastructure, must fit the Base, avoid overlap, connect legally and belong to the reachable network.
 
-### H10 — Elevator semantics and continuity
+### H10 — Elevator continuity
 
-Elevator is 2x1 and solver-managed. Vertical movement exists only between immediately adjacent compatible Elevator modules. Each used vertical level is represented by an Elevator module.
+Elevator is solver-managed 2x1 infrastructure. Vertical movement exists only between immediately adjacent compatible Elevators. Every used vertical level is represented by an Elevator module.
 
-A shifted shaft is legal only through a real transfer path on a shared floor. Community preference for a central shaft is not a hard rule.
+Shifted shafts require a real horizontal transfer path. Central-shaft community layouts are not hard constraints.
 
-### H11 — No floating utilities
+### H11 — No floating infrastructure
 
-Every selected Corridor/Elevator must reach the Airlock-rooted Base network.
+Every selected Corridor/Elevator belongs to the Airlock-rooted network.
 
-### H12 — Journey mass semantics
-
-For the mobile Base:
+### H12 — Journey mass
 
 ```text
-total_base_mass = sum(module masses)
+total_base_mass = sum(installed module masses)
 organics_required_for_journey = total_base_mass
+journey_feasible = structural_feasible and total_base_mass <= organics_capacity
 ```
 
-Since each Corridor/Elevator mass is 2, this is equivalent to:
+Since Corridor/Elevator mass is 2, this is equivalent to non-SOLVER mass plus `2*corridor_count + 2*elevator_module_count`.
 
-```text
-sum(non-SOLVER masses) + 2*corridor_count + 2*elevator_module_count
-```
-
-Report separately:
-
-- `structural_feasible` — valid geometry/network;
-- `journey_feasible` — structural feasible AND `total_base_mass <= organics_capacity`.
-
-An overweight structurally valid diagnostic layout may be rendered if clearly labelled, but must never be reported as journey-feasible.
+Structural feasibility and journey feasibility are reported separately.
 
 ---
 
-## 8. Exact travel-distance semantics
+## 8. Exact travel distance
 
-Final `d(i,j)` is shortest legal path distance in the module graph, not centroid distance and not raw Manhattan distance.
+Final `d(i,j)` is shortest legal path distance in the installed module graph.
 
 ### D1 — Endpoint modules
 
-Source and destination module widths contribute `0` to their own pair distance.
+Source and destination module widths contribute 0.
 
-### D2 — Direct compatible endpoint adjacency
+### D2 — Direct endpoint adjacency
 
 ```text
 d(A,B) = 0
 ```
 
+for directly compatible endpoint ports.
+
 ### D3 — Corridor
 
-Each traversed Corridor module contributes `+1`.
+Each traversed Corridor contributes +1.
 
 ### D4 — Elevator
 
-Each traversed Elevator module contributes `+1`. A four-module stack contributes 4 if all four modules are traversed.
+Each traversed Elevator contributes +1. A four-module stack contributes 4 when all four are traversed.
 
 ### D5 — Intermediate transit module
 
-If a route crosses transit module C from one side to the other:
+Crossing transit module C side-to-side costs:
 
 ```text
 cost += width(C)
@@ -388,29 +343,27 @@ d(C,B) = 0
 d(A,B) = 6
 ```
 
-A 1x1 transit module costs 1 when crossed even though LEFT/RIGHT share one physical cell.
-
 ### D6 — Non-transit module
 
-No internal side-to-side graph edge is created.
+No internal side-to-side edge exists.
 
-### D7 — Exact path algorithm
+### D7 — Path algorithm
 
-Use Dijkstra or an equivalent exact non-negative shortest-path algorithm. Exact distances must be reproducible and auditable.
+Use Dijkstra or an exact equivalent non-negative shortest-path algorithm. Exact distances remain reproducible and auditable.
 
 ---
 
-## 9. Modified Manhattan lower bound
+## 9. Modified-Manhattan lower bound
 
-Modified Manhattan is an admissible lower bound/search heuristic only, never the final distance.
+Modified Manhattan is an admissible lower bound/search heuristic only.
 
-Same-floor endpoint ports:
+Same-floor endpoints:
 
 ```text
 horizontal_lb = ceil(abs(edge_x_a - edge_x_b) / 2)
 ```
 
-Cross-floor endpoint ports use external 2x1 utility anchors:
+Cross-floor endpoints:
 
 ```text
 horizontal_lb = ceil(abs(anchor_x_a - anchor_x_b) / 2)
@@ -418,80 +371,46 @@ vertical_lb   = abs(edge_y_a - edge_y_b) + 1
 port_lb       = horizontal_lb + vertical_lb
 ```
 
-For room pair `(i,j)`:
+For pair `(i,j)`:
 
 ```text
 LB(i,j) = min(port_lb over compatible endpoint-port choices)
 ```
 
-Weighted lower bound:
+Weighted bound:
 
 ```text
-F_LB = sum_{i<j} w_i * w_j * LB(i,j)
+F_LB = sum(i<j) w_i * w_j * LB(i,j)
 ```
 
-It is legal to prune when:
+Production represents F and F_LB on one exact integer scale. A room packing is prunable only when:
 
 ```text
-F_LB > incumbent_exact_F
+scaled_F_LB > incumbent_scaled_F
 ```
 
-The invariant:
+Equality must remain because later tie-breakers can improve.
+
+Fail-fast invariant:
 
 ```text
-F_LB <= F_exact
+scaled_F_LB <= scaled_F_exact
 ```
-
-must hold. A violation is an internal solver/model bug and must fail fast.
 
 ---
 
-## 10. Gameplay objective and tie-breakers
+## 10. Gameplay objective
 
-For all unordered pairs of installed positive-weight non-SOLVER modules:
+For every unordered positive-weight non-SOLVER pair:
 
 ```text
 pair_score(i,j) = w_i * w_j * d(i,j)
-F = sum_{i<j} pair_score(i,j)
+F = sum(i<j) pair_score(i,j)
 ```
 
-Zero-weight modules remain subject to every hard constraint; they simply do not create objective pairs.
+Zero-weight modules remain subject to every hard constraint.
 
-Default traffic weights are gameplay-informed planner parameters, not hidden game constants:
-
-| Module | Weight |
-|---|---:|
-| Airlock | 1.00 |
-| Workshop | 0.90 |
-| Kitchen | 0.80 |
-| Dormitory | 0.80 |
-| Captain's Cabin | 0.70 |
-| Research Lab | 0.65 |
-| Social Room | 0.60 |
-| Greenhouse | 0.55 |
-| Refinery | 0.55 |
-| Command Center | 0.35 |
-| Machinery | 0.35 |
-| Communication Room | 0.25 |
-| Infirmary | 0.25 |
-| Contemplation Room | 0.25 |
-| Personal Cabin | 0.25 |
-| Gym | 0.20 |
-| Gamer's Den | 0.20 |
-| Park with Bench | 0.15 |
-| Materializer | 0.10 |
-| Quantum Computer | 0.10 |
-| The Womb | 0.10 |
-| Recycler | 0.00 |
-| Radiation Repulsor | 0.00 |
-| Small/Medium/Large Storage | 0.00 |
-| Rapidium Ark | 0.00 |
-| Ark Sarcophagus | 0.00 |
-| Corridor / Elevator | 0.00 |
-
-Weights remain editable and auditable. Future empirical calibration from observed transition counts is desirable.
-
-Accepted lexicographic optimization order:
+Accepted lexicographic order:
 
 ```text
 1. lower exact F
@@ -500,133 +419,112 @@ Accepted lexicographic optimization order:
 4. fewer Corridor modules
 ```
 
-Do not introduce an undocumented competing soft objective.
+Traffic weights come from `src/alters_base_planner/data/usage_weights.json` and are planner heuristics, not hidden game constants.
 
-Community “central elevator” strategies may guide search but must not become correctness constraints without game-mechanics evidence.
+Decimal weights are converted through exact rational arithmetic to integer coefficients. CP-SAT objective comparison, Dijkstra reconstruction and room-packing pruning use the same `ScaledObjective` definition.
+
+No undocumented competing objective is allowed.
 
 ---
 
-## 11. OR-Tools / solver correctness requirements
+## 11. OR-Tools / solver correctness architecture
 
-### 11.1 Stage 1 domain state — COMPLETE / MAINTAIN
+### 11.1 Stage 1 domain — COMPLETE / MAINTAIN
 
-`ModuleSpec` is the canonical definition for SYSTEM/PLAYER/SOLVER modules; `ModulePlacement` represents every concrete installed module, including Corridor and Elevator; configuration ownership is derived from `PlacementAuthority`.
+`ModuleSpec` is canonical for SYSTEM/PLAYER/SOLVER modules, `ModulePlacement` represents every installed object and configuration ownership is derived from `PlacementAuthority`.
 
-### 11.2 Stage 2 hard-feasibility architecture — COMPLETE / MAINTAIN
+### 11.2 Stage 2 hard feasibility — COMPLETE / MAINTAIN
 
-The production solver uses an exact decomposition for hard feasibility:
-
-```text
-room-packing master CP-SAT
-        -> fixed-packing Corridor/Elevator hard-feasibility CP-SAT
-        -> exact graph evaluator
-```
-
-The room-packing master uses pre-enumerated legal SYSTEM/PLAYER candidates:
+The reusable hard layer models:
 
 ```text
-P[i,c] = 1 iff module instance i uses candidate placement c
+room-packing master
+        -> fixed-packing Corridor/Elevator CP-SAT
+        -> exact evaluator
 ```
 
-It enforces:
+It enforces room placement, utility occupancy, explicit port/anchor connectivity, non-transit behaviour, adjacent-Elevator vertical edges, Airlock-rooted flow and no floating utilities.
+
+For a fixed packing, CP-SAT `INFEASIBLE` is a proof that no legal infrastructure network exists. `UNKNOWN` remains unknown/time-limited.
+
+Stage 2's satisfiability-only infrastructure solver remains a maintained component, but is no longer the production objective boundary.
+
+### 11.3 Stage 3 exact objective — COMPLETE / MAINTAIN
+
+Production uses:
 
 ```text
-ExactlyOne(P[i,*])                  for every SYSTEM/PLAYER instance
-AtMostOne(cell occupancy literals) for every Base cell
-symmetry breaking                  for identical instances
+CP-SAT room-packing master
+        -> exact scaled room-packing lower bound
+        -> exact fixed-packing pair-flow objective CP-SAT
+        -> independent Dijkstra cross-check
+        -> exact global lexicographic incumbent
 ```
 
-Candidate enumeration prefilters positions outside `1` cells, overlapping `X` or requiring unsupported rotation. Its centre/port-proximity score is only a search-order surrogate, never gameplay objective `F`.
+The fixed subproblem jointly chooses Corridor/Elevator infrastructure and one legal path for each positive-weight room pair. Accepted distance costs are represented directly as conditional graph arc costs.
 
-For each fixed room packing, the exact infrastructure subproblem decides Corridor/Elevator selection and enforces:
-
-- canonical 2x1 SOLVER anchors;
-- shared room/utility no-overlap;
-- legal explicit port adjacency;
-- exact room-to-utility anchor compatibility;
-- horizontal utility connectivity;
-- vertical connectivity only through adjacent stacked Elevators;
-- non-transit terminal behaviour;
-- exact Airlock-rooted single-commodity flow;
-- at least one reachable access port for every non-root installed room;
-- every selected utility as network demand, preventing floating infrastructure.
-
-`INFEASIBLE` from this subproblem is a proof that the fixed room packing has no legal infrastructure network under the accepted hard model. `UNKNOWN`/budget exhaustion must remain unknown/time-limited and must never be relabelled infeasible.
-
-The exact graph evaluator is an independent consistency check. If the hard CP-SAT returns a feasible witness that the exact evaluator rejects, the planner must fail fast as an internal modelling error.
-
-The subproblem currently has no gameplay objective; it returns one hard-feasible infrastructure witness. Therefore the current engine still cannot prove global objective optimality.
-
-### 11.3 Stage 3 exact-objective target — NEXT
-
-The project must evolve toward either:
-
-1. one integrated exact objective formulation; or
-2. an exact objective decomposition with valid lower bounds and an optimality proof.
-
-The target model/decomposition must cover:
-
-- SYSTEM/PLAYER/SOLVER placement;
-- occupancy;
-- legal port adjacency;
-- Corridor/Elevator selection;
-- Airlock-rooted connectivity;
-- non-transit terminal behaviour;
-- Elevator vertical continuity;
-- exact shortest-path/travel-cost semantics or a proven equivalent;
-- true weighted objective `F` and accepted tie-breakers.
-
-Never set:
+The fixed packing is optimized in four proof-preserving phases:
 
 ```text
-global_objective_optimum_proven = true
+1. exact scaled F
+2. utility mass (equivalent to total mass for fixed rooms)
+3. Elevator count
+4. Corridor count
 ```
 
-unless the complete objective problem or exact decomposition has actually established the proof.
+Each phase is considered proven only on CP-SAT `OPTIMAL`.
 
-### 11.4 Model validation and fail-fast behaviour
+Production sets `global_objective_optimum_proven=true` only when:
 
-Every CP-SAT model must pass `CpModel.validate()` before solving. Internal invariant/mathematical failures must fail fast and must not be hidden as ordinary infeasibility.
+- a feasible incumbent exists;
+- the room-packing master is exhausted;
+- all unpruned packings are fully lexicographically optimal or proven infrastructure-infeasible;
+- every pruned packing satisfies strict exact integer `F_LB > incumbent_F`;
+- no time limit stopped the search;
+- no layout-attempt limit stopped the search.
 
-### 11.5 Search budget
+Otherwise a feasible result is best-known feasible.
 
-`time_limit_s` is one global wall-clock budget for the complete planning call, not a fresh budget per packing or subproblem.
+### 11.4 Model validation / fail-fast
 
-Persist at minimum:
+Every CP-SAT model passes `CpModel.validate()` before solving. Internal mathematical/model inconsistencies fail fast rather than being hidden as ordinary infeasibility.
+
+### 11.5 Global budget
+
+`time_limit_s` is one global wall-clock budget for the complete planning call. A fixed-packing subproblem receives only the remaining time.
+
+`max_layout_attempts` is also a search-completeness limit; reaching it suppresses a global proof.
+
+Persist at least:
 
 ```text
 room_packings_examined
 connected_candidates_examined
+fixed_objective_optima_proven
 manhattan_pruned_count
 search_time_s
 time_limit_reached
 search_exhausted
+global_objective_optimum_proven
 ```
 
 ---
 
 ## 12. Input contract
 
-Player configuration includes:
-
-```text
-base_tier
-rooms
-```
-
-Optional solver/output sections may control budgets and output paths.
+Player configuration includes Base tier and PLAYER module counts. Solver/output sections control budget and paths.
 
 Reject:
 
-- unknown Base tiers;
+- unsupported Base tiers;
 - unknown module keys;
-- SYSTEM module keys in `rooms`;
-- SOLVER module keys in `rooms`;
-- booleans/fractions/negative counts;
-- count-limit violations;
+- SYSTEM/SOLVER keys in player room counts;
+- booleans, fractions or negative counts;
+- verified count-limit violations;
 - unknown config fields;
-- invalid/non-finite/non-positive solver budgets;
-- unsupported objectives.
+- invalid/non-finite/non-positive budgets;
+- unsupported objectives;
+- invalid output paths.
 
 SYSTEM modules are injected automatically; Corridor/Elevator are generated automatically.
 
@@ -634,235 +532,181 @@ SYSTEM modules are injected automatically; Corridor/Elevator are generated autom
 
 ## 13. Output contract
 
-Every run must persist machine-readable diagnostics. A feasible result should contain at least:
+Every run persists machine-readable diagnostics. Feasible JSON schema version 2 includes at least:
 
 ```text
 status
-Base tier / geometry source / verification
+Base tier / geometry provenance
 installed module placements
 resolved ports
-solver-generated Corridor/Elevator placements
+solver-generated infrastructure
 objective_value / exact F
+objective_scale / scaled_objective_value
+scaled_modified_manhattan_lower_bound
 modified_manhattan_lower_bound
-pairwise distances
-pairwise objective contributions
-average and weighted-average distances
+pairwise distances and contributions
 traffic weights
-elevator module count / shaft count
-corridor count
-room mass
-utility mass
-total Base mass
-Organics capacity / requirement / margin
+Elevator/Corridor counts
+room/utility/total mass
+Organics requirement/capacity/margin
 journey feasibility
 global_objective_optimum_proven
 search diagnostics
 ```
 
-PNG/SVG must preserve cell aspect ratio:
+PNG/SVG preserve:
 
 ```text
 cell height = 2 * cell width
 ```
 
-The graphic must distinguish unavailable/core/buildable cells, module types, Corridor and Elevator and display key optimization/mass metrics.
+and distinguish unavailable/core/buildable cells, module types, Corridors and Elevators.
 
 ---
 
-## 14. Evidence and provenance policy
+## 14. Evidence and provenance
 
-Use this precedence when changing domain facts:
+Use this precedence for domain facts:
 
 1. reproducible extracted/game-exact data or direct in-game measurement;
 2. validated project geometry/audit data with tests;
 3. current direct module documentation;
 4. multiple independent high-quality guides;
-5. player/community reports for otherwise undocumented mechanics;
+5. community reports for otherwise undocumented mechanics;
 6. heuristic inference only when explicitly labelled and never as a hard game fact.
 
-`docs/ROOM_DATA_AUDIT.md` must retain conflicts rather than hide them.
+`docs/ROOM_DATA_AUDIT.md` retains source conflicts rather than hiding them.
 
-Known decisions/conflicts include:
+Current audited decisions include:
 
-- Dormitory mass remains 8 despite a conflicting aggregate/wiki value likely reflecting construction cost;
-- Park with Bench is 6x1 under current validated project data;
-- Radiation Repulsor uses top access and is non-transit;
-- Rapidium Ark is non-transit and capped at 5;
-- Recycler is capped at 1;
-- Tier-I Organics numeric provenance is weaker than Tier II-IV.
+- Dormitory mass 8 despite conflicting aggregate data likely reflecting construction cost;
+- Park with Bench 6x1;
+- Radiation Repulsor top access and non-transit;
+- Rapidium Ark non-transit and max 5;
+- Recycler max 1;
+- weaker Tier-I Organics-capacity provenance.
 
 ---
 
 ## 15. Development roadmap
 
-### Stage 0 — Data and contract stabilization — COMPLETE / MAINTAIN
+### Stage 0 — Data/contract stabilization — COMPLETE / MAINTAIN
 
-Delivered/maintained:
+Validated Base geometry, module catalogue, ports, traffic-weight audit, config validation, exact graph evaluator and multi-version CI.
 
-- validated Base I-IV CSV geometry;
-- module dimensions/masses and key limits;
-- standard floor ports plus verified exception(s);
-- traffic-weight audit;
-- JSON validation;
-- exact graph distance evaluator;
-- CI on Python 3.11/3.12/3.13.
+### Stage 1 — Unified Module domain — COMPLETE / MAINTAIN
 
-Acceptance: tests and CI remain green after every future change.
-
-### Stage 1 — Unified Module domain model — COMPLETE / MAINTAIN
-
-Delivered:
-
-- explicit `SYSTEM`, `PLAYER`, `SOLVER` authority;
-- one canonical `ModuleSpec` catalogue including Corridor/Elevator;
-- one `ModulePlacement` geometry representation for installed modules;
-- shared occupancy/geometry helpers;
-- standard derived ports;
-- canonical utility port/vertical-connectivity data;
-- authority-driven configuration validation;
-- regression coverage for authority partitions and unified placements.
+Delivered SYSTEM/PLAYER/SOLVER authority, one catalogue/placement model, canonical utilities, shared geometry and authority-driven config validation.
 
 ### Stage 2 — Exact hard-feasibility decomposition — COMPLETE / MAINTAIN
 
+Delivered exact fixed-packing Corridor/Elevator feasibility with shared occupancy, legal ports, Airlock-rooted flow, non-transit handling, Elevator continuity, no floating utilities, exact infeasibility proof and evaluator cross-check.
+
+### Stage 3 — Exact objective decomposition — COMPLETE / HARDEN
+
 Delivered:
 
-- production Corridor/Elevator decision variables in an exact fixed-packing subproblem;
-- shared room/utility no-overlap;
-- legal explicit port/anchor connectivity;
-- Airlock-rooted single-commodity flow;
-- non-transit terminal handling;
-- adjacent-Elevator-only vertical connectivity;
-- no floating utilities;
-- exact `INFEASIBLE` proof for a fixed room packing;
-- global time budget propagation into the subproblem;
-- fail-fast cross-check against the exact graph evaluator;
-- synthetic feasible/infeasible regression cases.
+- exact pair-flow path-cost representation for fixed room packings;
+- exact rational-to-integer objective scaling;
+- exact fixed-packing `F -> mass -> Elevator -> Corridor` proof phases;
+- admissible exact integer room-packing lower bounds;
+- strict-bound global pruning;
+- global proof propagation through room-packing exhaustion;
+- independently exhaustive fixed/global reference oracles;
+- production-vs-oracle known-optimum regression tests;
+- explicit suppression of false proof on time/attempt limits.
 
-The room-packing master plus exact infrastructure subproblem is an accepted exact decomposition for **hard feasibility**. It deliberately does not claim objective optimality.
+Stage-3 completion means the architecture can prove the global accepted objective when configured search completes. It does not imply full Base I-IV instances will always complete within practical budgets.
 
-### Stage 3 — Exact objective integration — NEXT
-
-Goal: optimize true `F` over infrastructure alternatives and obtain valid objective bounds/proofs.
+### Stage 4 — Performance and benchmark suite — NEXT
 
 Deliverables:
 
-- exact path-cost representation or exact objective routing subproblem;
-- valid lower bounds across room placement and infrastructure choices;
-- incumbent/bound reporting;
-- exact lexicographic tie-break handling;
-- optimality proof on benchmark instances when search completes;
-- tiny independently exhaustive cases that match the exact optimum.
-
-Acceptance: compare against exhaustive enumeration on small instances and match the true optimum exactly.
-
-### Stage 4 — Performance and benchmark suite
-
-Deliverables:
-
-- representative Tier I-IV benchmark plans;
-- deterministic seeds/options where practical;
-- runtime, candidate count, pruning, bound quality and objective metrics;
-- symmetry breaking and mathematically safe domain reduction;
-- regression thresholds that detect solver-quality degradation.
+- representative Tier I-IV benchmark configurations;
+- model-size and construction metrics;
+- runtime, candidate count, pruning rate and proof-completion metrics;
+- objective/incumbent/bound quality tracking;
+- mathematically safe domain reduction and symmetry breaking;
+- regression thresholds for solver-quality degradation.
 
 No performance claim without reproducible benchmark evidence.
 
 ### Stage 5 — User-facing planning quality
 
-Deliverables:
-
-- robust CLI and Streamlit UI;
-- clear SYSTEM-vs-PLAYER room controls;
-- user cannot configure Corridor/Elevator counts;
-- overweight/journey warnings;
-- downloadable PNG/SVG/JSON;
-- clear best-known-vs-proven-optimal explanation.
+Improve CLI/Streamlit clarity, SYSTEM-vs-PLAYER controls, journey warnings, downloads and best-known-vs-proven explanations.
 
 ### Stage 6 — Progression-aware mobile Base
 
-Only after Stage 3/4 stability, add explicit game-state modelling such as:
+After Stage 3/4 stability, add explicit `act/game_state`, unlocks and already-built/non-removable state. Do not emulate progression with ad-hoc mandatory-list changes.
 
-```text
-act / story state
-unlocked modules
-already-built non-removable modules
-available expansion tier
-possibly work/sleep/evacuation layout state
-```
+### Stage 7 — The Last Variable DLC — DEFERRED
 
-Do not retrofit progression with ad-hoc mandatory-list changes.
-
-### Stage 7 — The Last Variable DLC — DEFERRED UNTIL DATA COMPLETE
-
-The DLC has materially different underground/stationary topology, pinned Airlock and different module/mass semantics. Implement it as a separate environment only when exact geometry and module data are sufficient. Never approximate DLC with mobile Base I-IV masks.
+DLC topology/module rules differ materially. Implement as a separate environment only when exact geometry/data are sufficient. Never approximate DLC with mobile Base masks.
 
 ---
 
-## 16. Required testing strategy
+## 16. Testing strategy
 
-Every mechanics/solver change must add/update tests at the appropriate level.
+Mechanics/solver changes require regression coverage for the relevant layer.
 
 Minimum categories:
 
-- geometry dimensions/core coordinates;
+- Base dimensions/core coordinates;
 - module dimensions/masses/count limits;
 - authority partitions;
-- standard floor ports and top-access exception;
-- 1x1 logical-port semantics;
-- direct room adjacency `d=0`;
-- Corridor cost `+1`;
-- Elevator module cost `+1`;
-- intermediate-room width cost;
+- standard floor ports/top-access exception;
+- 1x1 logical ports;
+- direct adjacency d=0;
+- Corridor/Elevator costs;
+- intermediate-room width;
 - non-transit bridge rejection;
 - Airlock reachability;
-- utility overlap rejection;
-- Elevator continuity;
-- no floating utilities;
-- fixed-packing hard-feasibility proof cases;
-- Manhattan LB admissibility;
-- objective contribution sum invariant;
+- utility overlap/Elevator continuity/no floating infrastructure;
+- hard-feasibility proof cases;
+- modified-Manhattan admissibility;
+- exact scaled objective reconstruction;
+- objective contribution invariant;
 - mass/journey calculation;
-- SYSTEM module rejection from user config;
-- SOLVER module rejection from user config;
-- time-budget semantics;
+- config ownership/count validation;
+- time/attempt budget semantics;
+- independently exhaustive fixed/global known optima;
+- production Stage-3 decomposition versus global oracle;
 - end-to-end PNG/SVG/JSON generation.
 
-Stage 3 exact-objective work must add tiny instances whose optimum is independently known by exhaustive enumeration.
+CI runs Ruff and pytest on Python 3.11, 3.12 and 3.13.
 
 ---
 
-## 17. ChatGPT-driven repository development protocol
+## 17. ChatGPT-driven development protocol
 
-When developing this repository through dialogue:
+When developing through dialogue:
 
-1. Read this file before major architectural work.
-2. Inspect current `main`, CI, relevant code/tests and normative docs before editing.
-3. State the project-level reason for a change, not only local code details.
-4. Preserve the Base-planner goal; prevent feature drift.
-5. Change game mechanics only with evidence or explicit Project Manager decision.
-6. Treat solver correctness as more important than cosmetic features.
-7. Add tests for every new hard invariant or distance/objective rule.
-8. Keep documentation synchronized with implementation.
-9. Never hide incomplete search, time limits or lack of objective optimality proof.
-10. After each significant iteration report global progress, CI, remaining architectural gaps and the next highest-value milestone.
-
-For major solver changes, prefer an auditable branch/PR workflow unless the Project Manager explicitly requests direct changes to `main`.
+1. read this file before major architecture/solver changes;
+2. inspect current `main`, CI, relevant code/tests and normative docs;
+3. preserve the Base-planner goal and prevent feature drift;
+4. change game mechanics only with evidence or explicit PM decision;
+5. prioritize solver correctness over cosmetic features;
+6. add tests for new hard/distance/objective invariants;
+7. keep normative docs synchronized with implementation;
+8. never hide incomplete search, time limits or missing optimality proof;
+9. use auditable branch/PR workflow for major solver changes;
+10. report project-level progress, CI, remaining risks and the highest-value next step.
 
 ---
 
 ## 18. Definition of project success
 
-The core mobile-Base planner succeeds when, for a selected tier and requested optional counts, it can:
+The core mobile-Base planner succeeds when it can:
 
-1. model all SYSTEM, PLAYER and SOLVER modules correctly;
+1. model SYSTEM, PLAYER and SOLVER modules correctly;
 2. prove hard feasibility/infeasibility under the exact Base mask;
-3. generate Corridor/Elevator placement through an exact optimization/decomposition model;
-4. enforce legal ports, Airlock-rooted connectivity, terminal behaviour and Elevator rules;
-5. compute exact travel distances and true weighted `F`;
-6. minimize true `F` and, when search completes, provide a valid global optimality proof;
-7. report Base Mass and journey feasibility correctly;
-8. produce reproducible auditable JSON and graphical plans;
-9. pass the full CI/benchmark suite without regression;
-10. remain extensible to progression-aware and DLC modes without corrupting the mobile-Base model.
+3. choose Corridor/Elevator infrastructure through exact optimization;
+4. enforce ports, reachability, transit and Elevator rules;
+5. compute exact travel distances and weighted F;
+6. minimize true F and tie-breakers and provide a valid global proof when search completes;
+7. report mass/journey feasibility correctly;
+8. produce auditable JSON and graphical plans;
+9. pass correctness and benchmark regressions;
+10. remain extensible to progression/DLC modes without corrupting the mobile-Base model.
 
-Items 1-4 are now structurally represented in the Stage-2 architecture. Item 6 is not yet achieved. Until the complete objective problem has an exact proof mechanism, returned layouts must be described as **best-known feasible layouts under the current search architecture**, never as globally optimal designs.
+Items 1-6 now have an exact production decomposition and independently exhaustive tiny-instance validation. The principal remaining technical risk is **scalability**: realistic runs may stop before global proof because of time or attempt limits. Such outputs must remain labelled best-known feasible rather than globally optimal.
