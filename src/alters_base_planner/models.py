@@ -200,10 +200,36 @@ class ModulePlacement:
     def cells(self) -> frozenset[tuple[int, int]]:
         return footprint_cells(self.x, self.y, self.width, self.height)
 
+    @property
+    def kind(self) -> str:
+        """Deprecated utility compatibility alias; use ``module_key`` in new code."""
+
+        return self.module_key
+
 
 # Transitional public alias. New code should use ModulePlacement; keeping Placement avoids
 # breaking existing integrations while Stage 1 migrates terminology.
 Placement = ModulePlacement
+
+
+def UtilityPlacement(
+    kind: str,
+    x: int,
+    y: int,
+    width: int = 2,
+    height: int = 1,
+) -> ModulePlacement:
+    """Deprecated constructor returning the unified ModulePlacement type.
+
+    Kept temporarily for callers of the pre-Stage-1 API. Runtime solver code should create
+    Corridor/Elevator placements from their ModuleSpec entries instead.
+    """
+
+    if kind not in {"corridor", "elevator"}:
+        raise ValueError(f"Unsupported utility kind: {kind}")
+    if width != 2 or height != 1:
+        raise ValueError(f"Utility {kind} must use the fixed 2x1 footprint")
+    return ModulePlacement(f"{kind}@{x},{y}", kind, x, y, width, height)
 
 
 def resolve_ports(module: ModulePlacement, spec: ModuleSpec) -> tuple[ResolvedPort, ...]:
