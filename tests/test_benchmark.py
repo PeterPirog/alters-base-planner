@@ -1,3 +1,6 @@
+import json
+
+import alters_base_planner.benchmark as benchmark_module
 from alters_base_planner.benchmark import (
     BENCHMARK_SCHEMA_VERSION,
     REPRESENTATIVE_CASES,
@@ -5,6 +8,8 @@ from alters_base_planner.benchmark import (
     benchmark_markdown,
     benchmark_payload,
     record_from_result,
+    run_case,
+    write_report,
 )
 from alters_base_planner.models import BaseGeometry, PlanResult
 
@@ -41,8 +46,8 @@ def _result() -> PlanResult:
     )
 
 
-def test_record_from_result_preserves_solver_diagnostics() -> None:
-    case = BenchmarkCase(
+def _case() -> BenchmarkCase:
+    return BenchmarkCase(
         name="sample",
         tier=1,
         room_counts={"workshop": 1},
@@ -51,7 +56,9 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
         purpose="unit test",
     )
 
-    record = record_from_result(case, _result(), elapsed_wall_s=0.8)
+
+def test_record_from_result_preserves_solver_diagnostics() -> None:
+    record = record_from_result(_case(), _result(), elapsed_wall_s=0.8)
 
     assert record.name == "sample"
     assert record.elapsed_wall_s == 0.8
@@ -64,14 +71,7 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
 
 
 def test_payload_and_markdown_are_auditable() -> None:
-    case = BenchmarkCase(
-        name="sample",
-        tier=1,
-        room_counts={},
-        time_limit_s=1.0,
-        max_layout_attempts=1,
-        purpose="unit test",
-    )
+    case = _case()
     record = record_from_result(case, _result(), elapsed_wall_s=0.8)
 
     payload = benchmark_payload((case,), (record,))
@@ -80,10 +80,43 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
-    assert payload["cases"][0]["room_counts"] == {}
+    assert payload["cases"][0]["room_counts"] == {"workshop": 1}
     assert payload["results"][0]["scaled_objective_value"] == 125
     assert "| sample | 1 | FEASIBLE |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
+
+
+def test_run_case_uses_production_request_contract(monkeypatch) -> None:
+    captured = []
+
+    def fake_solve(request):
+        captured.append(request)
+        return _result()
+
+    monkeypatch.setattr(benchmark_module, "solve_plan", fake_solve)
+    record = run_case(_case())
+
+    assert len(captured) == 1
+    assert captured[0].tier == 1
+    assert captured[0].room_counts == {"workshop": 1}
+    assert captured[0].time_limit_s == 2.0
+    assert captured[0].max_layout_attempts == 10
+    assert record.elapsed_wall_s >= 0
+
+
+def test_write_report_creates_json_and_markdown(tmp_path) -> None:
+    case = _case()
+    record = record_from_result(case, _result(), elapsed_wall_s=0.8)
+    json_path = tmp_path / "result.json"
+    markdown_path = tmp_path / "result.md"
+
+    write_report((case,), [record], json_path=json_path, markdown_path=markdown_path)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
+    assert payload["results"][0]["name"] == "sample"
+    assert "# The Alters Base Planner benchmark report" in markdown
 
 
 def test_representative_suite_covers_all_mobile_base_tiers() -> None:
