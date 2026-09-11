@@ -105,3 +105,9 @@ def test_recycler_gameplay_limit_is_enforced(tmp_path) -> None:
     path = _write(tmp_path, {"base_tier": 2, "rooms": {"recycler": 2}})
     with pytest.raises(ValueError, match=r"rooms\.recycler must be <= 1"):
         load_plan_config(path)
+
+
+def test_rapidium_ark_gameplay_limit_is_enforced(tmp_path) -> None:
+    path = _write(tmp_path, {"base_tier": 4, "rooms": {"rapidium_ark": 6}})
+    with pytest.raises(ValueError, match=r"rooms\.rapidium_ark must be <= 5"):
+        load_plan_config(path)
