@@ -243,15 +243,15 @@ def solve_global_reference_objective(
             search_exhausted=True,
         )
 
-    packing_entries = sorted(
+    packing_entries = [
         (
             weighted_modified_manhattan_lower_bound(list(rooms)),
             _packing_signature(rooms),
             rooms,
         )
         for rooms in packings
-    )
-    initial_global_lower_bound = packing_entries[0][0]
+    ]
+    packing_entries.sort(key=lambda entry: (entry[0], entry[1]))
 
     best_rooms: tuple[ModulePlacement, ...] = ()
     best_fixed: FixedObjectiveResult | None = None
