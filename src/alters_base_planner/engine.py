@@ -8,7 +8,10 @@ from ortools.sat.python import cp_model
 
 from .base import builtin_base
 from .catalog import MODULE_BY_KEY, MODULES
-from .fixed_flow_objective_solver import solve_fixed_layout_flow_objective
+from .fixed_flow_objective_solver import (
+    FixedFlowObjectiveDiagnostics,
+    solve_fixed_layout_flow_objective,
+)
 from .models import (
     BaseGeometry,
     ModuleInstance,
@@ -32,6 +35,52 @@ class _Candidate:
     y: int
     cells: frozenset[tuple[int, int]]
     search_cost: int
+
+
+@dataclass(slots=True)
+class _FixedDiagnosticsAggregate:
+    """Aggregate Stage-4 diagnostics across exact fixed-packing subproblems."""
+
+    subproblem_count: int = 0
+    max_graph_nodes: int = 0
+    max_graph_arcs: int = 0
+    max_objective_pairs: int = 0
+    max_cp_sat_variables: int = 0
+    max_cp_sat_constraints: int = 0
+    model_build_time_s: float = 0.0
+    cp_sat_solve_time_s: float = 0.0
+    total_time_s: float = 0.0
+
+    def observe(self, diagnostics: FixedFlowObjectiveDiagnostics) -> None:
+        self.subproblem_count += 1
+        self.max_graph_nodes = max(self.max_graph_nodes, diagnostics.graph_node_count)
+        self.max_graph_arcs = max(self.max_graph_arcs, diagnostics.graph_arc_count)
+        self.max_objective_pairs = max(
+            self.max_objective_pairs,
+            diagnostics.objective_pair_count,
+        )
+        self.max_cp_sat_variables = max(
+            self.max_cp_sat_variables,
+            diagnostics.cp_sat_variable_count,
+        )
+        self.max_cp_sat_constraints = max(
+            self.max_cp_sat_constraints,
+            diagnostics.cp_sat_constraint_count,
+        )
+        self.model_build_time_s += diagnostics.model_build_time_s
+        self.cp_sat_solve_time_s += diagnostics.cp_sat_solve_time_s
+        self.total_time_s += diagnostics.total_time_s
+
+    def apply(self, result: PlanResult) -> None:
+        result.fixed_subproblem_count = self.subproblem_count
+        result.max_fixed_graph_nodes = self.max_graph_nodes
+        result.max_fixed_graph_arcs = self.max_graph_arcs
+        result.max_fixed_objective_pairs = self.max_objective_pairs
+        result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
+        result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
+        result.fixed_model_build_time_s = self.model_build_time_s
+        result.fixed_cp_sat_solve_time_s = self.cp_sat_solve_time_s
+        result.fixed_subproblem_time_s = self.total_time_s
 
 
 def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
@@ -153,6 +202,7 @@ def _finalize_search_diagnostics(
     connected_candidates: int,
     fixed_objective_optima_proven: int,
     manhattan_pruned: int,
+    fixed_diagnostics: _FixedDiagnosticsAggregate,
     started_at: float,
     time_limit_reached: bool,
     search_exhausted: bool,
@@ -164,6 +214,7 @@ def _finalize_search_diagnostics(
     result.search_time_s = monotonic() - started_at
     result.time_limit_reached = time_limit_reached
     result.search_exhausted = search_exhausted
+    fixed_diagnostics.apply(result)
 
 
 def _validate_master_instances(
@@ -207,6 +258,7 @@ def _solve_instances(
         raise ValueError("max_layout_attempts must be positive")
 
     started_at = monotonic() if started_at is None else started_at
+    fixed_diagnostics = _FixedDiagnosticsAggregate()
     model = cp_model.CpModel()
     candidates: dict[str, list[_Candidate]] = {}
     vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
@@ -227,6 +279,7 @@ def _solve_instances(
                 connected_candidates=0,
                 fixed_objective_optima_proven=0,
                 manhattan_pruned=0,
+                fixed_diagnostics=fixed_diagnostics,
                 started_at=started_at,
                 time_limit_reached=False,
                 search_exhausted=True,
@@ -344,6 +397,7 @@ def _solve_instances(
             time_limit_s=remaining,
             root_instance_id=root_instance_id,
         )
+        fixed_diagnostics.observe(fixed_result.diagnostics)
         if fixed_result.status == "TIME_LIMIT":
             time_limit_reached = True
             all_fixed_objectives_resolved = False
@@ -475,6 +529,7 @@ def _solve_instances(
             connected_candidates=connected_candidates,
             fixed_objective_optima_proven=fixed_objective_optima_proven,
             manhattan_pruned=manhattan_pruned,
+            fixed_diagnostics=fixed_diagnostics,
             started_at=started_at,
             time_limit_reached=time_limit_reached,
             search_exhausted=search_exhausted,
@@ -544,6 +599,7 @@ def _solve_instances(
         connected_candidates=connected_candidates,
         fixed_objective_optima_proven=fixed_objective_optima_proven,
         manhattan_pruned=manhattan_pruned,
+        fixed_diagnostics=fixed_diagnostics,
         started_at=started_at,
         time_limit_reached=time_limit_reached,
         search_exhausted=search_exhausted,
