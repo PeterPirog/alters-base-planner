@@ -7,10 +7,12 @@ from alters_base_planner.integrated_hard_solver import (
     compile_integrated_hard_model,
     enumerate_placement_options,
     extract_integrated_solution,
+    solve_fixed_layout_infrastructure,
 )
 from alters_base_planner.models import (
     BaseGeometry,
     ModuleInstance,
+    ModulePlacement,
     PlacementAuthority,
 )
 
@@ -36,6 +38,11 @@ def _base(
 
 def _instance(instance_id: str, module_key: str) -> ModuleInstance:
     return ModuleInstance(instance_id, MODULE_BY_KEY[module_key])
+
+
+def _placement(instance_id: str, module_key: str, x: int, y: int) -> ModulePlacement:
+    spec = MODULE_BY_KEY[module_key]
+    return ModulePlacement(instance_id, module_key, x, y, spec.width, spec.height)
 
 
 def _force_placement(compiled, instance_id: str, x: int, y: int) -> None:
@@ -122,3 +129,34 @@ def test_integrated_model_selects_minimum_stacked_elevator_chain() -> None:
         ("elevator", 4, 0),
         ("elevator", 4, 1),
     ]
+
+
+def test_fixed_layout_solver_finds_stacked_elevators_without_greedy_routing() -> None:
+    base = _base(6, 2)
+    rooms = (
+        _placement("airlock-1", "airlock", 0, 0),
+        _placement("workshop-1", "workshop", 0, 1),
+    )
+
+    result = solve_fixed_layout_infrastructure(base, rooms, time_limit_s=2.0)
+
+    assert result.status == "FEASIBLE"
+    assert result.time_limit_reached is False
+    assert {(module.module_key, module.x, module.y) for module in result.utilities} == {
+        ("elevator", 4, 0),
+        ("elevator", 4, 1),
+    }
+
+
+def test_fixed_layout_solver_proves_infeasible_when_vertical_access_has_no_space() -> None:
+    base = _base(4, 2)
+    rooms = (
+        _placement("airlock-1", "airlock", 0, 0),
+        _placement("workshop-1", "workshop", 0, 1),
+    )
+
+    result = solve_fixed_layout_infrastructure(base, rooms, time_limit_s=2.0)
+
+    assert result.status == "INFEASIBLE"
+    assert result.utilities == ()
+    assert result.time_limit_reached is False
