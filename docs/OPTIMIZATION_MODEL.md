@@ -15,6 +15,7 @@ The production architecture is now an exact objective decomposition:
 CP-SAT SYSTEM/PLAYER room-packing master
         -> exact integer modified-Manhattan lower bound
         -> exact fixed-packing pair-flow CP-SAT
+             optional exact incumbent cut: scaled_F <= incumbent_scaled_F
              hard Corridor/Elevator topology
              exact weighted travel F
              mass -> Elevators -> Corridors
@@ -269,7 +270,7 @@ scaled_F    = scale * F
 scaled_F_LB = scale * F_LB
 ```
 
-A room packing may be pruned only when:
+A room packing may be pruned by this bound only when:
 
 ```text
 scaled_F_LB > incumbent_scaled_F
@@ -282,6 +283,8 @@ Fail-fast invariant:
 ```text
 scaled_F_LB <= scaled_F_exact
 ```
+
+The production master also reuses the exact incumbent as an upper-bound constraint inside later fixed subproblems. That is a separate exact decomposition cut, not Modified Manhattan, and is accounted for separately in diagnostics and proof semantics.
 
 ---
 
@@ -363,8 +366,9 @@ The master:
 3. excludes each returned packing with a no-good;
 4. removes only pure label symmetry between identical instances;
 5. computes the exact integer modified-Manhattan lower bound;
-6. prunes only strict `scaled_F_LB > incumbent_scaled_F`;
-7. sends every unpruned packing to the fixed-packing exact objective subproblem.
+6. prunes only strict `scaled_F_LB > incumbent_scaled_F` at the master-bound layer;
+7. sends every remaining packing to the fixed-packing exact objective subproblem;
+8. after an exact incumbent exists, supplies that incumbent as an equality-preserving fixed-subproblem upper bound.
 
 The search-order surrogate has no correctness or objective meaning.
 
@@ -373,6 +377,14 @@ The search-order surrogate has no correctness or objective meaning.
 `solve_fixed_layout_flow_objective()` shares the Stage-2 Corridor/Elevator selection variables and hard constraints, then adds a conditional directed travel graph and one binary unit flow per positive-weight room pair.
 
 Arc costs reproduce the accepted distance semantics. All pair flows share one infrastructure selection.
+
+Without a global incumbent, the fixed subproblem optimizes its complete legal domain. After an exact incumbent with scaled primary value `B` exists, the production master may add:
+
+```text
+scaled_F <= B
+```
+
+This cut is exact and non-strict. Equality is mandatory because `scaled_F == B` may still improve total mass, Elevator count or Corridor count. If CP-SAT proves the bounded model infeasible, the packing cannot match or improve the incumbent primary objective. This certificate is sufficient for global optimization even if the bounded solve does not distinguish structural infeasibility from true fixed optimum `scaled_F > B`.
 
 The fixed packing is optimized in proof-preserving phases under the remaining global deadline:
 
@@ -386,6 +398,8 @@ The fixed packing is optimized in proof-preserving phases under the remaining gl
 Room mass is constant for a fixed packing, therefore minimizing utility mass in phase 2 is equivalent to minimizing total Base mass.
 
 `lexicographic_optimum_proven=true` requires all four phases to return CP-SAT `OPTIMAL`.
+
+After any proven objective prefix is fixed by equality, later `INFEASIBLE` or `MODEL_INVALID` status is an internal contradiction: the previous witness still satisfies the fixed prefix. Such statuses fail fast rather than being converted into ordinary timeout/infeasibility.
 
 ### 9.3 Independent exact evaluator
 
@@ -420,8 +434,7 @@ only when:
 
 - a feasible incumbent exists;
 - the room-packing master reaches `INFEASIBLE` after all no-goods/cuts, proving search exhaustion;
-- every unpruned packing was solved to its full fixed-packing lexicographic optimum or proven infrastructure-infeasible;
-- every pruned packing had strict exact integer lower bound above the incumbent primary objective;
+- every relevant packing was solved to its full fixed-packing lexicographic optimum, proven infrastructure-infeasible, strictly excluded by `scaled_F_LB > incumbent_scaled_F`, or proven unable to satisfy the exact incumbent cut `scaled_F <= incumbent_scaled_F`;
 - no time limit interrupted the search;
 - no layout-attempt limit interrupted the search.
 
@@ -452,7 +465,7 @@ Programmatic constructors must enforce essential invariants too. Internal mathem
 
 ## 11. Search budget and diagnostics
 
-`solver.time_limit_s` is one global wall-clock budget. Every fixed-packing subproblem receives only the remaining budget.
+`solver.time_limit_s` is one global wall-clock budget. Every fixed-packing subproblem receives only the remaining budget, and fixed-model construction consumes that same budget.
 
 `max_layout_attempts` is also a search-completeness limit. Hitting it prevents a global optimality proof even if every attempted packing was solved exactly.
 
@@ -463,11 +476,14 @@ room_packings_examined
 connected_candidates_examined
 fixed_objective_optima_proven
 manhattan_pruned_count
+incumbent_bound_pruned_count
 search_time_s
 time_limit_reached
 search_exhausted
 global_objective_optimum_proven
 ```
+
+`manhattan_pruned_count` and `incumbent_bound_pruned_count` have distinct meanings. The former is an admissible pre-subproblem lower-bound exclusion; the latter is an exact CP-SAT proof that the bounded fixed model cannot match the incumbent primary objective.
 
 Current public result statuses include:
 
@@ -477,6 +493,8 @@ TIME_LIMIT
 INFEASIBLE
 NO_CONNECTED_LAYOUT
 ```
+
+`OBJECTIVE_BOUND_INFEASIBLE` is an internal fixed-subproblem status consumed by the production decomposition and is not a public planning result status.
 
 Optimality is represented separately by the proof flag.
 
@@ -540,7 +558,7 @@ Stage 4 performance work must preserve semantics. Safe directions include:
 - identical-instance symmetry breaking;
 - stronger admissible bounds;
 - indexed graph construction rather than repeated scans;
-- valid decomposition cuts;
+- valid decomposition cuts, including the exact equality-preserving incumbent upper bound;
 - deterministic benchmark cases;
 - model-size/runtime instrumentation.
 

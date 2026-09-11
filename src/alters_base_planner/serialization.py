@@ -99,6 +99,7 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                 "fixed_objective_optima_proven": result.fixed_objective_optima_proven,
                 "room_packings_examined": result.attempts,
                 "manhattan_pruned_count": result.manhattan_pruned_count,
+                "incumbent_bound_pruned_count": result.incumbent_bound_pruned_count,
                 "search_time_s": result.search_time_s,
                 "time_limit_reached": result.time_limit_reached,
                 "search_exhausted": result.search_exhausted,
