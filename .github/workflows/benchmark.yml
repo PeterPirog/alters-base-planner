@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
@@ -33,7 +33,7 @@ jobs:
           --json benchmark-artifacts/benchmark-results.json
           --markdown benchmark-artifacts/benchmark-results.md
       - name: Upload benchmark report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-${{ inputs.suite }}-${{ github.run_id }}
           path: benchmark-artifacts/
