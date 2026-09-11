@@ -1,6 +1,7 @@
 import alters_base_planner.engine as engine_module
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.engine import _solve_instances
+from alters_base_planner.fixed_flow_objective_solver import FixedFlowObjectiveResult
 from alters_base_planner.global_objective_oracle import solve_global_reference_objective
 from alters_base_planner.models import BaseGeometry, ModuleInstance
 
@@ -103,6 +104,42 @@ def test_production_passes_exact_incumbent_bound_after_first_candidate(monkeypat
     assert seen_bounds[0] is None
     assert 0 in seen_bounds[1:]
     assert result.scaled_objective_value == 0
+
+
+def test_certified_incumbent_bound_exclusion_counts_toward_global_proof(monkeypatch) -> None:
+    real_solver = engine_module.solve_fixed_layout_flow_objective
+    bounded_calls = 0
+
+    def solver_with_certified_bound_exclusion(*args, **kwargs):
+        nonlocal bounded_calls
+        bound = kwargs.get("scaled_objective_upper_bound")
+        if bound is not None:
+            bounded_calls += 1
+            return FixedFlowObjectiveResult(
+                status="OBJECTIVE_BOUND_INFEASIBLE",
+                objective_scale=10,
+            )
+        return real_solver(*args, **kwargs)
+
+    monkeypatch.setattr(
+        engine_module,
+        "solve_fixed_layout_flow_objective",
+        solver_with_certified_bound_exclusion,
+    )
+
+    result = _solve_instances(
+        _base(8),
+        _instances(),
+        time_limit_s=5.0,
+        max_layout_attempts=10,
+    )
+
+    assert bounded_calls == 1
+    assert result.status == "FEASIBLE"
+    assert result.incumbent_bound_pruned_count == 1
+    assert result.global_objective_optimum_proven is True
+    assert result.search_exhausted is True
+    assert "exact incumbent objective cut" in result.message
 
 
 def test_layout_attempt_limit_prevents_false_global_optimum_proof() -> None:
