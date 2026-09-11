@@ -10,7 +10,14 @@ from ortools.sat.python import cp_model
 from .catalog import MODULE_BY_KEY
 from .distance import DistanceMetrics, evaluate_distances
 from .integrated_hard_solver import compile_fixed_layout_hard_model, extract_integrated_solution
-from .models import BaseGeometry, ModulePlacement, PlacementAuthority, PortSide, ResolvedPort, resolve_ports
+from .models import (
+    BaseGeometry,
+    ModulePlacement,
+    PlacementAuthority,
+    PortSide,
+    ResolvedPort,
+    resolve_ports,
+)
 
 NodeId = str
 Anchor = tuple[int, int]
