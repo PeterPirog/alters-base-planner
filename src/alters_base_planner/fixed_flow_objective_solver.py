@@ -23,6 +23,25 @@ Anchor = tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
+class FixedFlowObjectiveDiagnostics:
+    """Performance diagnostics for one fixed-packing exact objective subproblem.
+
+    Counts describe the primary pair-flow model before the three lexicographic equality
+    constraints are appended. Timings are wall-clock measurements for performance analysis only;
+    they never participate in correctness or objective decisions.
+    """
+
+    graph_node_count: int = 0
+    graph_arc_count: int = 0
+    objective_pair_count: int = 0
+    cp_sat_variable_count: int = 0
+    cp_sat_constraint_count: int = 0
+    model_build_time_s: float = 0.0
+    cp_sat_solve_time_s: float = 0.0
+    total_time_s: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class FixedFlowObjectiveResult:
     """Exact fixed-packing objective result from the scalable pair-flow formulation.
 
@@ -41,6 +60,7 @@ class FixedFlowObjectiveResult:
     lexicographic_optimum_proven: bool = False
     completed_phase: str = "none"
     time_limit_reached: bool = False
+    diagnostics: FixedFlowObjectiveDiagnostics = FixedFlowObjectiveDiagnostics()
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,13 +283,15 @@ def _solve_phase(
     *,
     deadline: float,
     phase: str,
-) -> int:
+) -> tuple[int, float]:
     remaining = deadline - monotonic()
     if remaining <= 0:
-        return cp_model.UNKNOWN
+        return cp_model.UNKNOWN, 0.0
     solver.parameters.max_time_in_seconds = max(0.001, remaining)
     _validate_model(model, phase)
-    return solver.solve(model)
+    solve_started = monotonic()
+    status = solver.solve(model)
+    return status, max(0.0, monotonic() - solve_started)
 
 
 def _result_from_solution(
@@ -283,6 +305,7 @@ def _result_from_solution(
     lexicographic_proven: bool,
     completed_phase: str,
     time_limit_reached: bool,
+    diagnostics: FixedFlowObjectiveDiagnostics,
 ) -> FixedFlowObjectiveResult:
     return FixedFlowObjectiveResult(
         status=status,
@@ -294,6 +317,7 @@ def _result_from_solution(
         lexicographic_optimum_proven=lexicographic_proven,
         completed_phase=completed_phase,
         time_limit_reached=time_limit_reached,
+        diagnostics=diagnostics,
     )
 
 
@@ -310,7 +334,8 @@ def solve_fixed_layout_flow_objective(
     room pair by a unit flow over the conditional module graph. Minimizing the sum of weighted
     arc costs is therefore equivalent to minimizing the sum of exact shortest-path distances.
 
-    The phases are solved lexicographically under one global wall-clock budget:
+    The phases are solved lexicographically under one wall-clock budget that includes model
+    construction as well as CP-SAT search:
 
     1. scaled exact weighted distance ``F``;
     2. utility mass (room mass is constant for the fixed packing);
@@ -322,6 +347,10 @@ def solve_fixed_layout_flow_objective(
 
     if time_limit_s <= 0:
         return FixedFlowObjectiveResult(status="TIME_LIMIT", time_limit_reached=True)
+
+    started_at = monotonic()
+    deadline = started_at + float(time_limit_s)
+    cp_sat_solve_time_s = 0.0
 
     compiled = compile_fixed_layout_hard_model(
         base,
@@ -339,25 +368,45 @@ def solve_fixed_layout_flow_objective(
     )
     compiled.model.minimize(primary_expr)
 
+    primary_proto = compiled.model.Proto()
+    model_build_time_s = max(0.0, monotonic() - started_at)
+
+    def diagnostics() -> FixedFlowObjectiveDiagnostics:
+        return FixedFlowObjectiveDiagnostics(
+            graph_node_count=len(nodes),
+            graph_arc_count=len(arcs),
+            objective_pair_count=len(objective.pairs),
+            cp_sat_variable_count=len(primary_proto.variables),
+            cp_sat_constraint_count=len(primary_proto.constraints),
+            model_build_time_s=model_build_time_s,
+            cp_sat_solve_time_s=cp_sat_solve_time_s,
+            total_time_s=max(0.0, monotonic() - started_at),
+        )
+
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = 8
-    deadline = monotonic() + float(time_limit_s)
 
-    status = _solve_phase(
+    status, phase_solve_time = _solve_phase(
         solver,
         compiled.model,
         deadline=deadline,
         phase="primary exact F",
     )
+    cp_sat_solve_time_s += phase_solve_time
     if status == cp_model.MODEL_INVALID:
         raise AssertionError("CP-SAT rejected the fixed pair-flow objective model")
     if status == cp_model.INFEASIBLE:
-        return FixedFlowObjectiveResult(status="INFEASIBLE", objective_scale=objective.scale)
+        return FixedFlowObjectiveResult(
+            status="INFEASIBLE",
+            objective_scale=objective.scale,
+            diagnostics=diagnostics(),
+        )
     if status == cp_model.UNKNOWN:
         return FixedFlowObjectiveResult(
             status="TIME_LIMIT",
             objective_scale=objective.scale,
             time_limit_reached=True,
+            diagnostics=diagnostics(),
         )
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise AssertionError(f"Unexpected CP-SAT primary objective status: {status}")
@@ -374,6 +423,7 @@ def solve_fixed_layout_flow_objective(
             lexicographic_proven=False,
             completed_phase="primary exact F",
             time_limit_reached=True,
+            diagnostics=diagnostics(),
         )
 
     primary_optimum = int(round(solver.objective_value))
@@ -399,12 +449,13 @@ def solve_fixed_layout_flow_objective(
         for variable in compiled.variables.elevator.values()
     )
     compiled.model.minimize(utility_mass_expr)
-    status = _solve_phase(
+    status, phase_solve_time = _solve_phase(
         solver,
         compiled.model,
         deadline=deadline,
         phase="mass tie-breaker",
     )
+    cp_sat_solve_time_s += phase_solve_time
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
@@ -418,6 +469,7 @@ def solve_fixed_layout_flow_objective(
             lexicographic_proven=False,
             completed_phase=completed_phase,
             time_limit_reached=True,
+            diagnostics=diagnostics(),
         )
     mass_optimum = int(round(solver.objective_value))
     compiled.model.add(utility_mass_expr == mass_optimum)
@@ -425,12 +477,13 @@ def solve_fixed_layout_flow_objective(
 
     elevator_count_expr = sum(compiled.variables.elevator.values())
     compiled.model.minimize(elevator_count_expr)
-    status = _solve_phase(
+    status, phase_solve_time = _solve_phase(
         solver,
         compiled.model,
         deadline=deadline,
         phase="Elevator tie-breaker",
     )
+    cp_sat_solve_time_s += phase_solve_time
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
@@ -444,6 +497,7 @@ def solve_fixed_layout_flow_objective(
             lexicographic_proven=False,
             completed_phase=completed_phase,
             time_limit_reached=True,
+            diagnostics=diagnostics(),
         )
     elevator_optimum = int(round(solver.objective_value))
     compiled.model.add(elevator_count_expr == elevator_optimum)
@@ -451,12 +505,13 @@ def solve_fixed_layout_flow_objective(
 
     corridor_count_expr = sum(compiled.variables.corridor.values())
     compiled.model.minimize(corridor_count_expr)
-    status = _solve_phase(
+    status, phase_solve_time = _solve_phase(
         solver,
         compiled.model,
         deadline=deadline,
         phase="Corridor tie-breaker",
     )
+    cp_sat_solve_time_s += phase_solve_time
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
@@ -470,6 +525,7 @@ def solve_fixed_layout_flow_objective(
             lexicographic_proven=False,
             completed_phase=completed_phase,
             time_limit_reached=True,
+            diagnostics=diagnostics(),
         )
 
     final_scaled_evaluator = objective.scaled_score(last_metrics.pairwise_distances)
@@ -489,4 +545,5 @@ def solve_fixed_layout_flow_objective(
         lexicographic_proven=True,
         completed_phase="Corridor tie-breaker",
         time_limit_reached=False,
+        diagnostics=diagnostics(),
     )
