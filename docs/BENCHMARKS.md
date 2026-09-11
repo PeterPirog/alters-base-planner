@@ -1,6 +1,6 @@
 # Benchmark methodology
 
-Status: **Stage 4 foundation**
+Status: **Stage 4 in progress**
 
 This document defines how performance measurements for the exact production solver are collected and interpreted. It does not define game mechanics; `PROJECT_SYSTEM_REQUIREMENTS.md` and `docs/OPTIMIZATION_MODEL.md` remain normative for correctness.
 
@@ -8,7 +8,7 @@ This document defines how performance measurements for the exact production solv
 
 Stage 3 provides a proof-capable exact objective decomposition. The principal remaining engineering risk is scalability: a realistic Tier I-IV request can exhaust its configured time or layout-attempt budget before the global proof closes.
 
-Performance work therefore needs reproducible evidence before any optimization is accepted. The benchmark layer records both runtime and proof/search-quality diagnostics so that a faster solver is not accidentally obtained by weakening exactness.
+Performance work therefore needs reproducible evidence before any optimization is accepted. The benchmark layer records runtime, model size and proof/search-quality diagnostics so that a faster solver is not accidentally obtained by weakening exactness.
 
 ## Benchmark command
 
@@ -50,7 +50,7 @@ The representative suite can consume several minutes because its cases intention
 
 ### Representative
 
-The initial Stage-4 suite covers all mobile Base tiers:
+The Stage-4 suite covers all mobile Base tiers:
 
 | Case | Tier | Intent | Budget |
 |---|---:|---|---:|
@@ -65,7 +65,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Each record contains:
+Each benchmark record contains the end-to-end search/proof metrics:
 
 ```text
 status
@@ -89,7 +89,33 @@ elevator_module_count
 corridor_count
 ```
 
+Stage-4 fixed-subproblem instrumentation additionally records:
+
+```text
+fixed_subproblem_count
+max_fixed_graph_nodes
+max_fixed_graph_arcs
+max_fixed_objective_pairs
+max_fixed_cp_sat_variables
+max_fixed_cp_sat_constraints
+fixed_model_build_time_s
+fixed_cp_sat_solve_time_s
+fixed_subproblem_time_s
+```
+
+The `max_*` values are maxima across all exact fixed-packing subproblems attempted during one planning run. The three timing values are totals across those subproblems. CP-SAT variable/constraint counts describe the primary exact-F model before the three lexicographic equality constraints are appended.
+
+`fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and pair-flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside CP-SAT solve calls across the four objective phases. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, CP-SAT phases and exact evaluator work.
+
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
+
+## Wall-clock budget semantics
+
+`solver.time_limit_s` is one wall-clock budget for the complete planning request. The room-packing master passes only the remaining budget to each fixed-packing subproblem.
+
+The fixed-packing deadline starts **before** hard-model and pair-flow construction. Model construction therefore consumes the same remaining budget as CP-SAT search and exact evaluation; rebuilding a large model cannot silently extend the configured planning budget.
+
+This timing rule is a correctness/accounting contract, not a performance heuristic. Timeout results remain best-known/unknown as appropriate and never create a false optimality proof.
 
 ## Interpreting results
 
@@ -105,25 +131,24 @@ A change is suspicious even when faster if it unexpectedly changes any of the fo
 
 Wall-clock measurements are noisy. Compare them only on sufficiently similar hardware/software environments and preferably over repeated runs. The repository currently records raw runs rather than pretending that one timing sample is a statistically stable threshold.
 
-`global_objective_optimum_proven=false` is not itself a solver failure. It means the configured search did not close the complete proof. For Stage-4 analysis, the useful question is how quickly the solver improves the incumbent and closes the gap/proof boundary under fixed budgets.
+`global_objective_optimum_proven=false` is not itself a solver failure. It means the configured search did not close the complete proof. For Stage-4 analysis, the useful questions are where the budget is spent, how the model grows, how quickly the incumbent improves and whether the complete proof closes under fixed budgets.
+
+Model-size measurements are deterministic for a fixed room packing and solver formulation. Runtime measurements are not. This distinction is useful when deciding whether a proposed reduction attacks structural model growth or only happens to improve one timing sample.
 
 ## CI policy
 
-Normal CI tests the benchmark **contract** (case definitions, serialization and Markdown reporting) but does not run the multi-minute representative suite. This prevents CI duration from becoming a hidden solver budget and avoids treating shared-runner timing noise as a performance regression.
+Normal CI tests the benchmark **contract**, fixed-subproblem diagnostics, budget accounting, serialization and Markdown reporting but does not run the multi-minute representative suite. This prevents CI duration from becoming a hidden solver budget and avoids treating shared-runner timing noise as a performance regression.
 
 Known-optimum correctness remains protected separately by the exhaustive Stage-3 reference-oracle tests.
 
-## Next instrumentation increment
+## Stage-4 optimization discipline
 
-The current foundation captures end-to-end production metrics already exposed by `PlanResult`. The next Stage-4 increment should add internal model-size/build diagnostics, especially:
+The benchmark and model-size instrumentation are now in place. The next performance changes should be chosen from measured evidence rather than assumption. Safe candidates remain:
 
-```text
-fixed pair-flow graph nodes/arcs
-positive-weight objective pair count
-CP-SAT variable count
-CP-SAT constraint count
-model construction time
-fixed-subproblem solve time
-```
+- mathematically equivalent candidate-domain reduction;
+- stronger admissible lower bounds;
+- additional pure label/topology symmetry breaking;
+- indexed graph construction;
+- valid decomposition cuts.
 
-Those measurements should be added without changing solver decisions and then used to identify the actual dominant growth term before implementing domain reductions or cuts.
+Any reduction or cut must continue to match the exhaustive known-optimum reference cases before it is allowed into the production correctness boundary. No benchmark improvement is sufficient justification for weakening hard constraints, changing the accepted objective or suppressing incomplete-search diagnostics.

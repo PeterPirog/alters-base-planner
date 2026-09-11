@@ -102,6 +102,17 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                 "search_time_s": result.search_time_s,
                 "time_limit_reached": result.time_limit_reached,
                 "search_exhausted": result.search_exhausted,
+                "fixed_subproblems": {
+                    "count": result.fixed_subproblem_count,
+                    "max_graph_nodes": result.max_fixed_graph_nodes,
+                    "max_graph_arcs": result.max_fixed_graph_arcs,
+                    "max_objective_pairs": result.max_fixed_objective_pairs,
+                    "max_cp_sat_variables": result.max_fixed_cp_sat_variables,
+                    "max_cp_sat_constraints": result.max_fixed_cp_sat_constraints,
+                    "model_build_time_s": result.fixed_model_build_time_s,
+                    "cp_sat_solve_time_s": result.fixed_cp_sat_solve_time_s,
+                    "total_time_s": result.fixed_subproblem_time_s,
+                },
             },
             "infrastructure": {
                 "elevator_module_count": result.elevator_module_count,
