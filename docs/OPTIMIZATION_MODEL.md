@@ -56,7 +56,14 @@ Only verified gameplay exceptions should override the standard port rule. Radiat
 
 Every player-requested room must be installed exactly in the requested count. Mandatory story/core modules are added automatically.
 
-Verified module-count ceilings are domain constraints, not optimization preferences. The current catalog enforces at most one Recycler. Limits without sufficiently reliable evidence are deliberately not invented.
+Verified module-count ceilings are domain constraints, not optimization preferences. The current mobile-Base catalog enforces:
+
+```text
+Recycler <= 1
+Rapidium Ark <= 5
+```
+
+Any future tighter Act/tier-specific ceilings should refine these global limits explicitly rather than being inferred by the optimizer.
 
 ## H2. Solver ownership of utilities
 
@@ -64,7 +71,7 @@ Verified module-count ceilings are domain constraints, not optimization preferen
 
 ## H3. Tier-specific irregular Base mask
 
-Every room, Corridor and Elevator must fit inside the selected editable Base I-IV CSV mask:
+Every room, Corridor and Elevator must fit inside the selected validated Base I-IV CSV mask:
 
 ```text
 src/alters_base_planner/data/base-size1.csv
@@ -80,6 +87,17 @@ CSV semantics:
 1 = buildable cell
 X = immovable blocked/core cell
 ```
+
+The 2026-09-11 project spatial-analysis reference gives the following exact mobile-Base bounding boxes and fixed 4x2 core coordinates:
+
+| Tier | Grid | Fixed core |
+|---|---:|---|
+| I | 22x12 | x=8..11, y=6..7 |
+| II | 26x14 | x=10..13, y=7..8 |
+| III | 30x16 | x=12..15, y=8..9 |
+| IV | 34x18 | x=14..17, y=9..10 |
+
+The repository CSVs match those matrices exactly. They must not be symmetrized, recentered or approximated. Detailed provenance is in `docs/BASE_GEOMETRY_REFERENCE.md`.
 
 The player-facing planner accepts Base tiers I-IV. `BaseGeometry` itself may represent custom positive tier identifiers for tests and future calibration workflows.
 
