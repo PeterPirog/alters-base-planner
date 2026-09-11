@@ -41,8 +41,13 @@ _COLOR_LIST = (
 )
 MODULE_COLORS = {
     key: _COLOR_LIST[index % len(_COLOR_LIST)]
-    for index, key in enumerate(sorted(MODULE_BY_KEY))
+    for index, key in enumerate(
+        sorted(key for key, spec in MODULE_BY_KEY.items() if spec.authority.value != "solver")
+    )
 }
+
+_UTILITY_COLORS = {"corridor": "#D1D5DB", "elevator": "#E879F9"}
+_UTILITY_LABELS = {"corridor": "C", "elevator": "E"}
 
 
 def average_pair_distance(result: PlanResult) -> float:
@@ -60,6 +65,13 @@ def _metrics_caption(result: PlanResult) -> str:
         f"weighted avg={weighted_avg:.2f} | room mass={result.room_mass} | "
         f"utility mass={result.utility_mass} | total mass={result.total_mass}"
     )
+
+
+def _utility_visual(module_key: str) -> tuple[str, str]:
+    try:
+        return _UTILITY_COLORS[module_key], _UTILITY_LABELS[module_key]
+    except KeyError as exc:
+        raise ValueError(f"No renderer style for solver module {module_key!r}") from exc
 
 
 def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
@@ -84,13 +96,12 @@ def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
         )
 
     for utility in result.utilities:
-        fill = "#D1D5DB" if utility.kind == "corridor" else "#E879F9"
+        fill, label = _utility_visual(utility.module_key)
         parts.append(
-            f'<rect x="{utility.x*cell_w}" y="{header_h+utility.y*cell_h}" width="{utility.width*cell_w}" height="{cell_h}" rx="3" fill="{fill}" stroke="#111827" stroke-width="1"/>'
+            f'<rect x="{utility.x*cell_w}" y="{header_h+utility.y*cell_h}" width="{utility.width*cell_w}" height="{utility.height*cell_h}" rx="3" fill="{fill}" stroke="#111827" stroke-width="1"/>'
         )
-        label = "C" if utility.kind == "corridor" else "E"
         parts.append(
-            f'<text x="{(utility.x+1)*cell_w}" y="{header_h+utility.y*cell_h+cell_h/2+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0f172a">{label}</text>'
+            f'<text x="{(utility.x+utility.width/2)*cell_w}" y="{header_h+(utility.y+utility.height/2)*cell_h+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0f172a">{label}</text>'
         )
 
     for room in result.rooms:
@@ -139,11 +150,11 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
         )
 
     for utility in result.utilities:
-        face = "#D1D5DB" if utility.kind == "corridor" else "#E879F9"
-        for dx in range(utility.width):
+        face, label = _utility_visual(utility.module_key)
+        for xx, yy in utility.cells:
             ax.add_patch(
                 Rectangle(
-                    (utility.x + dx, utility.y),
+                    (xx, yy),
                     1,
                     1,
                     facecolor=face,
@@ -151,10 +162,9 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
                     linewidth=0.75,
                 )
             )
-        label = "C" if utility.kind == "corridor" else "E"
         ax.text(
             utility.x + utility.width / 2,
-            utility.y + 0.5,
+            utility.y + utility.height / 2,
             label,
             ha="center",
             va="center",
@@ -210,11 +220,21 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
         pad=12,
     )
 
+    corridor = MODULE_BY_KEY["corridor"]
+    elevator = MODULE_BY_KEY["elevator"]
     legend_handles = [
         Patch(facecolor="white", edgecolor="black", label="Empty buildable cell"),
         Patch(facecolor="black", edgecolor="#666666", label="Unavailable / outside / fixed core"),
-        Patch(facecolor="#D1D5DB", edgecolor="black", label="Corridor — size 2×1, mass 2"),
-        Patch(facecolor="#E879F9", edgecolor="black", label="Elevator — size 2×1, mass 2"),
+        Patch(
+            facecolor=_UTILITY_COLORS["corridor"],
+            edgecolor="black",
+            label=f"Corridor — size {corridor.width}×{corridor.height}, mass {corridor.mass}",
+        ),
+        Patch(
+            facecolor=_UTILITY_COLORS["elevator"],
+            edgecolor="black",
+            label=f"Elevator — size {elevator.width}×{elevator.height}, mass {elevator.mass}",
+        ),
     ]
     for key in used_module_keys:
         spec = MODULE_BY_KEY[key]
