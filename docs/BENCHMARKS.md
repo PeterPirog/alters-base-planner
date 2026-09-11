@@ -42,6 +42,28 @@ alters-base-benchmark \
 
 The representative suite can consume several minutes because its cases intentionally exercise the exact production solver under non-trivial budgets. It is not part of the normal unit-test CI path.
 
+## Reproducible GitHub benchmark runs
+
+`.github/workflows/benchmark.yml` provides an explicit `workflow_dispatch` benchmark job. It never runs automatically on ordinary pushes or pull requests, so representative measurements cannot silently increase normal CI duration.
+
+From the GitHub Actions UI choose **Benchmarks**, select **Run workflow**, then choose either:
+
+```text
+smoke
+representative
+```
+
+The workflow uses Ubuntu 24.04 and Python 3.12, installs the package from the selected repository revision, runs the production benchmark command and uploads both reports as one artifact:
+
+```text
+benchmark-results.json
+benchmark-results.md
+```
+
+Artifacts are retained for 30 days. The artifact name includes the selected suite and GitHub run ID. The JSON report remains the authoritative machine-readable record because it also captures Python, platform, OR-Tools and planner versions.
+
+This workflow is intended to provide a stable shared-runner reference environment. It does not make shared-host timing deterministic; compare runtime samples cautiously and use structural model-size/proof metrics alongside wall time.
+
 ## Version-controlled suites
 
 ### Smoke
@@ -140,6 +162,8 @@ Model-size measurements are deterministic for a fixed room packing and solver fo
 Normal CI tests the benchmark **contract**, fixed-subproblem diagnostics, budget accounting, serialization and Markdown reporting but does not run the multi-minute representative suite. This prevents CI duration from becoming a hidden solver budget and avoids treating shared-runner timing noise as a performance regression.
 
 Known-optimum correctness remains protected separately by the exhaustive Stage-3 reference-oracle tests.
+
+The opt-in benchmark workflow is deliberately separate from normal CI. Benchmark artifacts are evidence for performance engineering, not pass/fail correctness gates.
 
 ## Stage-4 optimization discipline
 
