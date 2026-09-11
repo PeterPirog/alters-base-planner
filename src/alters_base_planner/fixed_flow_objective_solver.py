@@ -340,12 +340,20 @@ def solve_fixed_layout_flow_objective(
     *,
     time_limit_s: float,
     root_instance_id: str = "airlock-1",
+    scaled_objective_upper_bound: int | None = None,
 ) -> FixedFlowObjectiveResult:
     """Optimize exact ``F`` and all accepted tie-breakers for one fixed room packing.
 
     Unlike the exhaustive reference oracle, this formulation represents each positive-weight
     room pair by a unit flow over the conditional module graph. Minimizing the sum of weighted
     arc costs is therefore equivalent to minimizing the sum of exact shortest-path distances.
+
+    ``scaled_objective_upper_bound`` is an optional exact decomposition cut. When supplied, the
+    fixed subproblem only needs solutions with scaled ``F <= bound``. Equality is deliberately
+    retained because a layout with the incumbent primary objective may still improve mass,
+    Elevator count or Corridor count. CP-SAT `INFEASIBLE` under this cut proves that the packing
+    cannot match or improve the incumbent primary objective, even though it does not distinguish
+    hard infrastructure infeasibility from strict objective domination.
 
     The phases are solved lexicographically under one wall-clock budget that includes model
     construction as well as CP-SAT search:
@@ -357,6 +365,13 @@ def solve_fixed_layout_flow_objective(
 
     A proof flag is set only when CP-SAT proves the corresponding optimization phase optimal.
     """
+
+    if scaled_objective_upper_bound is not None and (
+        isinstance(scaled_objective_upper_bound, bool)
+        or not isinstance(scaled_objective_upper_bound, int)
+        or scaled_objective_upper_bound < 0
+    ):
+        raise ValueError("scaled_objective_upper_bound must be a non-negative integer or None")
 
     if time_limit_s <= 0:
         return FixedFlowObjectiveResult(status="TIME_LIMIT", time_limit_reached=True)
@@ -379,6 +394,8 @@ def solve_fixed_layout_flow_objective(
         arcs=arcs,
         pairs=objective.pairs,
     )
+    if scaled_objective_upper_bound is not None:
+        compiled.model.add(primary_expr <= scaled_objective_upper_bound)
     compiled.model.minimize(primary_expr)
 
     primary_proto = compiled.model.Proto()
@@ -411,8 +428,13 @@ def solve_fixed_layout_flow_objective(
     if status == cp_model.MODEL_INVALID:
         raise AssertionError("CP-SAT rejected the fixed pair-flow objective model")
     if status == cp_model.INFEASIBLE:
+        result_status = (
+            "OBJECTIVE_BOUND_INFEASIBLE"
+            if scaled_objective_upper_bound is not None
+            else "INFEASIBLE"
+        )
         return FixedFlowObjectiveResult(
-            status="INFEASIBLE",
+            status=result_status,
             objective_scale=objective.scale,
             diagnostics=diagnostics(),
         )
@@ -442,6 +464,14 @@ def solve_fixed_layout_flow_objective(
         )
 
     primary_optimum = int(round(solver.objective_value))
+    if (
+        scaled_objective_upper_bound is not None
+        and primary_optimum > scaled_objective_upper_bound
+    ):
+        raise AssertionError(
+            "Pair-flow optimum violates the exact incumbent objective cut: "
+            f"optimum={primary_optimum}, bound={scaled_objective_upper_bound}"
+        )
     scaled_evaluator_value = objective.scaled_score(metrics.pairwise_distances)
     if scaled_evaluator_value != primary_optimum:
         raise AssertionError(
