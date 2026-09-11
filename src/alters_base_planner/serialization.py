@@ -3,7 +3,7 @@ from __future__ import annotations
 from .catalog import MODULE_BY_KEY
 from .models import ModulePlacement, PlacementAuthority, PlanResult, resolve_ports
 
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 
 
 def average_pair_distance(result: PlanResult) -> float:
@@ -71,6 +71,13 @@ def result_payload(result: PlanResult) -> dict[str, object]:
         "optimization": {
             "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
             "objective_value": result.objective_value,
+            "exact_integer_objective": {
+                "scale": result.objective_scale,
+                "scaled_value": result.scaled_objective_value,
+                "scaled_modified_manhattan_lower_bound": (
+                    result.scaled_modified_manhattan_lower_bound
+                ),
+            },
             "distance_rule": {
                 "measurement": "shortest legal path in the module graph",
                 "normal_room_ports": "extreme left/right cells on room floor",
@@ -89,6 +96,7 @@ def result_payload(result: PlanResult) -> dict[str, object]:
             "global_objective_optimum_proven": result.global_objective_optimum_proven,
             "search_diagnostics": {
                 "connected_candidates_examined": result.connected_candidates_examined,
+                "fixed_objective_optima_proven": result.fixed_objective_optima_proven,
                 "room_packings_examined": result.attempts,
                 "manhattan_pruned_count": result.manhattan_pruned_count,
                 "search_time_s": result.search_time_s,
