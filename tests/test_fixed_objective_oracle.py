@@ -52,22 +52,29 @@ def _brute_force_fixed_objective(
 
     for states in product((None, "corridor", "elevator"), repeat=len(anchors)):
         utilities: list[ModulePlacement] = []
+        utility_cells: set[tuple[int, int]] = set()
         counts = {"corridor": 0, "elevator": 0}
+        valid = True
         for anchor, module_key in zip(anchors, states, strict=True):
             if module_key is None:
                 continue
             spec = MODULE_BY_KEY[module_key]
-            counts[module_key] += 1
-            utilities.append(
-                ModulePlacement(
-                    instance_id=f"{module_key}-brute-{counts[module_key]}",
-                    module_key=module_key,
-                    x=anchor[0],
-                    y=anchor[1],
-                    width=spec.width,
-                    height=spec.height,
-                )
+            placement = ModulePlacement(
+                instance_id=f"{module_key}-brute-{counts[module_key] + 1}",
+                module_key=module_key,
+                x=anchor[0],
+                y=anchor[1],
+                width=spec.width,
+                height=spec.height,
             )
+            if placement.cells & utility_cells:
+                valid = False
+                break
+            counts[module_key] += 1
+            utility_cells.update(placement.cells)
+            utilities.append(placement)
+        if not valid:
+            continue
 
         try:
             metrics = evaluate_distances(list(rooms), utilities)
@@ -132,6 +139,29 @@ def test_fixed_objective_oracle_matches_independent_exhaustive_enumeration() -> 
     assert result.objective_lower_bound == pytest.approx(0.9)
     assert tuple(sorted((u.module_key, u.x, u.y) for u in result.utilities)) == brute[1]
     assert brute[1] == (("corridor", 4, 0),)
+
+
+def test_fixed_objective_oracle_matches_exhaustive_two-module_route() -> None:
+    base = _base(12, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 8, 0),
+    )
+    assert _free_utility_anchors(base, rooms) == ((4, 0), (5, 0), (6, 0))
+
+    brute = _brute_force_fixed_objective(base, rooms)
+    assert brute is not None
+    result = solve_fixed_layout_objective(base, rooms, time_limit_s=2.0)
+
+    assert result.status == "OPTIMAL"
+    assert result.objective_optimum_proven is True
+    assert result.search_exhausted is True
+    assert result.networks_examined == 4
+    assert result.distance_metrics is not None
+    assert result.distance_metrics.weighted_score == pytest.approx(brute[0][0])
+    assert result.objective_lower_bound == pytest.approx(1.8)
+    assert tuple(sorted((u.module_key, u.x, u.y) for u in result.utilities)) == brute[1]
+    assert brute[1] == (("corridor", 4, 0), ("corridor", 6, 0))
 
 
 def test_fixed_objective_oracle_proves_infeasible_without_vertical_space() -> None:
