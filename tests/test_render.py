@@ -42,6 +42,7 @@ def _sample_result() -> PlanResult:
         travel_feasible_at_full_tank=True,
         corridor_count=1,
         fixed_objective_optima_proven=3,
+        incumbent_bound_pruned_count=2,
         fixed_subproblem_count=4,
         max_fixed_graph_nodes=61,
         max_fixed_graph_arcs=120,
@@ -96,6 +97,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     }
     diagnostics = optimization["search_diagnostics"]
     assert diagnostics["fixed_objective_optima_proven"] == 3
+    assert diagnostics["incumbent_bound_pruned_count"] == 2
     assert diagnostics["fixed_subproblems"] == {
         "count": 4,
         "max_graph_nodes": 61,
