@@ -132,6 +132,38 @@ def test_pair_flow_charges_intermediate_transit_room_width_exactly() -> None:
     assert result.distance_metrics.weighted_score == pytest.approx(1.4)
 
 
+def test_pair_flow_does_not_bridge_through_non_transit_rapidium_ark() -> None:
+    base = _base(12, 2)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 1),
+        _room("rapidium-ark-1", "rapidium_ark", 4, 0),
+        _room("workshop-1", "workshop", 8, 1),
+    )
+
+    # The Ark is directly reachable from both sides, but it may not join those sides
+    # internally. With no legal external route available, the packing is infeasible.
+    _assert_matches_reference(base, rooms)
+
+
+def test_pair_flow_keeps_zero_weight_terminal_in_hard_network() -> None:
+    base = _base(6, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("recycler-1", "recycler", 4, 0),
+    )
+
+    # Recycler has zero objective weight but remains a hard-connected installed module.
+    _assert_matches_reference(base, rooms)
+
+    result = solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
+    assert result.status == "OPTIMAL"
+    assert result.distance_metrics is not None
+    assert result.distance_metrics.weighted_score == pytest.approx(0.0)
+    assert result.objective_scale == 1
+    assert result.scaled_objective_value == 0
+    assert result.utilities == ()
+
+
 def test_pair_flow_matches_reference_infeasibility_without_vertical_space() -> None:
     base = _base(4, 2)
     rooms = (
