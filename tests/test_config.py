@@ -45,22 +45,28 @@ def test_unknown_objective_is_rejected(tmp_path) -> None:
         load_plan_config(path)
 
 
-def test_mandatory_rooms_cannot_be_configured(tmp_path) -> None:
+def test_system_modules_cannot_be_configured(tmp_path) -> None:
     path = _write(tmp_path, {"base_tier": 1, "rooms": {"airlock": 2}})
-    with pytest.raises(ValueError, match="Mandatory rooms"):
+    with pytest.raises(ValueError, match="SYSTEM modules"):
         load_plan_config(path)
 
 
-@pytest.mark.parametrize("key", ["corridor", "corridors", "elevator", "elevators"])
-def test_solver_managed_utilities_cannot_be_configured(tmp_path, key: str) -> None:
+@pytest.mark.parametrize("key", ["corridor", "elevator"])
+def test_solver_modules_cannot_be_configured(tmp_path, key: str) -> None:
     path = _write(tmp_path, {"base_tier": 2, "rooms": {key: 3}})
-    with pytest.raises(ValueError, match="solver-managed"):
+    with pytest.raises(ValueError, match="SOLVER modules"):
         load_plan_config(path)
 
 
-def test_unknown_room_key_is_rejected(tmp_path) -> None:
+def test_noncanonical_plural_solver_key_is_unknown(tmp_path) -> None:
+    path = _write(tmp_path, {"base_tier": 2, "rooms": {"corridors": 3}})
+    with pytest.raises(ValueError, match="Unknown module keys"):
+        load_plan_config(path)
+
+
+def test_unknown_module_key_is_rejected(tmp_path) -> None:
     path = _write(tmp_path, {"base_tier": 1, "rooms": {"teleporter": 1}})
-    with pytest.raises(ValueError, match="Unknown room keys"):
+    with pytest.raises(ValueError, match="Unknown module keys"):
         load_plan_config(path)
 
 
