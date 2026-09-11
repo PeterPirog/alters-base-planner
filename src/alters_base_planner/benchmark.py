@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 2
+BENCHMARK_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +51,7 @@ class BenchmarkRecord:
     connected_candidates_examined: int
     fixed_objective_optima_proven: int
     manhattan_pruned_count: int
+    incumbent_bound_pruned_count: int
     search_exhausted: bool
     time_limit_reached: bool
     global_objective_optimum_proven: bool
@@ -175,6 +176,7 @@ def record_from_result(
         connected_candidates_examined=result.connected_candidates_examined,
         fixed_objective_optima_proven=result.fixed_objective_optima_proven,
         manhattan_pruned_count=result.manhattan_pruned_count,
+        incumbent_bound_pruned_count=result.incumbent_bound_pruned_count,
         search_exhausted=result.search_exhausted,
         time_limit_reached=result.time_limit_reached,
         global_objective_optimum_proven=result.global_objective_optimum_proven,
@@ -242,8 +244,8 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
             "",
             "## Results",
             "",
-            "| Case | Tier | Status | Wall s | Packings | Exact fixed optima | Pruned | F | Mass | E | C | Global proof |",
-            "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Case | Tier | Status | Wall s | Packings | Exact fixed optima | LB pruned | Incumbent-cut | F | Mass | E | C | Global proof |",
+            "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for raw in results:
@@ -253,7 +255,7 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
         score_text = "-" if score is None else f"{score:.4f}"
         lines.append(
             "| {name} | {tier} | {status} | {wall:.3f} | {packings} | {fixed} | {pruned} | "
-            "{score} | {mass} | {elevators} | {corridors} | {proof} |".format(
+            "{incumbent_cut} | {score} | {mass} | {elevators} | {corridors} | {proof} |".format(
                 name=raw["name"],
                 tier=raw["tier"],
                 status=raw["status"],
@@ -261,6 +263,7 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 packings=raw["room_packings_examined"],
                 fixed=raw["fixed_objective_optima_proven"],
                 pruned=raw["manhattan_pruned_count"],
+                incumbent_cut=raw["incumbent_bound_pruned_count"],
                 score=score_text,
                 mass=raw["total_mass"],
                 elevators=raw["elevator_module_count"],
