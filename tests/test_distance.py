@@ -1,18 +1,31 @@
 import pytest
 
+from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.distance import (
     _validate_vertical_elevator_coverage,
     evaluate_distances,
     modified_manhattan_room_lower_bound,
     room_access_rows,
 )
-from alters_base_planner.models import Placement, UtilityPlacement
+from alters_base_planner.models import ModulePlacement
+
+
+def _utility(module_key: str, x: int, y: int) -> ModulePlacement:
+    spec = MODULE_BY_KEY[module_key]
+    return ModulePlacement(
+        f"{module_key}@{x},{y}",
+        module_key,
+        x,
+        y,
+        spec.width,
+        spec.height,
+    )
 
 
 def test_directly_adjacent_rooms_have_zero_distance() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 4, 0, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 4, 0, 4, 1),
     ]
     metrics = evaluate_distances(rooms, [])
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 0
@@ -22,8 +35,8 @@ def test_directly_adjacent_rooms_have_zero_distance() -> None:
 
 def test_endpoint_room_lengths_do_not_add_distance() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("greenhouse-1", "greenhouse", 4, 0, 8, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("greenhouse-1", "greenhouse", 4, 0, 8, 1),
     ]
     metrics = evaluate_distances(rooms, [])
     assert metrics.pairwise_distances["airlock-1|greenhouse-1"] == 0
@@ -31,9 +44,9 @@ def test_endpoint_room_lengths_do_not_add_distance() -> None:
 
 def test_intermediate_room_adds_its_grid_length() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 4, 0, 4, 1),
-        Placement("command-1", "command_center", 8, 0, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 4, 0, 4, 1),
+        ModulePlacement("command-1", "command_center", 8, 0, 4, 1),
     ]
     metrics = evaluate_distances(rooms, [])
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 0
@@ -43,10 +56,10 @@ def test_intermediate_room_adds_its_grid_length() -> None:
 
 def test_one_corridor_adds_one_distance_point() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 6, 0, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 0, 4, 1),
     ]
-    utilities = [UtilityPlacement("corridor", 4, 0)]
+    utilities = [_utility("corridor", 4, 0)]
     metrics = evaluate_distances(rooms, utilities)
     assert metrics.pairwise_distances["airlock-1|workshop-1"] == 1
     assert metrics.pairwise_manhattan_lower_bounds["airlock-1|workshop-1"] == 1
@@ -55,14 +68,14 @@ def test_one_corridor_adds_one_distance_point() -> None:
 
 def test_every_elevator_module_adds_one_distance_point() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 6, 3, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 3, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("elevator", 4, 0),
-        UtilityPlacement("elevator", 4, 1),
-        UtilityPlacement("elevator", 4, 2),
-        UtilityPlacement("elevator", 4, 3),
+        _utility("elevator", 4, 0),
+        _utility("elevator", 4, 1),
+        _utility("elevator", 4, 2),
+        _utility("elevator", 4, 3),
     ]
     metrics = evaluate_distances(rooms, utilities)
     assert metrics.elevator_module_count == 4
@@ -73,30 +86,30 @@ def test_every_elevator_module_adds_one_distance_point() -> None:
 
 
 def test_multirow_room_is_entered_at_floor_not_ceiling() -> None:
-    airlock = Placement("airlock-1", "airlock", 0, 1, 4, 1)
-    quantum = Placement("quantum-1", "quantum_computer", 4, 0, 4, 2)
-    workshop = Placement("workshop-1", "workshop", 10, 1, 4, 1)
+    airlock = ModulePlacement("airlock-1", "airlock", 0, 1, 4, 1)
+    quantum = ModulePlacement("quantum-1", "quantum_computer", 4, 0, 4, 2)
+    workshop = ModulePlacement("workshop-1", "workshop", 10, 1, 4, 1)
     assert room_access_rows(quantum) == frozenset({1})
     metrics = evaluate_distances(
         [airlock, quantum, workshop],
-        [UtilityPlacement("corridor", 8, 1)],
+        [_utility("corridor", 8, 1)],
     )
     assert metrics.pairwise_distances["quantum-1|workshop-1"] == 1
 
 
 def test_radiation_repulsor_retains_verified_top_access_exception() -> None:
-    repulsor = Placement("repulsor-1", "radiation_repulsor", 0, 0, 2, 3)
+    repulsor = ModulePlacement("repulsor-1", "radiation_repulsor", 0, 0, 2, 3)
     assert room_access_rows(repulsor) == frozenset({0})
 
 
 def test_missing_intermediate_elevator_level_is_hard_infeasible() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 6, 2, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 2, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("elevator", 4, 0),
-        UtilityPlacement("elevator", 4, 2),
+        _utility("elevator", 4, 0),
+        _utility("elevator", 4, 2),
     ]
     with pytest.raises(ValueError, match="requires at least 3 Elevator modules"):
         evaluate_distances(rooms, utilities)
@@ -104,14 +117,14 @@ def test_missing_intermediate_elevator_level_is_hard_infeasible() -> None:
 
 def test_shifted_shafts_must_overlap_on_each_adjacent_floor_pair() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 0, 1, 4, 1),
-        Placement("research-1", "research_lab", 0, 2, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 0, 1, 4, 1),
+        ModulePlacement("research-1", "research_lab", 0, 2, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("elevator", 4, 0),
-        UtilityPlacement("elevator", 6, 1),
-        UtilityPlacement("elevator", 6, 2),
+        _utility("elevator", 4, 0),
+        _utility("elevator", 6, 1),
+        _utility("elevator", 6, 2),
     ]
     with pytest.raises(ValueError, match="floors 0 and 1 do not share"):
         _validate_vertical_elevator_coverage(rooms, utilities)
@@ -119,26 +132,26 @@ def test_shifted_shafts_must_overlap_on_each_adjacent_floor_pair() -> None:
 
 def test_shifted_shafts_are_legal_through_transfer_floor() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 0, 1, 4, 1),
-        Placement("research-1", "research_lab", 0, 2, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 0, 1, 4, 1),
+        ModulePlacement("research-1", "research_lab", 0, 2, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("elevator", 4, 0),
-        UtilityPlacement("elevator", 4, 1),
-        UtilityPlacement("elevator", 8, 1),
-        UtilityPlacement("elevator", 8, 2),
+        _utility("elevator", 4, 0),
+        _utility("elevator", 4, 1),
+        _utility("elevator", 8, 1),
+        _utility("elevator", 8, 2),
     ]
     _validate_vertical_elevator_coverage(rooms, utilities)
 
 
 def test_zero_weight_storage_is_excluded_from_pairs_but_remains_connected() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 6, 0, 4, 1),
-        Placement("storage-1", "medium_storage", 10, 0, 8, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 0, 4, 1),
+        ModulePlacement("storage-1", "medium_storage", 10, 0, 8, 1),
     ]
-    utilities = [UtilityPlacement("corridor", 4, 0)]
+    utilities = [_utility("corridor", 4, 0)]
     metrics = evaluate_distances(rooms, utilities)
     assert set(metrics.pairwise_distances) == {"airlock-1|workshop-1"}
     assert metrics.weighted_score == pytest.approx(0.90)
@@ -146,8 +159,8 @@ def test_zero_weight_storage_is_excluded_from_pairs_but_remains_connected() -> N
 
 def test_zero_weight_module_still_requires_airlock_connectivity() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("storage-1", "medium_storage", 8, 0, 8, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("storage-1", "medium_storage", 8, 0, 8, 1),
     ]
     with pytest.raises(ValueError, match="storage-1 has no port reachable from the Airlock"):
         evaluate_distances(rooms, [])
@@ -155,23 +168,30 @@ def test_zero_weight_module_still_requires_airlock_connectivity() -> None:
 
 def test_floating_solver_utility_is_hard_infeasible() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 4, 0, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 4, 0, 4, 1),
     ]
-    utilities = [UtilityPlacement("corridor", 12, 0)]
+    utilities = [_utility("corridor", 12, 0)]
     with pytest.raises(ValueError, match="utility module.*floating"):
         evaluate_distances(rooms, utilities)
 
 
+def test_non_solver_module_cannot_be_supplied_as_path_infrastructure() -> None:
+    rooms = [ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1)]
+    invalid = [ModulePlacement("workshop-as-utility", "workshop", 4, 0, 4, 1)]
+    with pytest.raises(AssertionError, match="must reference a SOLVER module"):
+        evaluate_distances(rooms, invalid)
+
+
 def test_unordered_pair_sum_counts_each_pair_once_with_intermediate_room_cost() -> None:
     rooms = [
-        Placement("airlock-1", "airlock", 0, 0, 4, 1),
-        Placement("workshop-1", "workshop", 6, 0, 4, 1),
-        Placement("command-1", "command_center", 12, 0, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 0, 4, 1),
+        ModulePlacement("command-1", "command_center", 12, 0, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("corridor", 4, 0),
-        UtilityPlacement("corridor", 10, 0),
+        _utility("corridor", 4, 0),
+        _utility("corridor", 10, 0),
     ]
     metrics = evaluate_distances(rooms, utilities)
     assert metrics.pairwise_distances == {
