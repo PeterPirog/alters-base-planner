@@ -12,16 +12,28 @@ from .distance import evaluate_distances, weighted_modified_manhattan_lower_boun
 from .models import (
     BaseGeometry,
     ModuleInstance,
-    Placement,
+    ModulePlacement,
+    PlacementAuthority,
     PlanRequest,
     PlanResult,
     ResolvedPort,
-    UtilityPlacement,
     expand_instances,
+    footprint_cells,
     resolve_ports,
 )
 
-UTILITY_MASS = 2
+_CORRIDOR_SPEC = MODULE_BY_KEY["corridor"]
+_ELEVATOR_SPEC = MODULE_BY_KEY["elevator"]
+if (
+    _CORRIDOR_SPEC.authority is not PlacementAuthority.SOLVER
+    or _ELEVATOR_SPEC.authority is not PlacementAuthority.SOLVER
+):
+    raise RuntimeError("Corridor and Elevator must be SOLVER-managed modules")
+if (_CORRIDOR_SPEC.width, _CORRIDOR_SPEC.height) != (
+    _ELEVATOR_SPEC.width,
+    _ELEVATOR_SPEC.height,
+):
+    raise RuntimeError("Current router requires Corridor and Elevator to share one footprint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +62,7 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
     ) / len(spec.ports)
     for y in range(base.height - spec.height + 1):
         for x in range(base.width - spec.width + 1):
-            cells = frozenset(
-                (xx, yy)
-                for xx in range(x, x + spec.width)
-                for yy in range(y, y + spec.height)
-            )
+            cells = footprint_cells(x, y, spec.width, spec.height)
             if not cells <= base.buildable_cells:
                 continue
             px = x + (spec.width - 1) / 2
@@ -71,13 +79,13 @@ def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
 
 def _anchor_cells(anchor: tuple[int, int]) -> frozenset[tuple[int, int]]:
     x, y = anchor
-    return frozenset({(x, y), (x + 1, y)})
+    return footprint_cells(x, y, _CORRIDOR_SPEC.width, _CORRIDOR_SPEC.height)
 
 
 def _anchor_is_compatible_with_used(
     anchor: tuple[int, int], used: set[tuple[int, int]]
 ) -> bool:
-    """An exact reused anchor is legal; a one-cell overlap with another 2x1 utility is not."""
+    """An exact reused anchor is legal; a partial overlap with another utility is not."""
 
     if anchor in used:
         return True
@@ -87,16 +95,25 @@ def _anchor_is_compatible_with_used(
 
 def _validate_utility_geometry(
     base: BaseGeometry,
-    rooms: list[Placement],
-    utilities: list[UtilityPlacement],
+    rooms: list[ModulePlacement],
+    utilities: list[ModulePlacement],
 ) -> None:
-    """Fail fast if generated utility modules violate physical occupancy constraints."""
+    """Fail fast if generated SOLVER modules violate physical occupancy constraints."""
 
     room_cells = set().union(*(room.cells for room in rooms)) if rooms else set()
     utility_cells: set[tuple[int, int]] = set()
     seen_anchors: set[tuple[int, int]] = set()
 
     for utility in utilities:
+        spec = MODULE_BY_KEY.get(utility.module_key)
+        if spec is None or spec.authority is not PlacementAuthority.SOLVER:
+            raise AssertionError(
+                f"Generated infrastructure {utility.instance_id} is not a SOLVER module"
+            )
+        if (utility.width, utility.height) != (spec.width, spec.height):
+            raise AssertionError(
+                f"Generated utility {utility.instance_id} footprint does not match its ModuleSpec"
+            )
         anchor = (utility.x, utility.y)
         if anchor in seen_anchors:
             raise AssertionError(f"Duplicate generated utility anchor at {anchor}")
@@ -114,7 +131,7 @@ def _validate_utility_geometry(
 
 
 def _room_port_components(
-    rooms: list[Placement],
+    rooms: list[ModulePlacement],
     base: BaseGeometry,
     occupied: set[tuple[int, int]],
 ) -> tuple[dict[int, set[int]], dict[int, set[tuple[int, int]]], int] | None:
@@ -166,10 +183,10 @@ def _room_port_components(
             root = find(port_index[(room_idx, local_idx)])
             components.add(root)
             x, row = port.utility_anchor
-            cells = {(x, row), (x + 1, row)}
+            cells = _anchor_cells((x, row))
             if (
                 x >= 0
-                and x + 1 < base.width
+                and x + _CORRIDOR_SPEC.width <= base.width
                 and cells <= base.buildable_cells
                 and not (cells & occupied)
             ):
@@ -188,7 +205,12 @@ def _room_port_components(
 
 def _neighbors(anchor: tuple[int, int], valid: set[tuple[int, int]]) -> list[tuple[int, int]]:
     x, y = anchor
-    candidates = ((x - 2, y), (x + 2, y), (x, y - 1), (x, y + 1))
+    candidates = (
+        (x - _CORRIDOR_SPEC.width, y),
+        (x + _CORRIDOR_SPEC.width, y),
+        (x, y - 1),
+        (x, y + 1),
+    )
     return [p for p in candidates if p in valid]
 
 
@@ -221,15 +243,15 @@ def _shortest_path(
 
 
 def _route_utilities(
-    base: BaseGeometry, rooms: list[Placement]
-) -> list[UtilityPlacement] | None:
+    base: BaseGeometry, rooms: list[ModulePlacement]
+) -> list[ModulePlacement] | None:
     """Create non-overlapping Corridors/Elevators automatically from explicit room ports."""
 
     occupied: set[tuple[int, int]] = set().union(*(r.cells for r in rooms)) if rooms else set()
     valid_anchors: set[tuple[int, int]] = set()
-    for y in range(base.height):
-        for x in range(base.width - 1):
-            cells = {(x, y), (x + 1, y)}
+    for y in range(base.height - _CORRIDOR_SPEC.height + 1):
+        for x in range(base.width - _CORRIDOR_SPEC.width + 1):
+            cells = _anchor_cells((x, y))
             if cells <= base.buildable_cells and not (cells & occupied):
                 valid_anchors.add((x, y))
 
@@ -285,8 +307,8 @@ def _route_utilities(
         if best_component is None or best_path is None:
             return None
 
-        # A path moves horizontally in 2-cell steps or vertically at identical x. It cannot
-        # overlap itself; routing_valid additionally prevents overlap with earlier paths.
+        # A path moves horizontally by one complete utility footprint or vertically at
+        # identical x. It cannot overlap itself; routing_valid prevents earlier-path overlap.
         used.update(best_path)
         for a, b in zip(best_path, best_path[1:], strict=False):
             if a[0] == b[0]:
@@ -294,34 +316,40 @@ def _route_utilities(
                 vertical.add(b)
         connected_components.add(best_component)
 
-    utilities = [
-        UtilityPlacement("elevator" if anchor in vertical else "corridor", anchor[0], anchor[1])
-        for anchor in sorted(used)
-    ]
+    counters: Counter[str] = Counter()
+    utilities: list[ModulePlacement] = []
+    for anchor in sorted(used):
+        module_key = "elevator" if anchor in vertical else "corridor"
+        spec = MODULE_BY_KEY[module_key]
+        counters[module_key] += 1
+        utilities.append(
+            ModulePlacement(
+                f"{module_key}-{counters[module_key]}",
+                module_key,
+                anchor[0],
+                anchor[1],
+                spec.width,
+                spec.height,
+            )
+        )
     _validate_utility_geometry(base, rooms, utilities)
     return utilities
 
 
 def _mass_metrics(
     base: BaseGeometry,
-    rooms: list[Placement],
-    utilities: list[UtilityPlacement],
+    rooms: list[ModulePlacement],
+    utilities: list[ModulePlacement],
 ) -> tuple[int, int, int, int, bool, dict[str, int]]:
     room_mass = sum(MODULE_BY_KEY[room.module_key].mass for room in rooms)
-    utility_mass = UTILITY_MASS * len(utilities)
+    utility_mass = sum(MODULE_BY_KEY[utility.module_key].mass for utility in utilities)
     total_mass = room_mass + utility_mass
     margin = base.organics_capacity - total_mass
 
-    counts = Counter(room.module_key for room in rooms)
+    counts = Counter(module.module_key for module in (*rooms, *utilities))
     mass_breakdown = {
         key: count * MODULE_BY_KEY[key].mass for key, count in sorted(counts.items())
     }
-    corridor_count = sum(utility.kind == "corridor" for utility in utilities)
-    elevator_count = sum(utility.kind == "elevator" for utility in utilities)
-    if corridor_count:
-        mass_breakdown["corridor"] = corridor_count * UTILITY_MASS
-    if elevator_count:
-        mass_breakdown["elevator"] = elevator_count * UTILITY_MASS
 
     return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
@@ -479,14 +507,14 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             raise RuntimeError(f"Unexpected CP-SAT status: {status}")
 
         room_packings_examined += 1
-        rooms: list[Placement] = []
+        rooms: list[ModulePlacement] = []
         chosen_vars: list[cp_model.IntVar] = []
         for inst in instances:
             for idx, var in enumerate(vars_by_instance[inst.instance_id]):
                 if solver.value(var):
                     pos = candidates[inst.instance_id][idx]
                     rooms.append(
-                        Placement(
+                        ModulePlacement(
                             inst.instance_id,
                             inst.spec.key,
                             pos.x,
