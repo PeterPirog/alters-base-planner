@@ -31,25 +31,25 @@ def main() -> None:
         )
 
     result = solve_plan(loaded.request, base)
-    payload = result_payload(result)
-    payload_text = json.dumps(payload, indent=2)
+    payload_text = json.dumps(result_payload(result), indent=2)
     print(payload_text)
 
-    # JSON is the machine-readable audit result and is always persisted, including
-    # infeasible/time-limit outcomes. PNG/SVG exist only when a feasible layout exists.
     loaded.output.json.parent.mkdir(parents=True, exist_ok=True)
     loaded.output.json.write_text(payload_text, encoding="utf-8")
     print(f"Wrote {loaded.output.json}")
 
-    if result.rooms:
+    if result.status == "FEASIBLE":
+        if not result.modules:
+            raise RuntimeError("FEASIBLE result must contain installed modules")
         loaded.output.svg.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.png.parent.mkdir(parents=True, exist_ok=True)
         loaded.output.svg.write_text(render_svg(result), encoding="utf-8")
         render_png(result, loaded.output.png)
         print(f"Wrote {loaded.output.svg}")
         print(f"Wrote {loaded.output.png}")
-    else:
-        raise SystemExit(2)
+        return
+
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":
