@@ -141,7 +141,7 @@ def test_fixed_objective_oracle_matches_independent_exhaustive_enumeration() -> 
     assert brute[1] == (("corridor", 4, 0),)
 
 
-def test_fixed_objective_oracle_matches_exhaustive_two-module_route() -> None:
+def test_fixed_objective_oracle_matches_exhaustive_two_module_route() -> None:
     base = _base(12, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
