@@ -15,7 +15,7 @@ class ModuleType(StrEnum):
 
 
 class PlacementAuthority(StrEnum):
-    """Who determines that a module instance exists in the plan."""
+    """Who determines that a module instance exists in a plan."""
 
     SYSTEM = "system"
     PLAYER = "player"
@@ -31,15 +31,9 @@ class PortSide(StrEnum):
 class PortSpec:
     """Logical module access port in module-local coordinates.
 
-    ``cell_x`` is measured from the module's left edge.
-    ``cell_y`` is measured *upward from the module floor*: ``0`` is the floor row and
-    ``height - 1`` is the top row. This local semantic coordinate system is intentionally
-    different from the base-grid/world coordinate system, where ``y=0`` is the top row and
-    ``y`` grows downward.
-
-    A 1x1 module therefore has both logical LEFT and RIGHT ports on the same physical local
-    cell (0, 0), while the side still distinguishes which outer boundary can connect to a
-    neighbour or utility module.
+    ``cell_x`` is measured from the module's left edge. ``cell_y`` is measured upward from
+    the module floor: 0 is the floor row and ``height - 1`` is the top row. World/Base
+    coordinates use the opposite vertical convention: y=0 at the top and y grows downward.
     """
 
     name: str
@@ -67,19 +61,14 @@ class ResolvedPort:
 
     @property
     def utility_anchor(self) -> tuple[int, int]:
-        """Top-left 2x1 Corridor/Elevator anchor immediately outside this horizontal port."""
+        """Top-left 2x1 solver-infrastructure anchor outside this horizontal port."""
 
         x = self.edge_x - 2 if self.side is PortSide.LEFT else self.edge_x
         return (x, self.edge_y)
 
 
 def floor_ports(width: int) -> tuple[PortSpec, PortSpec]:
-    """Derive standard floor ports directly from module width.
-
-    Standard module geometry has one access port at each extreme side of the floor:
-    LEFT=(0,0) and RIGHT=(width-1,0). Height is intentionally irrelevant because local
-    y=0 always means the module floor.
-    """
+    """Derive standard floor ports: LEFT=(0,0), RIGHT=(width-1,0)."""
 
     if width <= 0:
         raise ValueError("Module width must be positive when deriving floor ports")
@@ -90,7 +79,7 @@ def floor_ports(width: int) -> tuple[PortSpec, PortSpec]:
 
 
 def top_ports(width: int, height: int) -> tuple[PortSpec, PortSpec]:
-    """LEFT/RIGHT ports on the module top row (local y=height-1)."""
+    """Derive LEFT/RIGHT ports on the module top row."""
 
     if width <= 0 or height <= 0:
         raise ValueError("Module width and height must be positive when deriving top ports")
@@ -117,20 +106,24 @@ def footprint_cells(x: int, y: int, width: int, height: int) -> frozenset[tuple[
 
 @dataclass(frozen=True, slots=True)
 class ModuleSpec:
+    """Canonical domain definition for every installable Base module."""
+
     key: str
     name: str
     width: int
     height: int
     mass: int
     module_type: ModuleType
-    authority: PlacementAuthority = PlacementAuthority.PLAYER
-    visit_weight: float = 0.1
-    ports: tuple[PortSpec, ...] = ()
+    authority: PlacementAuthority
+    visit_weight: float
+    ports: tuple[PortSpec, ...]
     transit_allowed: bool = True
     vertical_connectivity: bool = False
     max_count: int | None = None
 
     def __post_init__(self) -> None:
+        if not self.key or not self.name:
+            raise ValueError("Module key and name must be non-empty")
         if self.width <= 0 or self.height <= 0:
             raise ValueError(f"Invalid module size for {self.key}: {self.width}x{self.height}")
         if self.mass < 0:
@@ -156,21 +149,11 @@ class ModuleSpec:
             if port.side is PortSide.RIGHT and port.cell_x != self.width - 1:
                 raise ValueError(f"RIGHT port {self.key}.{port.name} must use the rightmost cell")
 
-    @property
-    def mandatory(self) -> bool:
-        """Compatibility/readability property for baseline SYSTEM modules."""
-
-        return self.authority is PlacementAuthority.SYSTEM
-
-    @property
-    def configurable(self) -> bool:
-        """Only PLAYER modules may be configured by the user."""
-
-        return self.authority is PlacementAuthority.PLAYER
-
 
 @dataclass(frozen=True, slots=True)
 class ModuleInstance:
+    """Required SYSTEM/PLAYER module before a concrete placement is chosen."""
+
     instance_id: str
     spec: ModuleSpec
 
@@ -200,37 +183,6 @@ class ModulePlacement:
     def cells(self) -> frozenset[tuple[int, int]]:
         return footprint_cells(self.x, self.y, self.width, self.height)
 
-    @property
-    def kind(self) -> str:
-        """Deprecated utility compatibility alias; use ``module_key`` in new code."""
-
-        return self.module_key
-
-
-# Transitional public alias. New code should use ModulePlacement; keeping Placement avoids
-# breaking existing integrations while Stage 1 migrates terminology.
-Placement = ModulePlacement
-
-
-def UtilityPlacement(
-    kind: str,
-    x: int,
-    y: int,
-    width: int = 2,
-    height: int = 1,
-) -> ModulePlacement:
-    """Deprecated constructor returning the unified ModulePlacement type.
-
-    Kept temporarily for callers of the pre-Stage-1 API. Runtime solver code should create
-    Corridor/Elevator placements from their ModuleSpec entries instead.
-    """
-
-    if kind not in {"corridor", "elevator"}:
-        raise ValueError(f"Unsupported utility kind: {kind}")
-    if width != 2 or height != 1:
-        raise ValueError(f"Utility {kind} must use the fixed 2x1 footprint")
-    return ModulePlacement(f"{kind}@{x},{y}", kind, x, y, width, height)
-
 
 def resolve_ports(module: ModulePlacement, spec: ModuleSpec) -> tuple[ResolvedPort, ...]:
     """Resolve floor-relative module ports into absolute top-origin Base-grid coordinates."""
@@ -248,8 +200,6 @@ def resolve_ports(module: ModulePlacement, spec: ModuleSpec) -> tuple[ResolvedPo
     result: list[ResolvedPort] = []
     for port in spec.ports:
         cell_x = module.x + port.cell_x
-        # PortSpec.cell_y is floor-relative (0 = floor), while ModulePlacement.y/world y is
-        # top-origin and grows downward. Convert explicitly at this boundary.
         world_y_offset = module.height - 1 - port.cell_y
         cell_y = module.y + world_y_offset
         edge_x = module.x if port.side is PortSide.LEFT else module.x + module.width
@@ -279,8 +229,6 @@ class BaseGeometry:
     note: str = ""
 
     def __post_init__(self) -> None:
-        # BaseGeometry is also used by custom/imported grids, so its tier identifier is
-        # deliberately extensible. Only player-facing PlanRequest is restricted to I-IV.
         if isinstance(self.tier, bool) or not isinstance(self.tier, int) or self.tier <= 0:
             raise ValueError("Base geometry tier must be a positive integer")
         if self.width <= 0 or self.height <= 0:
@@ -339,10 +287,11 @@ class PlanRequest:
 
 @dataclass(slots=True)
 class PlanResult:
+    """Auditable solver result over one unified list of installed modules."""
+
     status: str
     base: BaseGeometry
-    rooms: list[ModulePlacement] = field(default_factory=list)
-    utilities: list[ModulePlacement] = field(default_factory=list)
+    modules: list[ModulePlacement] = field(default_factory=list)
     objective_value: float | None = None
     attempts: int = 0
     message: str = ""
@@ -370,12 +319,6 @@ class PlanResult:
     global_objective_optimum_proven: bool = False
 
     @property
-    def modules(self) -> tuple[ModulePlacement, ...]:
-        """All installed module placements, independent of placement authority."""
-
-        return (*self.rooms, *self.utilities)
-
-    @property
     def used_cells(self) -> set[tuple[int, int]]:
         cells: set[tuple[int, int]] = set()
         for module in self.modules:
@@ -384,7 +327,7 @@ class PlanResult:
 
 
 def expand_instances(specs: Iterable[ModuleSpec], counts: dict[str, int]) -> list[ModuleInstance]:
-    """Expand SYSTEM and PLAYER module specs into required instances.
+    """Expand exactly-one SYSTEM modules plus requested PLAYER modules.
 
     SOLVER modules deliberately produce no instances here: their multiplicity belongs to the
     optimization model rather than player input.
@@ -394,7 +337,7 @@ def expand_instances(specs: Iterable[ModuleSpec], counts: dict[str, int]) -> lis
     spec_by_key = {spec.key: spec for spec in spec_list}
     unknown = sorted(set(counts) - set(spec_by_key))
     if unknown:
-        raise ValueError(f"Unknown room keys: {', '.join(unknown)}")
+        raise ValueError(f"Unknown module keys: {', '.join(unknown)}")
 
     for key, requested in counts.items():
         spec = spec_by_key[key]
