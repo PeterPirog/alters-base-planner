@@ -5,7 +5,12 @@ import pytest
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.distance import evaluate_distances
 from alters_base_planner.global_objective_oracle import solve_global_reference_objective
-from alters_base_planner.models import BaseGeometry, ModuleInstance, ModulePlacement, footprint_cells
+from alters_base_planner.models import (
+    BaseGeometry,
+    ModuleInstance,
+    ModulePlacement,
+    footprint_cells,
+)
 
 
 def _base(width: int, height: int) -> BaseGeometry:
