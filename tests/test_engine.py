@@ -19,7 +19,7 @@ from alters_base_planner.models import (
 )
 
 
-def test_base_tiers_grow_but_exact_masks_remain_provisional() -> None:
+def test_base_tiers_grow_and_validated_masks_keep_expected_capacities() -> None:
     areas = []
     expected_capacities = {1: 300, 2: 450, 3: 700, 4: 800}
     for tier in (1, 2, 3, 4):
@@ -27,7 +27,7 @@ def test_base_tiers_grow_but_exact_masks_remain_provisional() -> None:
         assert base.blocked_cells
         assert base.blocked_cells <= base.allowed_cells
         assert base.organics_capacity == expected_capacities[tier]
-        assert base.verified is False
+        assert base.verified is True
         areas.append(len(base.buildable_cells))
     assert areas == sorted(areas)
     assert len(set(areas)) == 4
@@ -143,6 +143,18 @@ def test_programmatic_recycler_limit_is_rejected() -> None:
             PlanRequest(
                 tier=4,
                 room_counts={"recycler": 2},
+                time_limit_s=0.1,
+                max_layout_attempts=1,
+            )
+        )
+
+
+def test_programmatic_rapidium_ark_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="rapidium_ark allows at most 5"):
+        solve_plan(
+            PlanRequest(
+                tier=4,
+                room_counts={"rapidium_ark": 6},
                 time_limit_s=0.1,
                 max_layout_attempts=1,
             )
