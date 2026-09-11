@@ -44,16 +44,14 @@ def _module(
     vertical_connectivity: bool = False,
     max_count: int | None = None,
 ) -> ModuleSpec:
-    # Standard LEFT/RIGHT floor ports are derived directly from module width:
-    # LEFT=(0,0), RIGHT=(width-1,0). Only verified exceptions need height.
     ports = top_ports(width, height) if top_access else floor_ports(width)
     return ModuleSpec(
-        key,
-        name,
-        width,
-        height,
-        mass,
-        module_type,
+        key=key,
+        name=name,
+        width=width,
+        height=height,
+        mass=mass,
+        module_type=module_type,
         authority=authority,
         visit_weight=_w(key),
         ports=ports,
@@ -64,7 +62,6 @@ def _module(
 
 
 SYSTEM = PlacementAuthority.SYSTEM
-PLAYER = PlacementAuthority.PLAYER
 SOLVER = PlacementAuthority.SOLVER
 
 MODULES: tuple[ModuleSpec, ...] = (
@@ -143,11 +140,20 @@ MODULES: tuple[ModuleSpec, ...] = (
     ),
 )
 
-MODULE_BY_KEY = {m.key: m for m in MODULES}
-SYSTEM_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.SYSTEM)
-PLAYER_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.PLAYER)
-SOLVER_MODULES = tuple(m for m in MODULES if m.authority is PlacementAuthority.SOLVER)
+MODULE_BY_KEY = {module.key: module for module in MODULES}
+SYSTEM_MODULES = tuple(
+    module for module in MODULES if module.authority is PlacementAuthority.SYSTEM
+)
+PLAYER_MODULES = tuple(
+    module for module in MODULES if module.authority is PlacementAuthority.PLAYER
+)
+SOLVER_MODULES = tuple(
+    module for module in MODULES if module.authority is PlacementAuthority.SOLVER
+)
 
-# Backward-compatible collection names used by config/UI code.
-MANDATORY_MODULES = SYSTEM_MODULES
-CONFIGURABLE_MODULES = PLAYER_MODULES
+if len(MODULE_BY_KEY) != len(MODULES):
+    raise RuntimeError("Module catalog contains duplicate keys")
+if set(USAGE_WEIGHTS) != set(MODULE_BY_KEY):
+    missing = sorted(set(MODULE_BY_KEY) - set(USAGE_WEIGHTS))
+    extra = sorted(set(USAGE_WEIGHTS) - set(MODULE_BY_KEY))
+    raise RuntimeError(f"Usage-weight catalog mismatch; missing={missing}, extra={extra}")
