@@ -1,16 +1,61 @@
 import pytest
 
-from alters_base_planner.catalog import MANDATORY_MODULES, MODULE_BY_KEY, MODULES, USAGE_WEIGHTS
-from alters_base_planner.models import Placement, PortSide, floor_ports, resolve_ports
+from alters_base_planner.catalog import (
+    MANDATORY_MODULES,
+    MODULE_BY_KEY,
+    MODULES,
+    PLAYER_MODULES,
+    SOLVER_MODULES,
+    SYSTEM_MODULES,
+    USAGE_WEIGHTS,
+)
+from alters_base_planner.models import (
+    ModulePlacement,
+    Placement,
+    PlacementAuthority,
+    PortSide,
+    UtilityPlacement,
+    floor_ports,
+    resolve_ports,
+)
 
 
 def test_module_keys_are_unique() -> None:
     assert len(MODULE_BY_KEY) == len(MODULES)
 
 
-def test_utility_modules_are_not_user_configurable() -> None:
-    assert "corridor" not in MODULE_BY_KEY
-    assert "elevator" not in MODULE_BY_KEY
+def test_authority_partitions_cover_catalog_without_overlap() -> None:
+    system = {module.key for module in SYSTEM_MODULES}
+    player = {module.key for module in PLAYER_MODULES}
+    solver = {module.key for module in SOLVER_MODULES}
+
+    assert system | player | solver == set(MODULE_BY_KEY)
+    assert not (system & player)
+    assert not (system & solver)
+    assert not (player & solver)
+    assert all(module.authority is PlacementAuthority.SYSTEM for module in SYSTEM_MODULES)
+    assert all(module.authority is PlacementAuthority.PLAYER for module in PLAYER_MODULES)
+    assert all(module.authority is PlacementAuthority.SOLVER for module in SOLVER_MODULES)
+
+
+def test_solver_utilities_are_modules_but_not_user_configurable() -> None:
+    assert {module.key for module in SOLVER_MODULES} == {"corridor", "elevator"}
+    for key in ("corridor", "elevator"):
+        spec = MODULE_BY_KEY[key]
+        assert spec.authority is PlacementAuthority.SOLVER
+        assert spec.configurable is False
+        assert (spec.width, spec.height, spec.mass) == (2, 1, 2)
+        assert spec.visit_weight == 0.0
+    assert MODULE_BY_KEY["elevator"].vertical_connectivity is True
+    assert MODULE_BY_KEY["corridor"].vertical_connectivity is False
+
+
+def test_legacy_utility_constructor_returns_unified_module_placement() -> None:
+    utility = UtilityPlacement("corridor", 4, 2)
+    assert isinstance(utility, ModulePlacement)
+    assert utility.module_key == "corridor"
+    assert utility.kind == "corridor"
+    assert utility.cells == frozenset({(4, 2), (5, 2)})
 
 
 def test_known_dimensions() -> None:
@@ -70,7 +115,15 @@ def test_one_by_one_room_has_two_logical_ports_on_same_physical_cell() -> None:
 
 
 def test_normal_modules_match_width_derived_floor_ports() -> None:
-    for key in ("quantum_computer", "small_storage", "large_storage", "materializer", "workshop"):
+    for key in (
+        "quantum_computer",
+        "small_storage",
+        "large_storage",
+        "materializer",
+        "workshop",
+        "corridor",
+        "elevator",
+    ):
         module = MODULE_BY_KEY[key]
         assert module.ports == floor_ports(module.width)
 
@@ -93,6 +146,7 @@ def test_mandatory_story_modules_include_kitchen_and_womb() -> None:
     keys = {m.key for m in MANDATORY_MODULES}
     assert "kitchen" in keys
     assert "womb" in keys
+    assert all(module.authority is PlacementAuthority.SYSTEM for module in MANDATORY_MODULES)
 
 
 def test_every_module_has_gameplay_usage_weight() -> None:
@@ -108,3 +162,5 @@ def test_baseline_usage_weight_priorities() -> None:
     assert MODULE_BY_KEY["large_storage"].visit_weight == 0.0
     assert MODULE_BY_KEY["womb"].visit_weight == 0.1
     assert MODULE_BY_KEY["quantum_computer"].visit_weight == 0.1
+    assert MODULE_BY_KEY["corridor"].visit_weight == 0.0
+    assert MODULE_BY_KEY["elevator"].visit_weight == 0.0
