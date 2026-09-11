@@ -4,6 +4,7 @@ from ortools.sat.python import cp_model
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.integrated_hard_solver import (
     StaticInfeasibilityError,
+    compile_fixed_layout_hard_model,
     compile_integrated_hard_model,
     enumerate_placement_options,
     extract_integrated_solution,
@@ -129,6 +130,21 @@ def test_integrated_model_selects_minimum_stacked_elevator_chain() -> None:
         ("elevator", 4, 0),
         ("elevator", 4, 1),
     ]
+
+
+def test_fixed_layout_model_prunes_utility_anchors_overlapping_fixed_rooms() -> None:
+    base = _base(10, 1)
+    rooms = (
+        _placement("airlock-1", "airlock", 0, 0),
+        _placement("workshop-1", "workshop", 6, 0),
+    )
+
+    compiled = compile_fixed_layout_hard_model(base, rooms)
+
+    assert [anchor.anchor for anchor in compiled.utility_anchors] == [(4, 0)]
+    assert set(compiled.variables.utility_active) == {(4, 0)}
+    assert set(compiled.variables.corridor) == {(4, 0)}
+    assert set(compiled.variables.elevator) == {(4, 0)}
 
 
 def test_fixed_layout_solver_finds_stacked_elevators_without_greedy_routing() -> None:
