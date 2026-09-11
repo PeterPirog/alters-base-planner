@@ -16,20 +16,20 @@ PLAYER  = optional modules whose exact counts come from the user
 SOLVER  = Corridor/Elevator infrastructure selected by optimization
 ```
 
-Corridor and Elevator are already canonical module types in the catalogue and in result geometry.
+Corridor and Elevator are canonical module types in the catalogue and in result geometry.
 
-The **active solver is still transitional**:
+The active solver now uses an **exact hard-feasibility decomposition**:
 
 ```text
-CP-SAT SYSTEM/PLAYER placement
-        -> deterministic Corridor/Elevator post-router
-        -> exact graph validation and distance evaluation
+CP-SAT SYSTEM/PLAYER room-packing master
+        -> exact CP-SAT Corridor/Elevator connectivity subproblem
+        -> exact graph distance evaluation
         -> exact F ranking of examined connected candidates
 ```
 
-Therefore returned layouts are currently **best-known feasible layouts under the configured search**, not proven global optima over the complete joint placement/routing problem.
+For every examined fixed room packing, the infrastructure subproblem decides Corridor/Elevator occupancy, shared no-overlap, explicit port attachment, stacked-Elevator vertical edges, non-transit behaviour, Airlock-rooted connectivity and the absence of floating utilities. If that subproblem returns `INFEASIBLE`, no legal Corridor/Elevator network exists for that fixed packing under the accepted hard model.
 
-The next architectural milestone is Stage 2: wire solver-managed Corridor/Elevator placement and Airlock-rooted connectivity into the optimization domain, using the existing `hard_constraints.py` CP-SAT foundation instead of deepening the greedy router.
+This removes the old deterministic greedy post-router from correctness. It does **not** yet prove the global gameplay optimum: the Stage-2 subproblem returns one hard-feasible infrastructure witness, while Stage 3 must optimize the true distance objective `F` over infrastructure alternatives and supply valid bounds/proofs. Consequently current layouts remain **best-known feasible layouts under the configured search**, and `global_objective_optimum_proven` remains false.
 
 See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth and `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract.
 
@@ -283,7 +283,7 @@ The planner generates PNG/SVG plans from the selected exact Base mask.
 
 The rendering distinguishes unavailable/core/buildable cells, module types, Corridors and Elevators. One y-grid cell is rendered twice as tall as one x-grid cell.
 
-The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current transitional architecture it has not.
+The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current Stage-2 hard-feasibility architecture, global objective optimality is still not proven.
 
 ## Player configuration
 
@@ -394,7 +394,7 @@ A current feasible result has:
 global_objective_optimum_proven = false
 ```
 
-until the complete joint problem (or exact decomposition with valid bounds) establishes a proof.
+until the complete joint objective problem (or exact decomposition with valid objective bounds) establishes a proof.
 
 ## Development
 
@@ -410,8 +410,8 @@ CI runs both commands on Python 3.11, 3.12 and 3.13.
 ```text
 Stage 0  data/contract stabilization           COMPLETE / maintain
 Stage 1  unified Module domain                 COMPLETE / maintain
-Stage 2  integrated hard feasibility           NEXT
-Stage 3  exact objective integration           planned
+Stage 2  exact hard-feasibility decomposition  COMPLETE / maintain
+Stage 3  exact objective integration           NEXT
 Stage 4  benchmark/performance suite           planned
 Stage 5  user-facing planning quality          planned
 Stage 6  progression-aware mobile Base         deferred
