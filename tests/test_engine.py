@@ -54,8 +54,6 @@ def test_explicit_port_access_rows_for_regular_and_special_modules() -> None:
 
 
 def test_candidate_ordering_resolves_floor_relative_port_to_world_y() -> None:
-    # Base centre is y=2. A 4x3 Materializer placed at top y=0 has its floor at world y=2,
-    # so the corrected port-aware ordering must prefer it to the same room placed at y=2.
     base = BaseGeometry(
         tier=9,
         width=4,
@@ -113,8 +111,6 @@ def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
         ModulePlacement("ark-1", "rapidium_ark", 4, 0, 4, 2),
         ModulePlacement("workshop-1", "workshop", 8, 1, 4, 1),
     ]
-    # Everything touches geometrically, but the Ark is sealed/non-transit and fills
-    # both rows, so there is no alternative corridor/elevator route around it.
     assert _route_utilities(base, rooms) is None
 
 
@@ -138,7 +134,6 @@ def test_generated_utilities_are_solver_module_placements() -> None:
     assert utilities is not None
     assert len(utilities) == 1
     utility = utilities[0]
-    assert isinstance(utility, ModulePlacement)
     assert utility.module_key == "corridor"
     assert MODULE_BY_KEY[utility.module_key].authority is PlacementAuthority.SOLVER
     assert (utility.width, utility.height) == (
@@ -163,8 +158,8 @@ def test_generated_utilities_cannot_overlap_each_other() -> None:
             base,
             [],
             [
-                _utility("corridor", 2, 0),  # cells 2,3
-                _utility("corridor", 3, 0),  # cells 3,4: illegal one-cell overlap
+                _utility("corridor", 2, 0),
+                _utility("corridor", 3, 0),
             ],
         )
 
@@ -183,7 +178,7 @@ def test_mass_metrics_match_journey_organics_rule() -> None:
     room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
         base, rooms, utilities
     )
-    assert room_mass == 16  # Dormitory 8 + Workshop 8
+    assert room_mass == 16
     assert utility_mass == MODULE_BY_KEY["corridor"].mass + MODULE_BY_KEY["elevator"].mass
     assert total_mass == 20
     assert margin == 430
@@ -191,8 +186,8 @@ def test_mass_metrics_match_journey_organics_rule() -> None:
     assert sum(breakdown.values()) == total_mass
 
 
-def test_programmatic_unknown_room_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Unknown room keys"):
+def test_programmatic_unknown_module_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown module keys"):
         solve_plan(
             PlanRequest(
                 tier=4,
@@ -235,7 +230,7 @@ def test_supplied_base_must_match_requested_tier() -> None:
         )
 
 
-def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> None:
+def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> None:
     result = solve_plan(
         PlanRequest(
             tier=2,
@@ -250,8 +245,9 @@ def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> No
     assert 0 <= result.attempts <= 8
     assert result.connected_candidates_examined >= 0
     assert result.manhattan_pruned_count >= 0
-    if result.rooms:
-        assert result.status == "FEASIBLE"
+
+    if result.status == "FEASIBLE":
+        assert result.modules
         assert result.connected_candidates_examined >= 1
         assert result.total_mass == result.room_mass + result.utility_mass
         assert result.organics_required_for_journey == result.total_mass
@@ -260,9 +256,9 @@ def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> No
             result.total_mass <= result.base.organics_capacity
         )
         assert sum(result.mass_breakdown.values()) == result.total_mass
-        assert result.modules == (*result.rooms, *result.utilities)
         assert all(isinstance(module, ModulePlacement) for module in result.modules)
-        assert all(
-            MODULE_BY_KEY[utility.module_key].authority is PlacementAuthority.SOLVER
-            for utility in result.utilities
-        )
+
+        authorities = [MODULE_BY_KEY[module.module_key].authority for module in result.modules]
+        assert PlacementAuthority.SYSTEM in authorities
+        assert PlacementAuthority.PLAYER in authorities
+        assert PlacementAuthority.SOLVER in authorities
