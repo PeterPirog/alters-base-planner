@@ -77,7 +77,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         ModuleType.CORE,
         authority=SYSTEM,
     ),
-    _module("kitchen", "Kitchen", 5, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module("kitchen", "Kitchen", 5, 1, 4, ModuleType.WORK, authority=SYSTEM),
     _module("machinery", "Machinery", 4, 1, 4, ModuleType.CORE, authority=SYSTEM),
     _module(
         "quantum_computer",
@@ -88,7 +88,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         ModuleType.CORE,
         authority=SYSTEM,
     ),
-    _module("womb", "The Womb", 5, 1, 4, ModuleType.CORE, authority=SYSTEM),
+    _module("womb", "The Womb", 5, 1, 4, ModuleType.WORK, authority=SYSTEM),
     _module("ark_sarcophagus", "Ark Sarcophagus", 4, 2, 13, ModuleType.STORAGE),
     _module("contemplation_room", "Contemplation Room", 6, 1, 20, ModuleType.WELLBEING),
     _module("dormitory", "Dormitory", 6, 1, 8, ModuleType.WELLBEING),
