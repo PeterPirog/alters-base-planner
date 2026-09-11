@@ -7,11 +7,10 @@ from pathlib import Path
 import streamlit as st
 
 from alters_base_planner.base import builtin_base
-from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.config import load_plan_config
 from alters_base_planner.engine import solve_plan
-from alters_base_planner.models import resolve_ports
-from alters_base_planner.render import average_pair_distance, render_png, render_svg
+from alters_base_planner.render import render_png, render_svg
+from alters_base_planner.serialization import average_pair_distance, result_payload
 
 st.set_page_config(page_title="The Alters Base Planner", layout="wide")
 st.title("The Alters Base Planner")
@@ -48,8 +47,8 @@ if st.button("Optimize layout", type="primary"):
 
     if not base.verified:
         st.warning(
-            f"{base.source} is an editable provisional Base {base.tier} mask. "
-            "Correct 0/1/X cells in the CSV when more accurate game geometry is available."
+            f"{base.source} is not marked as verified geometry. Review its 0/1/X cells "
+            "before treating the generated layout as game-exact."
         )
 
     c1, c2, c3, c4 = st.columns(4)
@@ -122,78 +121,7 @@ if st.button("Optimize layout", type="primary"):
 
         svg = render_svg(result)
         st.download_button("Download layout SVG", svg, "alters-layout.svg", "image/svg+xml")
-        st.json(
-            {
-                "base": {
-                    "tier": result.base.tier,
-                    "width": result.base.width,
-                    "height": result.base.height,
-                    "organics_capacity": result.base.organics_capacity,
-                    "geometry_source": result.base.source,
-                    "geometry_verified": result.base.verified,
-                    "geometry_note": result.base.note,
-                },
-                "optimization": {
-                    "objective": "sum_i_lt_j(weight_i * weight_j * distance_i_j)",
-                    "weighted_distance_score": result.weighted_distance_score,
-                    "modified_manhattan_lower_bound": result.modified_manhattan_lower_bound,
-                    "average_pair_distance": average_pair_distance(result),
-                    "weighted_average_pair_distance": result.normalized_weighted_distance,
-                    "global_objective_optimum_proven": result.global_objective_optimum_proven,
-                    "elevator_module_count": result.elevator_module_count,
-                    "elevator_shaft_count": result.elevator_shaft_count,
-                    "corridor_count": result.corridor_count,
-                    "room_usage_weights": result.room_usage_weights,
-                    "pairwise_distances": result.pairwise_distances,
-                    "pairwise_contributions": result.pairwise_contributions,
-                },
-                "journey": {
-                    "room_mass": result.room_mass,
-                    "utility_mass": result.utility_mass,
-                    "total_base_mass": result.total_mass,
-                    "organics_required": result.organics_required_for_journey,
-                    "organics_tank_capacity": result.base.organics_capacity,
-                    "capacity_margin": result.organics_capacity_margin,
-                    "travel_feasible_at_full_tank": result.travel_feasible_at_full_tank,
-                    "mass_breakdown": result.mass_breakdown,
-                },
-                "rooms": [
-                    {
-                        "instance_id": room.instance_id,
-                        "module_key": room.module_key,
-                        "mass": MODULE_BY_KEY[room.module_key].mass,
-                        "usage_weight": MODULE_BY_KEY[room.module_key].visit_weight,
-                        "x": room.x,
-                        "y": room.y,
-                        "width": room.width,
-                        "height": room.height,
-                        "ports": [
-                            {
-                                "name": port.name,
-                                "side": port.side.value,
-                                "cell": [port.cell_x, port.cell_y],
-                                "edge": [port.edge_x, port.edge_y],
-                                "utility_anchor": list(port.utility_anchor),
-                            }
-                            for port in resolve_ports(room, MODULE_BY_KEY[room.module_key])
-                        ],
-                    }
-                    for room in result.rooms
-                ],
-                "utilities": [
-                    {
-                        "kind": utility.kind,
-                        "mass": 2,
-                        "distance_cost": 1,
-                        "x": utility.x,
-                        "y": utility.y,
-                        "width": utility.width,
-                        "height": utility.height,
-                    }
-                    for utility in result.utilities
-                ],
-            }
-        )
+        st.json(result_payload(result))
 
 st.info(
     "Base geometry is editable in `src/alters_base_planner/data/base-size1.csv` ... "
