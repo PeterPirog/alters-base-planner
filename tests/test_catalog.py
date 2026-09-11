@@ -18,6 +18,7 @@ def test_known_dimensions() -> None:
     assert (MODULE_BY_KEY["quantum_computer"].width, MODULE_BY_KEY["quantum_computer"].height) == (4, 2)
     assert (MODULE_BY_KEY["radiation_repulsor"].width, MODULE_BY_KEY["radiation_repulsor"].height) == (2, 3)
     assert (MODULE_BY_KEY["kitchen"].width, MODULE_BY_KEY["kitchen"].height) == (5, 1)
+    assert (MODULE_BY_KEY["park_with_bench"].width, MODULE_BY_KEY["park_with_bench"].height) == (6, 1)
 
 
 def test_verified_mass_values_and_special_connectivity() -> None:
@@ -34,9 +35,7 @@ def test_verified_mass_values_and_special_connectivity() -> None:
 
 def test_verified_count_limits() -> None:
     assert MODULE_BY_KEY["recycler"].max_count == 1
-    # Public Rapidium Ark sources/version reports conflict on precise count ceilings;
-    # do not invent a hard limit until game-exact data is available.
-    assert MODULE_BY_KEY["rapidium_ark"].max_count is None
+    assert MODULE_BY_KEY["rapidium_ark"].max_count == 5
 
 
 def test_every_module_defines_extreme_left_and_right_ports() -> None:
