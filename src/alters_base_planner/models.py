@@ -293,6 +293,9 @@ class PlanResult:
     base: BaseGeometry
     modules: list[ModulePlacement] = field(default_factory=list)
     objective_value: float | None = None
+    objective_scale: int = 1
+    scaled_objective_value: int | None = None
+    scaled_modified_manhattan_lower_bound: int | None = None
     attempts: int = 0
     message: str = ""
     room_mass: int = 0
@@ -312,6 +315,7 @@ class PlanResult:
     pairwise_contributions: dict[str, float] = field(default_factory=dict)
     room_usage_weights: dict[str, float] = field(default_factory=dict)
     connected_candidates_examined: int = 0
+    fixed_objective_optima_proven: int = 0
     manhattan_pruned_count: int = 0
     search_time_s: float = 0.0
     time_limit_reached: bool = False
