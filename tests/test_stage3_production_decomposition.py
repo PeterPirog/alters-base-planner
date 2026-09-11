@@ -35,7 +35,10 @@ def _rank(result) -> tuple[int, int, int, int]:
 
 
 def test_production_decomposition_matches_global_reference_and_proves_optimum() -> None:
-    base = _base(8)
+    # Width 10 admits direct adjacency, exactly-one-Corridor layouts and physically legal
+    # room packings that cannot be connected by a 2x1 utility. The production decomposition
+    # must account for all of them and still match the independently exhaustive global oracle.
+    base = _base(10)
     instances = _instances()
 
     reference = solve_global_reference_objective(
@@ -47,7 +50,7 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum() 
         base,
         instances,
         time_limit_s=5.0,
-        max_layout_attempts=10,
+        max_layout_attempts=50,
     )
 
     assert reference.status == "OPTIMAL"
@@ -58,7 +61,8 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum() 
     assert result.global_objective_optimum_proven is True
     assert result.search_exhausted is True
     assert result.time_limit_reached is False
-    assert result.fixed_objective_optima_proven == result.attempts == 2
+    assert result.fixed_objective_optima_proven >= 1
+    assert result.attempts > result.fixed_objective_optima_proven
     assert result.objective_scale == 10
     assert result.scaled_objective_value == 0
     assert result.scaled_modified_manhattan_lower_bound == 0
