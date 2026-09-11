@@ -18,7 +18,7 @@ SOLVER  = Corridor/Elevator infrastructure selected by optimization
 
 Corridor and Elevator are canonical module types in the catalogue and in result geometry.
 
-The active solver now uses an **exact hard-feasibility decomposition**:
+The active production solver uses an **exact hard-feasibility decomposition**:
 
 ```text
 CP-SAT SYSTEM/PLAYER room-packing master
@@ -29,9 +29,25 @@ CP-SAT SYSTEM/PLAYER room-packing master
 
 For every examined fixed room packing, the infrastructure subproblem decides Corridor/Elevator occupancy, shared no-overlap, explicit port attachment, stacked-Elevator vertical edges, non-transit behaviour, Airlock-rooted connectivity and the absence of floating utilities. If that subproblem returns `INFEASIBLE`, no legal Corridor/Elevator network exists for that fixed packing under the accepted hard model.
 
-This removes the old deterministic greedy post-router from correctness. It does **not** yet prove the global gameplay optimum: the Stage-2 subproblem returns one hard-feasible infrastructure witness, while Stage 3 must optimize the true distance objective `F` over infrastructure alternatives and supply valid bounds/proofs. Consequently current layouts remain **best-known feasible layouts under the configured search**, and `global_objective_optimum_proven` remains false.
+This removes the old deterministic greedy post-router from correctness. It does **not** yet prove the global gameplay optimum: the production Stage-2 subproblem returns one hard-feasible infrastructure witness.
 
-See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth and `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract.
+Stage 3 is now under exact-objective validation. The repository contains:
+
+```text
+fixed_objective_oracle.py
+    exhaustive exact infrastructure optimization for one fixed room packing
+
+fixed_flow_objective_solver.py
+    exact CP-SAT pair-flow formulation for one fixed room packing
+    cross-validated against the exhaustive oracle
+
+global_objective_oracle.py
+    exhaustive tiny-instance room + infrastructure proof oracle
+```
+
+The pair-flow formulation jointly selects Corridor/Elevator infrastructure and minimizes the exact weighted travel objective before the accepted mass/Elevator/Corridor tie-breakers. It is a scalable candidate, not yet the production correctness boundary. Production `global_objective_optimum_proven` therefore remains false until the room-packing master and exact objective subproblem are integrated with valid global bounds/proof semantics.
+
+See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth, `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract, and `docs/STAGE3_OBJECTIVE_ORACLE.md` for the Stage-3 validation architecture.
 
 ## Validated Base I-IV geometry
 
@@ -219,207 +235,78 @@ d(A,B) = 6
 
 A four-module Elevator stack contributes 4 when all four Elevator modules are traversed.
 
+Exact path distances are computed with Dijkstra or an equivalent non-negative shortest-path algorithm.
+
 ## Modified Manhattan lower bound
 
-Modified Manhattan is used only as an admissible search lower bound, never as final distance.
+Modified Manhattan is used only as an admissible lower bound/search aid, never as the final distance.
 
-Same floor:
+For same-floor endpoint ports:
 
 ```text
 horizontal_lb = ceil(abs(edge_x_a - edge_x_b) / 2)
 ```
 
-Different floors use external 2x1 utility anchors:
-
-```text
-horizontal_lb = ceil(abs(anchor_x_a - anchor_x_b) / 2)
-vertical_lb   = abs(edge_y_a - edge_y_b) + 1
-```
-
-The weighted bound is:
-
-```text
-F_LB = sum_{i<j} w_i * w_j * LB(i,j)
-```
-
-The implementation must maintain:
+Cross-floor bounds use external utility anchors and the required vertical Elevator span. The invariant
 
 ```text
 F_LB <= F_exact
 ```
 
-A violation is an internal solver/model error and fails fast.
+is checked. A violation is an internal solver/model error and must fail fast.
 
-## Base Mass and journey feasibility
-
-Every structurally feasible layout reports:
+## Mass and journey feasibility
 
 ```text
-room_mass
-utility_mass
-total_base_mass
-organics_required_for_journey
-organics_tank_capacity
-capacity_margin
-journey feasibility
-mass_breakdown
-```
-
-For the mobile Base:
-
-```text
+total_base_mass = sum(mass of every installed Module)
 organics_required_for_journey = total_base_mass
+journey_feasible = structural_feasible and total_base_mass <= organics_capacity
 ```
 
-Structural feasibility and journey feasibility are separate. A layout can be geometrically/topologically valid yet too heavy to travel. Such a layout must never be labelled journey-feasible.
+Structural feasibility and journey feasibility are reported separately. A physically valid but overweight layout may be useful diagnostically, but it must not be reported as journey-feasible.
 
-Room size/mass evidence and source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
+## Output
 
-## Example graphical result
+The planner emits auditable machine-readable and graphical output including:
 
-The planner generates PNG/SVG plans from the selected exact Base mask.
+- module placements and authorities;
+- resolved ports;
+- Corridor/Elevator geometry;
+- exact pairwise distances and contributions;
+- exact weighted score of the returned layout;
+- modified-Manhattan lower bound;
+- Base Mass and Organics requirement;
+- structural and journey feasibility;
+- solver status and whether a global optimum was actually proven;
+- PNG/SVG visualization.
 
-![Example optimized base layout](docs/example-layout.svg)
-
-The rendering distinguishes unavailable/core/buildable cells, module types, Corridors and Elevators. One y-grid cell is rendered twice as tall as one x-grid cell.
-
-The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current Stage-2 hard-feasibility architecture, global objective optimality is still not proven.
-
-## Player configuration
-
-Edit `config/plan.json`:
-
-```json
-{
-  "$schema": "./plan.schema.json",
-  "base_tier": 2,
-  "rooms": {
-    "workshop": 1,
-    "research_lab": 1,
-    "dormitory": 1,
-    "infirmary": 1,
-    "greenhouse": 1,
-    "refinery": 1,
-    "small_storage": 2,
-    "social_room": 1,
-    "recycler": 1
-  },
-  "solver": {
-    "objective": "weighted_pair_distance",
-    "time_limit_s": 15,
-    "max_layout_attempts": 30
-  },
-  "output": {
-    "svg": "layout.svg",
-    "png": "layout.png",
-    "json": "layout.json"
-  }
-}
-```
-
-SYSTEM modules are injected automatically. Corridor/Elevator counts are solver outputs.
-
-## Run from a fresh clone
-
-Python **3.11 or newer** is required.
-
-### Windows PowerShell
-
-Because this repository is private, clone it while authenticated to GitHub:
-
-```powershell
-git clone https://github.com/PeterPirog/alters-base-planner.git
-cd alters-base-planner
-
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-```
-
-Run:
-
-```powershell
-python -m alters_base_planner.cli config/plan.json
-```
-
-Equivalent installed command:
-
-```powershell
-alters-base-planner config/plan.json
-```
-
-Configured output normally includes:
+## Roadmap
 
 ```text
-layout.png
-layout.svg
-layout.json
+Stage 0  geometry/data baseline and exact distance evaluator             COMPLETE / maintain
+Stage 1  unified Module + SYSTEM/PLAYER/SOLVER domain                   COMPLETE / maintain
+Stage 2  exact hard-feasibility room/infrastructure decomposition        COMPLETE / maintain
+Stage 3  exact objective integration with valid global proof semantics   IN PROGRESS
+Stage 4  benchmark suite, known optima, performance/regression metrics   NEXT / overlaps Stage 3
+Stage 5  progression/game-state support                                  PLANNED
+Stage 6  The Last Variable only when exact source data are sufficient    DEFERRED
 ```
 
-Open the PNG from PowerShell:
-
-```powershell
-Start-Process .\layout.png
-```
-
-### Linux / macOS
-
-```bash
-git clone https://github.com/PeterPirog/alters-base-planner.git
-cd alters-base-planner
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-python -m alters_base_planner.cli config/plan.json
-```
-
-## Streamlit UI
-
-```bash
-python -m streamlit run app.py
-```
-
-The UI uses the same configuration and solver semantics as the CLI, clearly separates structural/journey feasibility, and exposes the auditable result JSON.
-
-## Result JSON
-
-The JSON output persists the exact objective for the returned candidate, modified-Manhattan lower bound, pairwise distances/contributions, resolved ports, usage weights, installed solver infrastructure, geometry provenance, mass metrics, journey feasibility and search/optimality diagnostics.
-
-A current feasible result has:
-
-```text
-global_objective_optimum_proven = false
-```
-
-until the complete joint objective problem (or exact decomposition with valid objective bounds) establishes a proof.
+The current Stage-3 pair-flow solver proves the full accepted lexicographic objective for one fixed room packing when all four CP-SAT phases return `OPTIMAL`. The next milestone is to benchmark it against the exhaustive reference suite and integrate it with the room-packing master while propagating valid bounds. Only a complete master/subproblem proof may set the production global-optimum flag.
 
 ## Development
+
+Install development dependencies and run:
 
 ```bash
 ruff check .
 pytest -q
 ```
 
-CI runs both commands on Python 3.11, 3.12 and 3.13.
+CI runs on supported Python versions and must remain green. Correct tests must not be weakened merely to make CI pass.
 
-## Roadmap summary
+## Scope and evidence
 
-```text
-Stage 0  data/contract stabilization           COMPLETE / maintain
-Stage 1  unified Module domain                 COMPLETE / maintain
-Stage 2  exact hard-feasibility decomposition  COMPLETE / maintain
-Stage 3  exact objective integration           NEXT
-Stage 4  benchmark/performance suite           planned
-Stage 5  user-facing planning quality          planned
-Stage 6  progression-aware mobile Base         deferred
-Stage 7  The Last Variable DLC                 deferred until exact data
-```
+This planner targets the original mobile Base. `The Last Variable` introduces materially different topology/mechanics and is deliberately deferred until exact geometry/module data are sufficient.
 
-The DLC is intentionally not approximated with mobile Base geometry.
-
-## License / trademarks
-
-This is an unofficial fan tool. *The Alters* and related trademarks belong to their respective owners.
+Game data provenance, conflicts and modelling decisions are recorded in `docs/ROOM_DATA_AUDIT.md` and `docs/BASE_GEOMETRY_REFERENCE.md`. Community strategies may inform heuristics, but only sufficiently verified mechanics become hard constraints.
