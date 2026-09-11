@@ -19,7 +19,11 @@ from .models import (
     expand_instances,
     footprint_cells,
 )
-from .objective import ScaledObjective, build_scaled_objective, scaled_modified_manhattan_lower_bound
+from .objective import (
+    ScaledObjective,
+    build_scaled_objective,
+    scaled_modified_manhattan_lower_bound,
+)
 
 
 @dataclass(frozen=True, slots=True)
