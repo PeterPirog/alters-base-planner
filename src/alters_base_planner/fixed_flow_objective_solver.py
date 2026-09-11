@@ -294,6 +294,19 @@ def _solve_phase(
     return status, max(0.0, monotonic() - solve_started)
 
 
+def _validate_tie_phase_status(status: int, phase: str) -> None:
+    """Reject solver states that contradict an already-proven feasible optimum prefix."""
+
+    if status == cp_model.MODEL_INVALID:
+        raise AssertionError(f"CP-SAT rejected the fixed pair-flow model during {phase}")
+    if status == cp_model.INFEASIBLE:
+        raise AssertionError(
+            "Previously proven fixed pair-flow optimum became infeasible during " f"{phase}"
+        )
+    if status not in (cp_model.UNKNOWN, cp_model.FEASIBLE, cp_model.OPTIMAL):
+        raise AssertionError(f"Unexpected CP-SAT status during {phase}: {status}")
+
+
 def _result_from_solution(
     *,
     status: str,
@@ -458,6 +471,7 @@ def solve_fixed_layout_flow_objective(
         phase="mass tie-breaker",
     )
     cp_sat_solve_time_s += phase_solve_time
+    _validate_tie_phase_status(status, "mass tie-breaker")
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
@@ -486,6 +500,7 @@ def solve_fixed_layout_flow_objective(
         phase="Elevator tie-breaker",
     )
     cp_sat_solve_time_s += phase_solve_time
+    _validate_tie_phase_status(status, "Elevator tie-breaker")
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
@@ -514,6 +529,7 @@ def solve_fixed_layout_flow_objective(
         phase="Corridor tie-breaker",
     )
     cp_sat_solve_time_s += phase_solve_time
+    _validate_tie_phase_status(status, "Corridor tie-breaker")
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
     if status != cp_model.OPTIMAL:
