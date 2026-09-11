@@ -1,12 +1,23 @@
 # Room data audit
 
-Verification date: 2026-09-08.
+Verification date: 2026-09-11.
 
 This file records the evidence behind the planner's dimensions, masses, connectivity behavior, count limits and default traffic weights.
 
+## 2026-09-11 project spatial-analysis update
+
+The project received a detailed mobile-Base spatial analysis containing explicit Base I-IV matrices and a consolidated room table. The four repository CSV masks were compared with the supplied matrices and already matched them exactly, including the asymmetric 4x2 fixed core. Geometry provenance and exact coordinates are now recorded in `docs/BASE_GEOMETRY_REFERENCE.md`.
+
+The supplied analysis also resolves two catalogue decisions used by the planner:
+
+- `Park with Bench = 6x1`;
+- `Rapidium Ark` has a global maximum of `5` modules and remains non-transit.
+
+Where that supplied project reference conflicts with older/current public aggregate pages, the project reference is used for planner behavior and the conflict is retained here for auditability.
+
 ## Dimension and mass audit
 
-The current catalogue was checked against the current public The Alters module table and independent room guides. The planner dimensions match the strongest current direct module data. The mass values also match except for one known public-source conflict: `Dormitory`.
+The current catalogue was checked against the supplied spatial analysis, current public The Alters module tables and independent room guides. The mass values match the strongest available data except for one known public-source conflict: `Dormitory`.
 
 | Module | Size | Planner mass | Audit status |
 |---|---:|---:|---|
@@ -28,7 +39,7 @@ The current catalogue was checked against the current public The Alters module t
 | Large Storage | 8x2 | 140 | verified |
 | Materializer | 4x3 | 24 | verified |
 | Medium Storage | 8x1 | 65 | verified |
-| Park with Bench | 5x1 | 20 | current direct module page/table; secondary guides conflict with 6x1 |
+| Park with Bench | 6x1 | 20 | project spatial-analysis reference; some public tables conflict with 5x1 |
 | Personal Cabin | 3x1 | 10 | verified |
 | Radiation Repulsor | 2x3 | 16 | verified |
 | Rapidium Ark | 4x2 | 32 | verified |
@@ -55,13 +66,21 @@ Do not change this to 40 merely to mirror the current wiki aggregate; first veri
 
 ### Size-source conflicts
 
-Some older/community tables disagree with the current direct module pages:
+Some community/public tables disagree on a few room sizes:
 
 - older Steam logistics tables have reported `Kitchen 4x1` and `Greenhouse 6x1`;
-- QM Games / DigitalPhablet currently report `Park with Bench 6x1`;
-- the current direct Fandom module table/page reports `Kitchen 5x1`, `Greenhouse 8x1`, and `Park with Bench 5x1`.
+- some current direct wiki tables/pages report `Park with Bench 5x1`;
+- the 2026-09-11 project spatial analysis reports `Kitchen 5x1`, `Greenhouse 8x1`, and `Park with Bench 6x1`.
 
-For current planner geometry the direct/current module data is used. Future clean in-game measurements or extracted data should override public wiki data.
+Planner decision:
+
+```text
+Kitchen = 5x1
+Greenhouse = 8x1
+Park with Bench = 6x1
+```
+
+Future clean in-game measurements or extracted game data may supersede this project reference, but a change must update this audit and regression tests at the same time.
 
 ## Connectivity and transit audit
 
@@ -69,7 +88,7 @@ Connectivity is a hard gameplay rule and must remain independent of traffic weig
 
 ### Standard access ports
 
-Current room-layout guides consistently describe ordinary modules as connecting horizontally at their lower-left and lower-right corners. The planner therefore derives normal local ports directly from width:
+Current room-layout guides and the supplied project analysis describe ordinary modules as connecting horizontally at their lower-left and lower-right corners. The planner therefore derives normal local ports directly from width:
 
 ```text
 LEFT  = (0, 0)
@@ -80,7 +99,7 @@ where local `y=0` is the room floor.
 
 ### Radiation Repulsor
 
-The current direct module page explicitly states that, unlike most multi-floor modules, Radiation Repulsor connects at the **top**, not the bottom. A detailed Steam optimization guide independently describes Radiation Repulsor as `Blocks Traffic`.
+The supplied analysis and current direct module page state that, unlike most multi-floor modules, Radiation Repulsor connects at the **top**, not the bottom. A detailed Steam optimization guide independently describes Radiation Repulsor as `Blocks Traffic`.
 
 Planner decision:
 
@@ -93,16 +112,18 @@ This exception materially affects legal routing and must not be approximated as 
 
 ### Rapidium Ark
 
-Player reports consistently distinguish two rules:
+The supplied analysis and player reports distinguish three rules:
 
 1. Rapidium Ark must still be connected to the Base like other modules;
-2. the player cannot walk through it, so it cannot be used as a bridge to modules on the opposite side.
+2. the player cannot walk through it, so it cannot be used as a bridge to modules on the opposite side;
+3. the mobile-Base model permits at most five Ark modules in total.
 
 Planner decision:
 
 ```text
 standard floor ports
 transit_allowed = false
+max_count = 5
 still subject to Airlock-rooted connectivity
 ```
 
@@ -110,7 +131,7 @@ The hard connectivity validator therefore requires at least one Ark port to be r
 
 ### Corridor and Elevator
 
-Current module tables/guides agree that both occupy `2x1` and have mass `2`. Corridor provides horizontal connection. Elevator is the vertical travel module and connects stacked levels. They remain solver-managed: the player does not provide their counts.
+Current module tables/guides and the supplied project analysis agree that both occupy `2x1` and have mass `2`. Corridor provides horizontal connection. Elevator is the vertical travel module and connects stacked levels. They remain solver-managed: the player does not provide their counts.
 
 ## Progression-dependent mandatory state
 
@@ -122,17 +143,17 @@ A future progression-aware planner should replace this static assumption with ex
 
 ## Module-count limits
 
-Count ceilings are hard gameplay rules only when sufficiently verified. They are represented by `ModuleSpec.max_count`; `None` means that the planner deliberately has no verified static hard ceiling, not that the game necessarily allows an unlimited number.
+Count ceilings are hard gameplay rules only when sufficiently supported. They are represented by `ModuleSpec.max_count`; `None` means that the planner deliberately has no static hard ceiling.
 
 Current decisions:
 
 | Module | Planner max_count | Decision |
 |---|---:|---|
-| Recycler | 1 | enforced; current direct page states only one can be built for the base |
-| Rapidium Ark | none | direct source confirms tier limits; secondary guides report one per Base Expansion / maximum five, but the exact tier-to-count mapping is not represented by the current request model |
+| Recycler | 1 | enforced from current direct module data |
+| Rapidium Ark | 5 | enforced as global mobile-Base ceiling from the 2026-09-11 project spatial analysis |
 | Radiation Repulsor | none | no universal static ceiling encoded; guides discuss scaling count with Base size rather than one simple global limit |
 
-For Rapidium Ark, a single scalar `max_count` would be the wrong abstraction if the limit depends on progression/Base expansion. The correct future implementation is a tier/progression-dependent bound, not an invented universal number.
+A future progression-aware model may add tighter tier/Act-specific Rapidium Ark bounds. The current `5` is a global ceiling, so adding such tighter bounds later will refine rather than contradict this constraint.
 
 ## Public references
 
