@@ -40,6 +40,15 @@ class IntegratedHardModel:
     placement_by_option_id: dict[str, ModulePlacement]
 
 
+@dataclass(frozen=True, slots=True)
+class FixedInfrastructureResult:
+    """Exact hard-feasibility result for one already-fixed SYSTEM/PLAYER packing."""
+
+    status: str
+    utilities: tuple[ModulePlacement, ...] = ()
+    time_limit_reached: bool = False
+
+
 def _validate_instances(instances: tuple[ModuleInstance, ...], root_instance_id: str) -> None:
     if not instances:
         raise ValueError("Integrated hard model requires at least one module instance")
@@ -127,23 +136,14 @@ def enumerate_utility_anchors(base: BaseGeometry) -> tuple[UtilityAnchorSpec, ..
     return tuple(anchors)
 
 
-def compile_integrated_hard_model(
+def _build_compiled_model(
     base: BaseGeometry,
-    instances: tuple[ModuleInstance, ...],
+    placement_options: tuple[PlacementOptionSpec, ...],
+    placement_by_option_id: dict[str, ModulePlacement],
     *,
-    root_instance_id: str = "airlock-1",
+    root_instance_id: str,
 ) -> IntegratedHardModel:
-    """Compile canonical module data into the exact Stage-2 hard-feasibility model.
-
-    This is intentionally not yet the production optimization entry point. It establishes a
-    tested, auditable adapter that Stage 2 can wire into ``solve_plan()`` without translating
-    real modules into a separate hand-written geometry model.
-    """
-
-    _validate_instances(instances, root_instance_id)
-    placement_options, placement_by_option_id = enumerate_placement_options(base, instances)
     utility_anchors = enumerate_utility_anchors(base)
-
     model = cp_model.CpModel()
     variables = build_hard_constraint_layer(
         model,
@@ -163,6 +163,109 @@ def compile_integrated_hard_model(
         utility_anchors=utility_anchors,
         placement_by_option_id=placement_by_option_id,
     )
+
+
+def compile_integrated_hard_model(
+    base: BaseGeometry,
+    instances: tuple[ModuleInstance, ...],
+    *,
+    root_instance_id: str = "airlock-1",
+) -> IntegratedHardModel:
+    """Compile canonical module data into the exact Stage-2 hard-feasibility model.
+
+    This is intentionally not yet the production optimization entry point. It establishes a
+    tested, auditable adapter that Stage 2 can wire into ``solve_plan()`` without translating
+    real modules into a separate hand-written geometry model.
+    """
+
+    _validate_instances(instances, root_instance_id)
+    placement_options, placement_by_option_id = enumerate_placement_options(base, instances)
+    return _build_compiled_model(
+        base,
+        placement_options,
+        placement_by_option_id,
+        root_instance_id=root_instance_id,
+    )
+
+
+def compile_fixed_layout_hard_model(
+    base: BaseGeometry,
+    rooms: tuple[ModulePlacement, ...],
+    *,
+    root_instance_id: str = "airlock-1",
+) -> IntegratedHardModel:
+    """Compile one fixed SYSTEM/PLAYER packing and leave only infrastructure undecided.
+
+    This is the exact Stage-2 decomposition boundary used to replace greedy routing: room
+    placement may still come from the transitional master model, but Corridor/Elevator hard
+    feasibility is decided by CP-SAT rather than by one deterministic path construction.
+    """
+
+    if not rooms:
+        raise ValueError("Fixed-layout hard model requires at least one room placement")
+
+    instance_ids = [room.instance_id for room in rooms]
+    if len(instance_ids) != len(set(instance_ids)):
+        raise ValueError("Fixed room placement instance IDs must be unique")
+    if root_instance_id not in set(instance_ids):
+        raise ValueError(f"Root instance {root_instance_id!r} is not present")
+
+    placement_options: list[PlacementOptionSpec] = []
+    placement_by_option_id: dict[str, ModulePlacement] = {}
+    occupied: set[tuple[int, int]] = set()
+
+    for room in rooms:
+        spec = MODULE_BY_KEY.get(room.module_key)
+        if spec is None:
+            raise ValueError(f"Unknown module key in fixed placement: {room.module_key}")
+        if spec.authority is PlacementAuthority.SOLVER:
+            raise ValueError(f"Fixed room packing contains SOLVER module {room.instance_id}")
+        if (room.width, room.height) != (spec.width, spec.height):
+            raise AssertionError(
+                f"Fixed placement {room.instance_id} footprint does not match ModuleSpec"
+            )
+        if not room.cells <= base.buildable_cells:
+            raise AssertionError(
+                f"Fixed placement {room.instance_id} leaves the buildable Base domain"
+            )
+        overlap = occupied & room.cells
+        if overlap:
+            raise AssertionError(
+                f"Fixed SYSTEM/PLAYER packing overlaps at cells {sorted(overlap)}"
+            )
+        occupied.update(room.cells)
+
+        option_id = f"fixed:{room.instance_id}"
+        placement_options.append(
+            PlacementOptionSpec(
+                option_id=option_id,
+                instance_id=room.instance_id,
+                module_key=room.module_key,
+                cells=room.cells,
+                ports=resolve_ports(room, spec),
+                transit_allowed=spec.transit_allowed,
+            )
+        )
+        placement_by_option_id[option_id] = room
+
+    compiled = _build_compiled_model(
+        base,
+        tuple(placement_options),
+        placement_by_option_id,
+        root_instance_id=root_instance_id,
+    )
+
+    # Search hint only: prefer inactive infrastructure first. This does not constrain
+    # correctness and does not introduce a competing gameplay objective.
+    for variable in compiled.variables.corridor.values():
+        compiled.model.add_hint(variable, 0)
+    for variable in compiled.variables.elevator.values():
+        compiled.model.add_hint(variable, 0)
+
+    validation_error = compiled.model.validate()
+    if validation_error:
+        raise AssertionError(f"Invalid fixed-layout hard-feasibility model: {validation_error}")
+    return compiled
 
 
 def extract_integrated_solution(
@@ -208,3 +311,52 @@ def extract_integrated_solution(
         )
 
     return selected
+
+
+def solve_fixed_layout_infrastructure(
+    base: BaseGeometry,
+    rooms: tuple[ModulePlacement, ...],
+    *,
+    time_limit_s: float,
+    root_instance_id: str = "airlock-1",
+) -> FixedInfrastructureResult:
+    """Prove/find infrastructure hard-feasibility for one fixed room packing.
+
+    No gameplay or utility-count objective is used here. A false-first hint merely guides the
+    SAT search toward sparse infrastructure; any returned network is hard-feasible. `INFEASIBLE`
+    means CP-SAT proved that no legal Corridor/Elevator network exists for the fixed packing.
+    """
+
+    if time_limit_s <= 0:
+        return FixedInfrastructureResult(status="TIME_LIMIT", time_limit_reached=True)
+
+    compiled = compile_fixed_layout_hard_model(
+        base,
+        rooms,
+        root_instance_id=root_instance_id,
+    )
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = 8
+    solver.parameters.max_time_in_seconds = max(0.001, float(time_limit_s))
+    status = solver.solve(compiled.model)
+
+    if status == cp_model.MODEL_INVALID:
+        raise AssertionError("CP-SAT rejected the fixed-layout hard-feasibility model")
+    if status == cp_model.UNKNOWN:
+        return FixedInfrastructureResult(status="TIME_LIMIT", time_limit_reached=True)
+    if status == cp_model.INFEASIBLE:
+        return FixedInfrastructureResult(status="INFEASIBLE")
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise AssertionError(f"Unexpected CP-SAT hard-feasibility status: {status}")
+
+    selected = extract_integrated_solution(solver, compiled)
+    utilities = tuple(
+        module
+        for module in selected
+        if MODULE_BY_KEY[module.module_key].authority is PlacementAuthority.SOLVER
+    )
+    return FixedInfrastructureResult(
+        status="FEASIBLE",
+        utilities=utilities,
+        time_limit_reached=status == cp_model.FEASIBLE,
+    )
