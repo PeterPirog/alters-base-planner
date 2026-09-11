@@ -87,7 +87,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Each benchmark record contains the end-to-end search/proof metrics:
+Benchmark schema version 3 records the end-to-end search/proof metrics:
 
 ```text
 status
@@ -99,6 +99,7 @@ room_packings_examined
 connected_candidates_examined
 fixed_objective_optima_proven
 manhattan_pruned_count
+incumbent_bound_pruned_count
 search_exhausted
 time_limit_reached
 global_objective_optimum_proven
@@ -110,6 +111,10 @@ total_mass
 elevator_module_count
 corridor_count
 ```
+
+`manhattan_pruned_count` counts room packings excluded before the fixed subproblem because their exact-integer admissible lower bound is strictly worse than the current incumbent primary objective.
+
+`incumbent_bound_pruned_count` counts packings for which the exact fixed pair-flow model, constrained by `scaled_F <= incumbent_scaled_F`, is proven infeasible. Such a packing cannot match or improve the incumbent primary objective. It is intentionally tracked separately from modified-Manhattan pruning because it is a stronger exact subproblem proof, not a heuristic or lower-bound estimate.
 
 Stage-4 fixed-subproblem instrumentation additionally records:
 
@@ -130,6 +135,26 @@ The `max_*` values are maxima across all exact fixed-packing subproblems attempt
 `fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and pair-flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside CP-SAT solve calls across the four objective phases. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, CP-SAT phases and exact evaluator work.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
+
+## Exact incumbent objective cut
+
+After the production decomposition has a feasible exact incumbent with scaled primary objective `B`, every later fixed-packing pair-flow subproblem is solved with the additional exact constraint:
+
+```text
+scaled_F <= B
+```
+
+The inequality is deliberately non-strict. A room packing with `scaled_F == B` must remain in the search because it may improve later lexicographic criteria:
+
+```text
+Base Mass -> Elevator count -> Corridor count
+```
+
+If CP-SAT proves the bounded fixed model infeasible, that packing cannot match or improve the current incumbent primary objective. It may be either structurally infeasible or structurally feasible with true minimum `scaled_F > B`; the production decomposition does not need to distinguish those cases for global optimization.
+
+This exclusion is proof-safe. If a packing cannot satisfy `scaled_F <= B`, it also cannot improve any later incumbent whose primary objective is smaller than or equal to `B`. Therefore these exclusions are valid contributors to a completed global proof.
+
+The cut does not change the accepted objective, hard constraints, exact distances or proof definition. It only transfers already-known exact incumbent information from the room-packing master into subsequent exact fixed subproblems.
 
 ## Wall-clock budget semantics
 
@@ -167,12 +192,12 @@ The opt-in benchmark workflow is deliberately separate from normal CI. Benchmark
 
 ## Stage-4 optimization discipline
 
-The benchmark and model-size instrumentation are now in place. The next performance changes should be chosen from measured evidence rather than assumption. Safe candidates remain:
+The benchmark and model-size instrumentation are now in place. Performance changes must remain mathematically exact and should be evaluated from measured evidence rather than timing anecdotes. Safe candidates include:
 
 - mathematically equivalent candidate-domain reduction;
 - stronger admissible lower bounds;
 - additional pure label/topology symmetry breaking;
 - indexed graph construction;
-- valid decomposition cuts.
+- proof-safe decomposition cuts such as the exact incumbent objective cut.
 
 Any reduction or cut must continue to match the exhaustive known-optimum reference cases before it is allowed into the production correctness boundary. No benchmark improvement is sufficient justification for weakening hard constraints, changing the accepted objective or suppressing incomplete-search diagnostics.
