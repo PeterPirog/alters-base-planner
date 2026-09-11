@@ -13,9 +13,9 @@ The planner has two layers:
 
 The normative model is in `docs/OPTIMIZATION_MODEL.md`.
 
-## Editable Base I-IV geometry
+## Validated Base I-IV geometry
 
-The four built-in base shapes are stored as separate CSV files:
+The four built-in mobile-Base shapes are stored as separate CSV files:
 
 ```text
 src/alters_base_planner/data/base-size1.csv
@@ -32,7 +32,16 @@ CSV semantics:
 X = immovable blocked/core cell
 ```
 
-Width and height are inferred from the CSV itself. The current masks remain provisional (`geometry_verified = false`) until calibrated against game-exact screenshots/assets.
+The supplied 2026-09-11 spatial analysis contains explicit Base I-IV matrices. The repository CSVs were compared with those matrices and already matched them exactly, including the asymmetric fixed 4x2 core. The built-in masks therefore report `geometry_verified = true` against that project reference.
+
+| Tier | Grid | Fixed core |
+|---|---:|---|
+| I | 22x12 | x=8..11, y=6..7 |
+| II | 26x14 | x=10..13, y=7..8 |
+| III | 30x16 | x=12..15, y=8..9 |
+| IV | 34x18 | x=14..17, y=9..10 |
+
+The CSV data remain the runtime source of truth. Do not symmetrize the masks or recenter the core. Detailed provenance and coordinate conventions are recorded in `docs/BASE_GEOMETRY_REFERENCE.md`.
 
 ## Explicit room ports
 
@@ -168,7 +177,8 @@ The solver enforces or validates:
 - one connected network rooted at Airlock;
 - non-transit terminal modules cannot be used as bridges;
 - all Corridors/Elevators belong to the access network;
-- continuous Elevator coverage across every used port-floor span.
+- continuous Elevator coverage across every used port-floor span;
+- verified module-count ceilings such as Recycler <= 1 and Rapidium Ark <= 5.
 
 For every adjacent floor pair `(y,y+1)`:
 
@@ -201,7 +211,7 @@ Corridor mass = 2. Elevator module mass = 2.
 
 Mass is not part of primary `F`; for equal `F`, lower mass may be used as a tie-breaker.
 
-Room size/mass evidence and known public-source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
+Room size/mass evidence and known source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
 
 ## Example graphical result
 
