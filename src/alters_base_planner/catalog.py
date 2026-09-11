@@ -82,7 +82,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     _module("large_storage", "Large Storage", 8, 2, 140, ModuleType.STORAGE),
     _module("materializer", "Materializer", 4, 3, 24, ModuleType.STORAGE),
     _module("medium_storage", "Medium Storage", 8, 1, 65, ModuleType.STORAGE),
-    _module("park_with_bench", "Park with Bench", 5, 1, 20, ModuleType.WELLBEING),
+    _module("park_with_bench", "Park with Bench", 6, 1, 20, ModuleType.WELLBEING),
     _module("personal_cabin", "Personal Cabin", 3, 1, 10, ModuleType.WELLBEING),
     _module(
         "radiation_repulsor",
@@ -102,6 +102,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         32,
         ModuleType.STORAGE,
         transit_allowed=False,
+        max_count=5,
     ),
     _module("recycler", "Recycler", 2, 1, 2, ModuleType.WELLBEING, max_count=1),
     _module("refinery", "Refinery", 4, 1, 8, ModuleType.WORK),
