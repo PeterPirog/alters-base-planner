@@ -321,6 +321,15 @@ class PlanResult:
     time_limit_reached: bool = False
     search_exhausted: bool = False
     global_objective_optimum_proven: bool = False
+    fixed_subproblem_count: int = 0
+    max_fixed_graph_nodes: int = 0
+    max_fixed_graph_arcs: int = 0
+    max_fixed_objective_pairs: int = 0
+    max_fixed_cp_sat_variables: int = 0
+    max_fixed_cp_sat_constraints: int = 0
+    fixed_model_build_time_s: float = 0.0
+    fixed_cp_sat_solve_time_s: float = 0.0
+    fixed_subproblem_time_s: float = 0.0
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:
