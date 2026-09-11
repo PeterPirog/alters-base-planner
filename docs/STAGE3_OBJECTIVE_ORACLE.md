@@ -1,19 +1,37 @@
-# Stage 3 exact-objective reference and validation architecture
+# Stage 3 exact-objective architecture and validation
 
-Status: **IN PROGRESS / production objective integration not complete**
+Status: **COMPLETE / harden and benchmark**
 
-The normative contracts remain:
+Normative contracts:
 
 1. `PROJECT_SYSTEM_REQUIREMENTS.md`;
 2. `docs/OPTIMIZATION_MODEL.md`.
 
-The Stage-3 components described here do not change game mechanics. Their role is to establish mathematically exact targets, validate scalable formulations against those targets, and only then move a proven formulation into the production solver.
+Stage 3 does not change game mechanics. It moves the accepted exact travel objective and lexicographic tie-breakers into the production optimization boundary while retaining independently exhaustive reference solvers for correctness validation.
 
-## Purpose
+## Production architecture
 
-Stage 2 made hard feasibility exact for a fixed SYSTEM/PLAYER room packing, but returned only one legal Corridor/Elevator witness. Different legal infrastructure networks can have different exact travel objective values and different lexicographic tie-break values.
+The production solver now uses an exact decomposition:
 
-Stage 3 must optimize:
+```text
+CP-SAT SYSTEM/PLAYER room-packing master
+        -> exact integer modified-Manhattan lower bound
+        -> exact fixed-packing pair-flow CP-SAT
+             Corridor/Elevator selection
+             hard connectivity
+             exact weighted travel F
+             mass -> Elevators -> Corridors
+        -> independent Dijkstra evaluator cross-check
+        -> exact lexicographic incumbent comparison
+```
+
+The decomposition is exact when its configured search completes. A time limit or layout-attempt limit preserves best-known semantics and prevents a global optimality claim.
+
+## Why Stage 3 was necessary
+
+Stage 2 made hard feasibility exact for a fixed SYSTEM/PLAYER room packing, but returned one arbitrary legal Corridor/Elevator witness. Different legal infrastructure networks can have different travel costs and tie-break values.
+
+Stage 3 optimizes the complete accepted order:
 
 ```text
 1. exact F
@@ -22,76 +40,75 @@ Stage 3 must optimize:
 4. Corridor module count
 ```
 
-across both infrastructure alternatives and room placements.
+across infrastructure alternatives and, through the master, across room placements.
 
-The repository now has two exact reference layers plus one scalable exact fixed-packing candidate:
+## Exact integer objective representation
+
+Catalogue traffic weights are decimal planner parameters. `objective.py` converts their documented decimal form through exact rational arithmetic to a shared integer objective representation:
 
 ```text
-fixed_objective_oracle.py
-    exhaustive exact infrastructure objective for one fixed room packing
-
-fixed_flow_objective_solver.py
-    exact pair-flow CP-SAT objective for one fixed room packing
-    validated against the exhaustive fixed oracle
-
-global_objective_oracle.py
-    exhaustive tiny-instance room packing search
-        -> fixed objective oracle
-        -> admissible packing lower-bound pruning
-        -> end-to-end global proof
+scaled_F = scale * F
 ```
 
-The exhaustive oracles are intentionally small-instance correctness machinery. The pair-flow formulation is designed to be more scalable, but it is not yet the production `solve_plan()` correctness boundary.
+Every positive-weight room pair receives an integer coefficient. The same `ScaledObjective` is used for:
 
-## Fixed-packing objective oracle
+- CP-SAT fixed-packing optimization;
+- Dijkstra objective reconstruction;
+- room-packing incumbent comparison;
+- modified-Manhattan lower-bound pruning.
 
-`src/alters_base_planner/fixed_objective_oracle.py` takes one already-fixed SYSTEM/PLAYER room packing.
+This removes floating-point epsilon logic from the mathematical proof boundary.
 
-For that packing it reuses the Stage-2 CP-SAT hard-feasibility model and repeatedly solves it to enumerate **distinct Corridor/Elevator selections**. Flow and sink assignments are not part of the enumeration identity; after one infrastructure selection is evaluated, a no-good cut excludes exactly that Corridor/Elevator assignment regardless of alternative flow witnesses.
+For a room packing, pruning is legal only when:
 
-For each hard-feasible infrastructure selection the oracle:
+```text
+scaled_F_LB > incumbent_scaled_F
+```
+
+Equality is deliberately retained because equal primary `F` can still improve mass, Elevator count or Corridor count.
+
+The fail-fast invariant remains:
+
+```text
+scaled_F_LB <= scaled_F_exact
+```
+
+## Fixed-packing exhaustive oracle
+
+`src/alters_base_planner/fixed_objective_oracle.py` is the independently exhaustive reference for one fixed room packing.
+
+It enumerates distinct Corridor/Elevator selections allowed by the Stage-2 hard model. For every hard-feasible selection it:
 
 1. extracts canonical `ModulePlacement` objects;
-2. evaluates the exact installed-module graph with the accepted Dijkstra semantics;
-3. computes exact weighted pair objective `F`;
-4. verifies `F_LB <= F_exact` using the modified-Manhattan lower bound;
-5. ranks the candidate lexicographically by exact `F`, total mass, Elevator count and Corridor count.
+2. evaluates the exact installed-module graph with Dijkstra;
+3. computes exact weighted `F`;
+4. validates the modified-Manhattan lower bound;
+5. ranks by `F`, total mass, Elevator count, Corridor count.
 
-The search is exact only when all distinct hard-feasible infrastructure selections have been exhausted.
+Its role is correctness validation, not production-scale solving.
 
-For a fixed room packing:
+## Fixed-packing pair-flow production solver
 
-- `OPTIMAL` with `objective_optimum_proven=true` means no unexamined Corridor/Elevator selection remains and the best exact lexicographic candidate is proven;
-- `FEASIBLE` means an incumbent exists but the infrastructure-selection domain was not exhausted;
-- `INFEASIBLE` means no legal infrastructure network exists for that fixed packing;
-- `TIME_LIMIT` means no feasible infrastructure incumbent was obtained before the budget expired.
+`src/alters_base_planner/fixed_flow_objective_solver.py` is the production exact objective subproblem.
 
-## Exact fixed-layout domain reduction
+For one fixed room packing it reuses the Stage-2 hard-feasibility variables and adds one binary unit flow for every positive-weight unordered room pair over a conditional directed travel graph.
 
-For a fixed room packing, a Corridor/Elevator anchor intersecting an occupied SYSTEM/PLAYER cell is impossible under H3 no-overlap. `compile_fixed_layout_hard_model()` therefore removes such anchors before CP-SAT variable creation.
-
-This reduction is exact rather than heuristic: every removed anchor would otherwise be forced inactive by the hard occupancy constraints. The non-fixed integrated room-placement model retains the full utility domain because room occupancy is still undecided there.
-
-## Exact pair-flow fixed-packing formulation
-
-`src/alters_base_planner/fixed_flow_objective_solver.py` is the first scalable Stage-3 candidate that optimizes the accepted objective without enumerating every infrastructure selection.
-
-For one fixed room packing it reuses the exact Stage-2 hard model and adds a conditional directed travel graph. Every positive-weight unordered room pair receives one binary unit flow. The graph reproduces the accepted distance semantics:
+The graph reproduces the accepted distance rules:
 
 ```text
 direct compatible endpoint adjacency = 0
-enter/traverse one selected Corridor  = +1
-enter/traverse one selected Elevator  = +1
-cross intermediate transit room       = +width(room)
-non-transit room                       = no internal side-to-side arc
-vertical edge                          = adjacent same-x Elevators only
+one selected Corridor                  = +1
+one selected Elevator                  = +1
+intermediate transit-room crossing     = +width(room)
+non-transit room                        = no internal side-to-side arc
+vertical movement                       = adjacent same-x Elevators only
 ```
 
-Arc use is conditioned on the same Corridor/Elevator selection variables used by the hard-feasibility model. The infrastructure decision is therefore shared by all room-pair flows rather than optimized independently per pair.
+All pair flows share the same Corridor/Elevator decision variables. Infrastructure is therefore optimized jointly rather than independently for each pair.
 
-Traffic weights are converted from their decimal catalogue representation to exact rational values and then to integer coefficients using the least common multiple of denominators. CP-SAT therefore minimizes an integer-scaled value exactly equivalent to the documented weighted `F`; no floating-point objective approximation is introduced inside the model.
+### Lexicographic proof phases
 
-The accepted lexicographic objective is solved in four proof-preserving phases under one global wall-clock budget:
+The fixed-packing solver uses four sequential CP-SAT optimization phases under one remaining global deadline:
 
 ```text
 1. minimize scaled exact F
@@ -100,98 +117,123 @@ The accepted lexicographic objective is solved in four proof-preserving phases u
 4. constrain Elevator count to its proven optimum; minimize Corridor count
 ```
 
-For a fixed room packing the non-SOLVER room mass is constant, so minimizing utility mass is exactly equivalent to minimizing total Base mass in the second phase.
+Non-SOLVER room mass is constant for a fixed packing, so minimizing utility mass is exactly equivalent to minimizing total Base mass in phase 2.
 
-A phase is marked proven only when CP-SAT returns `OPTIMAL`. If the budget expires after a primary incumbent or after only some tie-break phases are proven, the result remains `FEASIBLE` and the unproven lexicographic suffix is not claimed optimal.
+A phase is proven only when CP-SAT returns `OPTIMAL`. `lexicographic_optimum_proven=true` requires completion of all four phases. A feasible incumbent produced before all phases are proven remains best-known for that packing.
 
 ### Independent evaluator cross-check
 
-The pair-flow model is not allowed to define its own travel semantics by assertion alone. Every returned infrastructure witness is independently evaluated by the existing Dijkstra graph evaluator.
+Every returned infrastructure witness is evaluated independently by the existing Dijkstra graph evaluator.
 
-After CP-SAT proves the primary optimum, the solver reconstructs the exact scaled objective from `DistanceMetrics.pairwise_distances`. Any disagreement between the pair-flow optimum and the Dijkstra result raises an internal assertion. The same check is repeated after the lexicographic tie-break phases to ensure they did not alter the proven primary optimum.
+The solver reconstructs the exact scaled objective from `DistanceMetrics.pairwise_distances`. A disagreement between pair-flow CP-SAT and Dijkstra raises an internal assertion. The primary objective is checked again after tie-break phases so later phases cannot silently change the proven `F` optimum.
 
-This fail-fast boundary is intentional: model/evaluator disagreement is a correctness defect, not normal infeasibility.
+Model/evaluator disagreement is an internal correctness defect, never ordinary infeasibility.
 
-### Current validation boundary
+## Production room-packing master
 
-`tests/test_fixed_flow_objective_solver.py` cross-validates the pair-flow result against the exhaustive `fixed_objective_oracle.py`. Current cases cover:
+`engine._solve_instances()` is the exact decomposition boundary used by `solve_plan()`.
 
-- direct zero-cost room adjacency;
-- Corridor-versus-Elevator tie-breaking for one required utility position;
-- a two-Corridor horizontal route;
-- a continuous two-level Elevator chain;
-- exact intermediate transit-room width cost;
-- proof that Rapidium Ark cannot be used as a non-transit bridge;
-- a zero-weight Recycler that still remains in the hard-connected Base network while creating no objective pair;
-- fixed-layout infrastructure infeasibility;
-- zero-budget timeout semantics without false proof flags.
+The master:
 
-The full repository CI currently exercises these cases together with the existing suite on Python 3.11, 3.12 and 3.13. Ruff and all 100 tests pass at this validation point.
+1. enumerates legal non-overlapping SYSTEM/PLAYER room packings with CP-SAT;
+2. removes only pure label permutations between identical module instances;
+3. computes the shared exact integer objective definition;
+4. computes the admissible exact integer modified-Manhattan bound;
+5. prunes only a strict `scaled_F_LB > incumbent_scaled_F`;
+6. calls the exact pair-flow fixed-packing optimizer for every unpruned packing;
+7. ranks proven/best-known candidates by scaled F, total Base mass, Elevator count and Corridor count;
+8. excludes each examined packing with a no-good before continuing.
 
-Passing these cases is necessary but not by itself sufficient to promote the pair-flow solver to production. Before production adoption it must also be benchmarked on a broader known-optimum suite and integrated with the room-packing master without weakening global proof semantics.
+The centre/port-proximity master objective remains only a search-order surrogate. It does not affect legality or the accepted gameplay objective.
 
-## Global tiny-instance objective oracle
+## Global proof semantics
 
-`src/alters_base_planner/global_objective_oracle.py` extends the proof boundary across room placements for deliberately small benchmark instances.
-
-It:
-
-1. enumerates every non-overlapping SYSTEM/PLAYER room packing against the exact Base mask;
-2. removes only pure label permutations between identical module instances by requiring their placement coordinates to be strictly ordered;
-3. computes the admissible modified-Manhattan `F_LB` for each packing;
-4. processes packings in increasing lower-bound order;
-5. calls the fixed-packing exact objective oracle for every packing that cannot be safely pruned;
-6. prunes a packing only when `F_LB > incumbent_exact_F`;
-7. does **not** prune equality because equal `F` may still improve mass/Elevator/Corridor tie-breakers;
-8. reports a global proof only after every physical packing is exactly resolved, proven infrastructure-infeasible, or excluded by that strict admissible bound.
-
-For this tiny-instance reference solver, `global_objective_optimum_proven=true` therefore has literal mathematical meaning over both room placements and infrastructure choices.
-
-This does **not** change production `PlanResult.global_objective_optimum_proven`, which must remain false until the scalable production solver can establish the same proof boundary for its configured search.
-
-## Independent exhaustive regression checks
-
-`tests/test_fixed_objective_oracle.py` independently brute-forces tiny utility-state spaces using `None / Corridor / Elevator` choices on free utility anchors. Current cases cover:
-
-- direct room adjacency with exact objective 0 and no utilities;
-- Corridor-versus-Elevator tie-breaking when travel cost and mass are equal;
-- a two-module horizontal route with overlapping candidate anchors;
-- fixed-packing infrastructure infeasibility.
-
-`tests/test_global_objective_oracle.py` adds end-to-end checks across room placement and infrastructure selection. It independently brute-forces both room coordinates and utility states for a tiny one-floor Base, compares the complete accepted lexicographic result with the global reference oracle, verifies strict lower-bound pruning, verifies proof of global infeasibility, and locks identical-instance symmetry breaking.
-
-These cases are intentionally tiny so exhaustive enumeration is a reliable test oracle rather than another heuristic.
-
-## Proof semantics
-
-The global reference oracle may return:
+Production sets:
 
 ```text
-OPTIMAL
-FEASIBLE
-INFEASIBLE
-TIME_LIMIT
+global_objective_optimum_proven = true
 ```
 
-`OPTIMAL` with `global_objective_optimum_proven=true` requires a complete mathematical proof over its enumerated room-placement domain and all legal infrastructure alternatives. A time-limited incumbent is always reported without a global proof.
+only if all of the following hold:
 
-The global lower bound is propagated from the next unresolved packing's admissible bound and the best exactly resolved incumbent. Once all remaining packing lower bounds are strictly above the incumbent exact `F`, the remaining suffix is safely excluded.
+- a feasible incumbent exists;
+- the room-packing master is exhausted;
+- every unpruned fixed packing was solved to its full lexicographic optimum or proven infrastructure-infeasible;
+- every pruned packing was excluded by the strict admissible exact integer lower bound;
+- no global time limit interrupted the search;
+- no layout-attempt limit interrupted the search.
 
-The fixed pair-flow solver has its own narrower proof boundary. `lexicographic_optimum_proven=true` proves the complete accepted objective **for one fixed room packing only**. It must never be translated directly into production `global_objective_optimum_proven=true`.
+Therefore a proof means that every physical room packing in the master domain is accounted for mathematically. A configured budget can prevent a proof without invalidating the feasible incumbent.
 
-## Scalability limitation and next integration step
+The current public result status remains `FEASIBLE`; proof state is represented separately by `global_objective_optimum_proven` so structural feasibility and mathematical optimality are not conflated.
 
-The exhaustive reference solvers are deliberately exponential. They remain benchmark/correctness machinery, not production algorithms for full Base I-IV layouts.
+## Global tiny-instance oracle
 
-The pair-flow solver removes infrastructure-selection enumeration, but its model size grows with the product of weighted room pairs and conditional graph arcs. The next Stage-3 work must therefore measure model size and runtime rather than assuming scalability from formulation structure alone.
+`src/alters_base_planner/global_objective_oracle.py` remains the deliberately exponential end-to-end reference solver.
 
-The recommended integration path is:
+It independently enumerates room packings and uses the exhaustive fixed-packing oracle. It validates:
 
-1. extend the known-optimum benchmark suite across representative horizontal, vertical, transit and non-transit tiny instances;
-2. compare pair-flow objective, infrastructure signature and proof flags against the exhaustive oracle;
-3. record CP-SAT variable/constraint counts and wall-clock time;
-4. use pair-flow as the exact fixed-packing objective subproblem in a controlled master/decomposition path;
-5. propagate admissible room-packing lower bounds and fixed-subproblem proof status to the master;
-6. set production `global_objective_optimum_proven=true` only when every room packing is exactly resolved or safely excluded by a valid bound.
+- room-placement enumeration;
+- identical-instance symmetry breaking;
+- admissible strict lower-bound pruning;
+- fixed-packing infrastructure optimization;
+- complete global proof semantics.
 
-Any future domain reduction, cut or symmetry rule must remain mathematically safe and continue to match the reference oracles on known-optimum cases before becoming part of the production correctness boundary.
+It is not intended for full Base I-IV production workloads.
+
+## Validation coverage
+
+`tests/test_fixed_objective_oracle.py` independently brute-forces tiny utility-state spaces.
+
+`tests/test_fixed_flow_objective_solver.py` cross-validates pair-flow against the exhaustive fixed oracle for:
+
+- direct zero-cost adjacency;
+- Corridor-versus-Elevator tie-breaking;
+- one- and two-Corridor horizontal routes;
+- continuous vertical Elevator chains;
+- intermediate transit-room width;
+- Rapidium Ark non-transit behaviour;
+- zero-weight modules that remain hard-connected;
+- fixed-layout infeasibility;
+- timeout/proof semantics.
+
+`tests/test_global_objective_oracle.py` independently validates exhaustive global room + infrastructure optimization.
+
+`tests/test_stage3_production_decomposition.py` now cross-checks the production decomposition against the global exhaustive oracle on a tiny known-optimum instance and separately verifies that a layout-attempt limit suppresses a false global proof.
+
+At the Stage-3 production integration validation point, Ruff passes and the repository test suite reports **108 passing tests** on Python 3.11, 3.12 and 3.13.
+
+## Result audit contract
+
+Result JSON schema version 2 includes:
+
+```text
+objective_value
+exact_integer_objective.scale
+exact_integer_objective.scaled_value
+exact_integer_objective.scaled_modified_manhattan_lower_bound
+fixed_objective_optima_proven
+room_packings_examined
+connected_candidates_examined
+manhattan_pruned_count
+search_time_s
+time_limit_reached
+search_exhausted
+global_objective_optimum_proven
+```
+
+Together with pair distances, pair contributions, module placements and mass data, these fields make the proof state inspectable rather than implicit.
+
+## Remaining limitation: scalability, not mathematical semantics
+
+The exhaustive oracles are intentionally exponential. The production pair-flow formulation avoids infrastructure-selection enumeration, but model size grows with approximately the product of weighted room pairs and conditional travel-graph arcs.
+
+Stage 4 must therefore measure and improve performance without weakening exactness. Priority work:
+
+1. establish representative Tier I-IV benchmark configurations;
+2. record model size, fixed subproblem time, room packings examined, pruning rate, incumbent quality and proof completion;
+3. profile graph/model construction and remove avoidable scans;
+4. add mathematically safe candidate-domain reduction, symmetry breaking and bounds;
+5. retain the exhaustive oracles as regression references for every optimization change.
+
+A full-size run that times out remains useful as a best-known feasible solution, but it must never be described as globally optimal unless the proof conditions above were actually satisfied.
