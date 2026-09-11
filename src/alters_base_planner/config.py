@@ -5,14 +5,15 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog import CONFIGURABLE_MODULES, MANDATORY_MODULES, MODULE_BY_KEY
+from .catalog import CONFIGURABLE_MODULES, MANDATORY_MODULES, MODULE_BY_KEY, SOLVER_MODULES
 from .models import PlanRequest
 
 _CONFIGURABLE_KEYS = {m.key for m in CONFIGURABLE_MODULES}
 _MANDATORY_KEYS = {m.key for m in MANDATORY_MODULES}
-_SOLVER_MANAGED_KEYS = {"corridor", "corridors", "elevator", "elevators"}
+_SOLVER_KEYS = {m.key for m in SOLVER_MODULES}
+_SOLVER_MANAGED_KEYS = _SOLVER_KEYS | {f"{key}s" for key in _SOLVER_KEYS}
 _TOP_LEVEL_KEYS = {"$schema", "base_tier", "rooms", "solver", "output"}
-_SOLVER_KEYS = {"objective", "time_limit_s", "max_layout_attempts"}
+_SOLVER_CONFIG_KEYS = {"objective", "time_limit_s", "max_layout_attempts"}
 _OUTPUT_KEYS = {"svg", "png", "json"}
 
 
@@ -113,7 +114,7 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
     solver = raw.get("solver", {})
     if not isinstance(solver, dict):
         raise ValueError("solver must be a JSON object")
-    _reject_unknown_keys(solver, _SOLVER_KEYS, "solver")
+    _reject_unknown_keys(solver, _SOLVER_CONFIG_KEYS, "solver")
 
     objective = solver.get("objective", "weighted_pair_distance")
     if objective != "weighted_pair_distance":
