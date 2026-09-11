@@ -30,7 +30,12 @@
         "park_with_bench": {"$ref": "#/$defs/count"},
         "personal_cabin": {"$ref": "#/$defs/count"},
         "radiation_repulsor": {"$ref": "#/$defs/count"},
-        "rapidium_ark": {"$ref": "#/$defs/count"},
+        "rapidium_ark": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Maximum five Rapidium Ark modules in the mobile-base model."
+        },
         "recycler": {
           "type": "integer",
           "minimum": 0,
