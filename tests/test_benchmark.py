@@ -43,6 +43,15 @@ def _result() -> PlanResult:
         search_exhausted=False,
         time_limit_reached=True,
         global_objective_optimum_proven=False,
+        fixed_subproblem_count=4,
+        max_fixed_graph_nodes=61,
+        max_fixed_graph_arcs=120,
+        max_fixed_objective_pairs=28,
+        max_fixed_cp_sat_variables=3500,
+        max_fixed_cp_sat_constraints=6100,
+        fixed_model_build_time_s=0.12,
+        fixed_cp_sat_solve_time_s=0.51,
+        fixed_subproblem_time_s=0.69,
     )
 
 
@@ -68,6 +77,15 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.manhattan_pruned_count == 2
     assert record.scaled_objective_value == 125
     assert record.global_objective_optimum_proven is False
+    assert record.fixed_subproblem_count == 4
+    assert record.max_fixed_graph_nodes == 61
+    assert record.max_fixed_graph_arcs == 120
+    assert record.max_fixed_objective_pairs == 28
+    assert record.max_fixed_cp_sat_variables == 3500
+    assert record.max_fixed_cp_sat_constraints == 6100
+    assert record.fixed_model_build_time_s == 0.12
+    assert record.fixed_cp_sat_solve_time_s == 0.51
+    assert record.fixed_subproblem_time_s == 0.69
 
 
 def test_payload_and_markdown_are_auditable() -> None:
@@ -78,11 +96,15 @@ def test_payload_and_markdown_are_auditable() -> None:
     markdown = benchmark_markdown(payload)
 
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
+    assert BENCHMARK_SCHEMA_VERSION == 2
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
     assert payload["cases"][0]["room_counts"] == {"workshop": 1}
     assert payload["results"][0]["scaled_objective_value"] == 125
+    assert payload["results"][0]["max_fixed_cp_sat_variables"] == 3500
     assert "| sample | 1 | FEASIBLE |" in markdown
+    assert "## Fixed-packing model diagnostics" in markdown
+    assert "| sample | 4 | 61 | 120 | 28 | 3500 | 6100 |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
 
 
@@ -116,6 +138,7 @@ def test_write_report_creates_json_and_markdown(tmp_path) -> None:
     markdown = markdown_path.read_text(encoding="utf-8")
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
     assert payload["results"][0]["name"] == "sample"
+    assert payload["results"][0]["fixed_subproblem_count"] == 4
     assert "# The Alters Base Planner benchmark report" in markdown
 
 
