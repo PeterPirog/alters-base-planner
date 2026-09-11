@@ -45,13 +45,7 @@ class _Candidate:
 
 
 def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
-    """Enumerate legal room positions using port proximity only as candidate ordering.
-
-    ``PortSpec.cell_y`` is floor-relative, while the Base grid is top-origin. The
-    candidate-order surrogate must therefore resolve the port row into world coordinates
-    before measuring vertical proximity to the Base centre. This score is not the planner's
-    soft objective F; it only biases which hard-feasible room packings CP-SAT exposes first.
-    """
+    """Enumerate legal non-SOLVER positions; search_cost only orders candidates."""
 
     spec = instance.spec
     cx = (base.width - 1) / 2
@@ -158,7 +152,6 @@ def _room_port_components(
         if ra != rb:
             parent[rb] = ra
 
-    # Inside a walk-through room all explicit ports belong to one physical component.
     for room_idx, room in enumerate(rooms):
         if not MODULE_BY_KEY[room.module_key].transit_allowed:
             continue
@@ -166,7 +159,6 @@ def _room_port_components(
         for other in indices[1:]:
             union(indices[0], other)
 
-    # Two rooms join directly only where compatible explicit boundary ports meet.
     for i, ports_a in enumerate(room_ports):
         for j in range(i + 1, len(rooms)):
             for local_a, port_a in enumerate(ports_a):
@@ -183,8 +175,6 @@ def _room_port_components(
             root = find(port_index[(room_idx, local_idx)])
             components.add(root)
             x, row = port.utility_anchor
-            # A horizontal port at the Base edge can resolve to a negative/outside anchor.
-            # Reject that anchor before constructing its footprint; it is simply unavailable.
             if x < 0 or x + _CORRIDOR_SPEC.width > base.width:
                 continue
             cells = _anchor_cells((x, row))
@@ -244,9 +234,9 @@ def _shortest_path(
 def _route_utilities(
     base: BaseGeometry, rooms: list[ModulePlacement]
 ) -> list[ModulePlacement] | None:
-    """Create non-overlapping Corridors/Elevators automatically from explicit room ports."""
+    """Transitional post-router for automatically generated Corridor/Elevator modules."""
 
-    occupied: set[tuple[int, int]] = set().union(*(r.cells for r in rooms)) if rooms else set()
+    occupied: set[tuple[int, int]] = set().union(*(room.cells for room in rooms)) if rooms else set()
     valid_anchors: set[tuple[int, int]] = set()
     for y in range(base.height - _CORRIDOR_SPEC.height + 1):
         for x in range(base.width - _CORRIDOR_SPEC.width + 1):
@@ -306,8 +296,6 @@ def _route_utilities(
         if best_component is None or best_path is None:
             return None
 
-        # A path moves horizontally by one complete utility footprint or vertically at
-        # identical x. It cannot overlap itself; routing_valid prevents earlier-path overlap.
         used.update(best_path)
         for a, b in zip(best_path, best_path[1:], strict=False):
             if a[0] == b[0]:
@@ -323,12 +311,12 @@ def _route_utilities(
         counters[module_key] += 1
         utilities.append(
             ModulePlacement(
-                f"{module_key}-{counters[module_key]}",
-                module_key,
-                anchor[0],
-                anchor[1],
-                spec.width,
-                spec.height,
+                instance_id=f"{module_key}-{counters[module_key]}",
+                module_key=module_key,
+                x=anchor[0],
+                y=anchor[1],
+                width=spec.width,
+                height=spec.height,
             )
         )
     _validate_utility_geometry(base, rooms, utilities)
@@ -349,7 +337,6 @@ def _mass_metrics(
     mass_breakdown = {
         key: count * MODULE_BY_KEY[key].mass for key, count in sorted(counts.items())
     }
-
     return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
 
@@ -367,7 +354,7 @@ def _add_identical_instance_symmetry_breaking(
     instances: list[ModuleInstance],
     vars_by_instance: dict[str, list[cp_model.IntVar]],
 ) -> None:
-    """Remove pure label permutations between identical room instances."""
+    """Remove pure label permutations between identical module instances."""
 
     groups: dict[str, list[ModuleInstance]] = {}
     for instance in instances:
@@ -405,17 +392,12 @@ def _finalize_search_diagnostics(
 
 
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
-    """Find hard-feasible layouts and minimize exact weighted room-pair travel distance.
+    """Find connected hard-feasible candidates and minimize exact weighted pair distance.
 
-    `time_limit_s` is a single wall-clock search budget for the whole solve operation,
-    not a fresh allowance for every no-good iteration. Modified Manhattan is an
-    admissible port-to-port lower bound used to prune room packings whose theoretical
-    best score is already worse than the best exact layout.
-
-    CP-SAT currently solves the discrete room-placement feasibility problem. Its small
-    centre/proximity objective is only a candidate-order surrogate; it is not the planner's
-    soft objective. The final objective always uses legal graph paths: endpoint rooms cost 0,
-    each Corridor/Elevator costs +1, and an intermediate transit room costs its full width.
+    The current architecture is intentionally marked transitional: CP-SAT chooses SYSTEM/PLAYER
+    placements, then a deterministic post-router generates SOLVER infrastructure. Exact F is
+    evaluated for each connected candidate, but global optimality is not claimed until routing
+    is integrated into one exact model (or an exact decomposition with valid bounds).
     """
 
     started_at = monotonic()
@@ -431,13 +413,13 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     cell_vars: dict[tuple[int, int], list[cp_model.IntVar]] = {}
 
     candidate_order_terms = []
-    for inst in instances:
-        cand = _candidate_positions(inst, base)
-        if not cand:
+    for instance in instances:
+        candidate_list = _candidate_positions(instance, base)
+        if not candidate_list:
             result = PlanResult(
                 status="INFEASIBLE",
                 base=base,
-                message=f"No legal position for {inst.spec.name}",
+                message=f"No legal position for {instance.spec.name}",
             )
             _finalize_search_diagnostics(
                 result,
@@ -449,24 +431,22 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                 search_exhausted=True,
             )
             return result
-        candidates[inst.instance_id] = cand
+        candidates[instance.instance_id] = candidate_list
         variables = [
-            model.new_bool_var(f"p_{inst.instance_id}_{idx}") for idx in range(len(cand))
+            model.new_bool_var(f"p_{instance.instance_id}_{idx}")
+            for idx in range(len(candidate_list))
         ]
-        vars_by_instance[inst.instance_id] = variables
+        vars_by_instance[instance.instance_id] = variables
         model.add_exactly_one(variables)
-        for var, pos in zip(variables, cand, strict=True):
-            for cell in pos.cells:
+        for var, position in zip(variables, candidate_list, strict=True):
+            for cell in position.cells:
                 cell_vars.setdefault(cell, []).append(var)
-            candidate_order_terms.append(pos.search_cost * var)
+            candidate_order_terms.append(position.search_cost * var)
 
     for variables in cell_vars.values():
         model.add_at_most_one(variables)
 
     _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
-
-    # This is deliberately not the planner objective F. It only orders the sequence of
-    # room packings explored by the current placement-then-routing architecture.
     model.minimize(sum(candidate_order_terms))
 
     validation_error = model.validate()
@@ -508,25 +488,25 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         room_packings_examined += 1
         rooms: list[ModulePlacement] = []
         chosen_vars: list[cp_model.IntVar] = []
-        for inst in instances:
-            for idx, var in enumerate(vars_by_instance[inst.instance_id]):
+        for instance in instances:
+            for idx, var in enumerate(vars_by_instance[instance.instance_id]):
                 if solver.value(var):
-                    pos = candidates[inst.instance_id][idx]
+                    position = candidates[instance.instance_id][idx]
                     rooms.append(
                         ModulePlacement(
-                            inst.instance_id,
-                            inst.spec.key,
-                            pos.x,
-                            pos.y,
-                            inst.spec.width,
-                            inst.spec.height,
+                            instance_id=instance.instance_id,
+                            module_key=instance.spec.key,
+                            x=position.x,
+                            y=position.y,
+                            width=instance.spec.width,
+                            height=instance.spec.height,
                         )
                     )
                     chosen_vars.append(var)
                     break
 
         if len(chosen_vars) != len(instances):
-            raise AssertionError("CP-SAT solution did not select exactly one placement per room")
+            raise AssertionError("CP-SAT solution did not select exactly one placement per module")
 
         manhattan_lb = weighted_modified_manhattan_lower_bound(rooms)
         if (
@@ -545,8 +525,6 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             except ValueError:
                 distance_metrics = None
 
-            # AssertionError is deliberately not caught: it represents a violated internal
-            # solver invariant and must fail fast instead of silently discarding a valid layout.
             if distance_metrics is not None:
                 connected_candidates += 1
                 room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
@@ -567,8 +545,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                 candidate_result = PlanResult(
                     status="FEASIBLE",
                     base=base,
-                    rooms=rooms,
-                    utilities=utilities,
+                    modules=[*rooms, *utilities],
                     objective_value=distance_metrics.weighted_score,
                     attempts=room_packings_examined,
                     message=message,
@@ -624,7 +601,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             f" Best objective among {connected_candidates} connected candidates examined from "
             f"{room_packings_examined} unique room packings; {manhattan_pruned} additional "
             "packings pruned by the admissible explicit-port modified-Manhattan lower bound; "
-            f"{stop_reason}. Identical-room label permutations are symmetry-broken. Mass is a "
+            f"{stop_reason}. Identical-module label permutations are symmetry-broken. Mass is a "
             "tie-breaker only. Global optimality is not yet proven until placement and routing "
             "are integrated in one exact model."
         )
@@ -644,7 +621,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         result = PlanResult(
             status="INFEASIBLE",
             base=base,
-            message="No feasible room packing exists for the selected base and room set",
+            message="No feasible SYSTEM/PLAYER module packing exists for the selected Base",
         )
     else:
         reason = (
@@ -657,9 +634,9 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             base=base,
             attempts=room_packings_examined,
             message=(
-                "Room packings were physically feasible, but automatic corridor/elevator "
-                f"routing found no connected layout before {reason}. Try a larger tier, fewer "
-                "rooms, or a larger search budget."
+                "SYSTEM/PLAYER module packings were physically feasible, but the transitional "
+                "Corridor/Elevator post-router found no connected layout before "
+                f"{reason}."
             ),
         )
 
