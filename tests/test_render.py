@@ -1,5 +1,12 @@
-from alters_base_planner.models import BaseGeometry, Placement, PlanResult, UtilityPlacement
-from alters_base_planner.render import average_pair_distance, render_png, render_svg
+from alters_base_planner.catalog import MODULE_BY_KEY
+from alters_base_planner.models import BaseGeometry, ModulePlacement, PlanResult
+from alters_base_planner.render import render_png, render_svg
+from alters_base_planner.serialization import average_pair_distance, result_payload
+
+
+def _module(module_key: str, instance_id: str, x: int, y: int) -> ModulePlacement:
+    spec = MODULE_BY_KEY[module_key]
+    return ModulePlacement(instance_id, module_key, x, y, spec.width, spec.height)
 
 
 def _sample_result() -> PlanResult:
@@ -14,16 +21,21 @@ def _sample_result() -> PlanResult:
     return PlanResult(
         status="FEASIBLE",
         base=base,
-        rooms=[
-            Placement("airlock-1", "airlock", 0, 0, 4, 1),
-            Placement("workshop-1", "workshop", 6, 0, 4, 1),
+        modules=[
+            _module("airlock", "airlock-1", 0, 0),
+            _module("workshop", "workshop-1", 6, 0),
+            _module("corridor", "corridor-1", 4, 0),
         ],
-        utilities=[UtilityPlacement("corridor", 4, 0)],
         weighted_distance_score=0.9,
         normalized_weighted_distance=1.0,
         pairwise_distances={"airlock-1|workshop-1": 1},
+        room_mass=12,
+        utility_mass=2,
         total_mass=14,
         organics_required_for_journey=14,
+        organics_capacity_margin=286,
+        travel_feasible_at_full_tank=True,
+        corridor_count=1,
     )
 
 
@@ -35,6 +47,31 @@ def test_average_pair_distance() -> None:
         "b|c": 2,
     }
     assert average_pair_distance(result) == 2.0
+
+
+def test_serialized_result_is_one_module_collection_with_authority() -> None:
+    payload = result_payload(_sample_result())
+    modules = payload["modules"]
+    assert isinstance(modules, list)
+    assert payload["schema_version"] == 1
+    assert payload["feasibility"] == {
+        "structural_feasible": True,
+        "journey_feasible": True,
+    }
+    assert payload["module_counts_by_authority"] == {
+        "system": 1,
+        "player": 1,
+        "solver": 1,
+    }
+    assert [module["placement_authority"] for module in modules] == [
+        "system",
+        "player",
+        "solver",
+    ]
+    corridor = modules[2]
+    assert corridor["module_key"] == "corridor"
+    assert corridor["mass"] == MODULE_BY_KEY["corridor"].mass
+    assert corridor["ports"]
 
 
 def test_svg_contains_metrics_and_room_labels() -> None:

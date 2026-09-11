@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 
 from .catalog import MODULE_BY_KEY
-from .models import Placement, PortSide, ResolvedPort, UtilityPlacement, resolve_ports
+from .models import ModulePlacement, PlacementAuthority, PortSide, ResolvedPort, resolve_ports
 
 Node = str
 
@@ -23,22 +23,18 @@ class DistanceMetrics:
     corridor_count: int
 
 
-def room_ports(room: Placement) -> tuple[ResolvedPort, ...]:
+def room_ports(room: ModulePlacement) -> tuple[ResolvedPort, ...]:
     return resolve_ports(room, MODULE_BY_KEY[room.module_key])
 
 
-def room_access_rows(room: Placement) -> frozenset[int]:
+def room_access_rows(room: ModulePlacement) -> frozenset[int]:
     """All legal walkable entry rows exposed by a room's explicit ports."""
 
     return frozenset(port.edge_y for port in room_ports(room))
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
-    return (
-        a.edge_y == b.edge_y
-        and a.edge_x == b.edge_x
-        and a.side is not b.side
-    )
+    return a.edge_y == b.edge_y and a.edge_x == b.edge_x and a.side is not b.side
 
 
 def _horizontal_module_lower_bound(dx: int) -> int:
@@ -47,7 +43,7 @@ def _horizontal_module_lower_bound(dx: int) -> int:
     return (abs(dx) + 1) // 2
 
 
-def modified_manhattan_room_lower_bound(a: Placement, b: Placement) -> int:
+def modified_manhattan_room_lower_bound(a: ModulePlacement, b: ModulePlacement) -> int:
     """Admissible port-to-port lower bound for the game's movement model.
 
     Endpoints are explicit room ports rather than centroids. Normal multi-row rooms expose
@@ -78,7 +74,7 @@ def modified_manhattan_room_lower_bound(a: Placement, b: Placement) -> int:
     return int(best)
 
 
-def weighted_modified_manhattan_lower_bound(rooms: list[Placement]) -> float:
+def weighted_modified_manhattan_lower_bound(rooms: list[ModulePlacement]) -> float:
     active = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
     total = 0.0
     for idx, room_a in enumerate(active):
@@ -89,8 +85,33 @@ def weighted_modified_manhattan_lower_bound(rooms: list[Placement]) -> float:
     return total
 
 
+def _validate_solver_infrastructure(utilities: list[ModulePlacement]) -> None:
+    """Validate Stage-1 unified-domain invariants needed by the path evaluator."""
+
+    seen_instances: set[str] = set()
+    seen_anchors: set[tuple[int, int]] = set()
+    for utility in utilities:
+        if utility.instance_id in seen_instances:
+            raise AssertionError(f"Duplicate solver module instance_id: {utility.instance_id}")
+        seen_instances.add(utility.instance_id)
+
+        spec = MODULE_BY_KEY.get(utility.module_key)
+        if spec is None or spec.authority is not PlacementAuthority.SOLVER:
+            raise AssertionError(
+                f"Path infrastructure {utility.instance_id} must reference a SOLVER module"
+            )
+        if (utility.width, utility.height) != (spec.width, spec.height):
+            raise AssertionError(
+                f"Path infrastructure {utility.instance_id} footprint does not match ModuleSpec"
+            )
+        anchor = (utility.x, utility.y)
+        if anchor in seen_anchors:
+            raise AssertionError(f"Duplicate solver module anchor: {anchor}")
+        seen_anchors.add(anchor)
+
+
 def _validate_vertical_elevator_coverage(
-    rooms: list[Placement], utilities: list[UtilityPlacement]
+    rooms: list[ModulePlacement], utilities: list[ModulePlacement]
 ) -> None:
     """Enforce continuous Elevator coverage over every used room-port floor."""
 
@@ -107,7 +128,8 @@ def _validate_vertical_elevator_coverage(
 
     elevator_x_by_level: dict[int, set[int]] = {}
     for utility in utilities:
-        if utility.kind == "elevator":
+        spec = MODULE_BY_KEY[utility.module_key]
+        if spec.vertical_connectivity:
             elevator_x_by_level.setdefault(utility.y, set()).add(utility.x)
 
     elevator_count = sum(len(elevator_x_by_level.get(y, set())) for y in required_levels)
@@ -148,7 +170,7 @@ def _connect_by_entry_cost(
 
 
 def _room_nodes(
-    rooms: list[Placement],
+    rooms: list[ModulePlacement],
 ) -> tuple[
     dict[Node, dict[Node, int]],
     dict[Node, int],
@@ -194,18 +216,22 @@ def _room_nodes(
 
 
 def _build_module_graph(
-    rooms: list[Placement], utilities: list[UtilityPlacement]
+    rooms: list[ModulePlacement], utilities: list[ModulePlacement]
 ) -> tuple[dict[Node, dict[Node, int]], dict[str, tuple[Node, ...]], int]:
     graph, node_cost, endpoints, port_nodes, resolved = _room_nodes(rooms)
 
     utility_nodes: dict[tuple[int, int], Node] = {}
-    utility_kind: dict[Node, str] = {}
-    for idx, utility in enumerate(utilities):
-        node = f"utility:{idx}"
+    utility_spec_by_node = {}
+    utility_placement_by_node = {}
+    for utility in utilities:
+        node = f"module:{utility.instance_id}"
         graph[node] = {}
+        # Corridor and Elevator each cost +1 when entered/traversed under the accepted
+        # gameplay distance semantics. They are Modules, not objective endpoints.
         node_cost[node] = 1
         utility_nodes[(utility.x, utility.y)] = node
-        utility_kind[node] = utility.kind
+        utility_spec_by_node[node] = MODULE_BY_KEY[utility.module_key]
+        utility_placement_by_node[node] = utility
 
     # Direct room-to-room connections exist only where explicit opposite-side ports meet.
     for i, room_a in enumerate(rooms):
@@ -219,7 +245,7 @@ def _build_module_graph(
                     _add_directed(graph, node_a, node_b, 0)
                     _add_directed(graph, node_b, node_a, 0)
 
-    # Every explicit port may connect only to the 2x1 utility anchor directly outside it.
+    # Every explicit port may connect only to the 2x1 solver-module anchor directly outside it.
     for room in rooms:
         for port in room_ports(room):
             utility_node = utility_nodes.get(port.utility_anchor)
@@ -228,22 +254,26 @@ def _build_module_graph(
             room_node = port_nodes[(room.instance_id, port.name)]
             _connect_by_entry_cost(graph, node_cost, room_node, utility_node)
 
+    # Horizontal connection is footprint-driven: the right neighbour begins exactly where
+    # the current solver module ends. This currently means +2 for Corridor/Elevator.
     for (x, y), node in utility_nodes.items():
-        right = utility_nodes.get((x + 2, y))
+        utility = utility_placement_by_node[node]
+        right = utility_nodes.get((x + utility.width, y))
         if right is not None:
             _connect_by_entry_cost(graph, node_cost, node, right)
 
+    # Vertical travel is a ModuleSpec behavior rather than a string-special-cased utility kind.
     for (x, y), node in utility_nodes.items():
-        if utility_kind[node] != "elevator":
+        if not utility_spec_by_node[node].vertical_connectivity:
             continue
-        above = utility_nodes.get((x, y + 1))
-        if above is not None and utility_kind[above] == "elevator":
-            _connect_by_entry_cost(graph, node_cost, node, above)
+        below = utility_nodes.get((x, y + 1))
+        if below is not None and utility_spec_by_node[below].vertical_connectivity:
+            _connect_by_entry_cost(graph, node_cost, node, below)
 
     shaft_count = 0
     by_x: dict[int, list[int]] = {}
     for utility in utilities:
-        if utility.kind == "elevator":
+        if MODULE_BY_KEY[utility.module_key].vertical_connectivity:
             by_x.setdefault(utility.x, []).append(utility.y)
     for ys in by_x.values():
         previous: int | None = None
@@ -279,11 +309,11 @@ def _dijkstra(
 
 
 def _validate_single_access_network(
-    rooms: list[Placement],
+    rooms: list[ModulePlacement],
     graph: dict[Node, dict[Node, int]],
     endpoints: dict[str, tuple[Node, ...]],
 ) -> None:
-    """Require every installed module and generated utility to belong to the Airlock network.
+    """Require every installed room and generated solver module to reach the Airlock network.
 
     Objective weights are deliberately irrelevant here. Passive/terminal modules such as
     Storage, Radiation Repulsor and Rapidium Ark still have to be connected to the Base;
@@ -304,7 +334,7 @@ def _validate_single_access_network(
             )
 
     unreachable_utilities = sorted(
-        node for node in graph if node.startswith("utility:") and node not in reachable
+        node for node in graph if node.startswith("module:") and node not in reachable
     )
     if unreachable_utilities:
         raise ValueError(
@@ -314,8 +344,9 @@ def _validate_single_access_network(
 
 
 def evaluate_distances(
-    rooms: list[Placement], utilities: list[UtilityPlacement]
+    rooms: list[ModulePlacement], utilities: list[ModulePlacement]
 ) -> DistanceMetrics:
+    _validate_solver_infrastructure(utilities)
     _validate_vertical_elevator_coverage(rooms, utilities)
     graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
     _validate_single_access_network(rooms, graph, endpoints)
@@ -369,7 +400,9 @@ def evaluate_distances(
         pairwise_distances=pairwise,
         pairwise_contributions=contributions,
         pairwise_manhattan_lower_bounds=manhattan_bounds,
-        elevator_module_count=sum(u.kind == "elevator" for u in utilities),
+        elevator_module_count=sum(
+            MODULE_BY_KEY[u.module_key].vertical_connectivity for u in utilities
+        ),
         elevator_shaft_count=shaft_count,
-        corridor_count=sum(u.kind == "corridor" for u in utilities),
+        corridor_count=sum(u.module_key == "corridor" for u in utilities),
     )

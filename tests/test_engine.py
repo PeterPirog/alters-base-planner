@@ -1,7 +1,7 @@
 import pytest
 
 from alters_base_planner.base import builtin_base
-from alters_base_planner.catalog import MODULE_BY_KEY
+from alters_base_planner.catalog import MODULE_BY_KEY, MODULES
 from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import (
     _candidate_positions,
@@ -13,10 +13,23 @@ from alters_base_planner.engine import (
 from alters_base_planner.models import (
     BaseGeometry,
     ModuleInstance,
-    Placement,
+    ModulePlacement,
+    PlacementAuthority,
     PlanRequest,
-    UtilityPlacement,
+    expand_instances,
 )
+
+
+def _utility(module_key: str, x: int, y: int) -> ModulePlacement:
+    spec = MODULE_BY_KEY[module_key]
+    return ModulePlacement(
+        f"{module_key}@{x},{y}",
+        module_key,
+        x,
+        y,
+        spec.width,
+        spec.height,
+    )
 
 
 def test_base_tiers_grow_and_validated_masks_keep_expected_capacities() -> None:
@@ -34,15 +47,13 @@ def test_base_tiers_grow_and_validated_masks_keep_expected_capacities() -> None:
 
 
 def test_explicit_port_access_rows_for_regular_and_special_modules() -> None:
-    regular = Placement("storage-1", "small_storage", 4, 5, 2, 2)
-    repulsor = Placement("repulsor-1", "radiation_repulsor", 4, 5, 2, 3)
+    regular = ModulePlacement("storage-1", "small_storage", 4, 5, 2, 2)
+    repulsor = ModulePlacement("repulsor-1", "radiation_repulsor", 4, 5, 2, 3)
     assert room_access_rows(regular) == frozenset({6})
     assert room_access_rows(repulsor) == frozenset({5})
 
 
 def test_candidate_ordering_resolves_floor_relative_port_to_world_y() -> None:
-    # Base centre is y=2. A 4x3 Materializer placed at top y=0 has its floor at world y=2,
-    # so the corrected port-aware ordering must prefer it to the same room placed at y=2.
     base = BaseGeometry(
         tier=9,
         width=4,
@@ -59,6 +70,30 @@ def test_candidate_ordering_resolves_floor_relative_port_to_world_y() -> None:
     assert cost_by_y[0] < cost_by_y[2]
 
 
+def test_expand_instances_injects_system_and_never_solver_modules() -> None:
+    instances = expand_instances(MODULES, {"workshop": 2})
+    keys = [instance.spec.key for instance in instances]
+    system_keys = {
+        spec.key for spec in MODULES if spec.authority is PlacementAuthority.SYSTEM
+    }
+    assert all(keys.count(key) == 1 for key in system_keys)
+    assert keys.count("workshop") == 2
+    assert "corridor" not in keys
+    assert "elevator" not in keys
+
+
+def test_programmatic_solver_module_count_is_rejected() -> None:
+    with pytest.raises(ValueError, match="solver-managed"):
+        solve_plan(
+            PlanRequest(
+                tier=4,
+                room_counts={"corridor": 1},
+                time_limit_s=0.1,
+                max_layout_attempts=1,
+            )
+        )
+
+
 def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
     allowed = frozenset((x, y) for y in range(2) for x in range(12))
     base = BaseGeometry(
@@ -72,13 +107,39 @@ def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
         verified=True,
     )
     rooms = [
-        Placement("airlock-1", "airlock", 0, 1, 4, 1),
-        Placement("ark-1", "rapidium_ark", 4, 0, 4, 2),
-        Placement("workshop-1", "workshop", 8, 1, 4, 1),
+        ModulePlacement("airlock-1", "airlock", 0, 1, 4, 1),
+        ModulePlacement("ark-1", "rapidium_ark", 4, 0, 4, 2),
+        ModulePlacement("workshop-1", "workshop", 8, 1, 4, 1),
     ]
-    # Everything touches geometrically, but the Ark is sealed/non-transit and fills
-    # both rows, so there is no alternative corridor/elevator route around it.
     assert _route_utilities(base, rooms) is None
+
+
+def test_generated_utilities_are_solver_module_placements() -> None:
+    allowed = frozenset((x, 0) for x in range(10))
+    base = BaseGeometry(
+        tier=1,
+        width=10,
+        height=1,
+        allowed_cells=allowed,
+        blocked_cells=frozenset(),
+        organics_capacity=300,
+        source="unit-test",
+        verified=True,
+    )
+    rooms = [
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 6, 0, 4, 1),
+    ]
+    utilities = _route_utilities(base, rooms)
+    assert utilities is not None
+    assert len(utilities) == 1
+    utility = utilities[0]
+    assert utility.module_key == "corridor"
+    assert MODULE_BY_KEY[utility.module_key].authority is PlacementAuthority.SOLVER
+    assert (utility.width, utility.height) == (
+        MODULE_BY_KEY["corridor"].width,
+        MODULE_BY_KEY["corridor"].height,
+    )
 
 
 def test_generated_utilities_cannot_overlap_each_other() -> None:
@@ -97,8 +158,8 @@ def test_generated_utilities_cannot_overlap_each_other() -> None:
             base,
             [],
             [
-                UtilityPlacement("corridor", 2, 0),  # cells 2,3
-                UtilityPlacement("corridor", 3, 0),  # cells 3,4: illegal one-cell overlap
+                _utility("corridor", 2, 0),
+                _utility("corridor", 3, 0),
             ],
         )
 
@@ -106,27 +167,27 @@ def test_generated_utilities_cannot_overlap_each_other() -> None:
 def test_mass_metrics_match_journey_organics_rule() -> None:
     base = builtin_base(2)
     rooms = [
-        Placement("dormitory-1", "dormitory", 0, 0, 6, 1),
-        Placement("workshop-1", "workshop", 0, 1, 4, 1),
+        ModulePlacement("dormitory-1", "dormitory", 0, 0, 6, 1),
+        ModulePlacement("workshop-1", "workshop", 0, 1, 4, 1),
     ]
     utilities = [
-        UtilityPlacement("corridor", 0, 2),
-        UtilityPlacement("elevator", 2, 2),
+        _utility("corridor", 0, 2),
+        _utility("elevator", 2, 2),
     ]
 
     room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
         base, rooms, utilities
     )
-    assert room_mass == 16  # Dormitory 8 + Workshop 8
-    assert utility_mass == 4
+    assert room_mass == 16
+    assert utility_mass == MODULE_BY_KEY["corridor"].mass + MODULE_BY_KEY["elevator"].mass
     assert total_mass == 20
     assert margin == 430
     assert travel_ok is True
     assert sum(breakdown.values()) == total_mass
 
 
-def test_programmatic_unknown_room_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Unknown room keys"):
+def test_programmatic_unknown_module_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown module keys"):
         solve_plan(
             PlanRequest(
                 tier=4,
@@ -169,7 +230,7 @@ def test_supplied_base_must_match_requested_tier() -> None:
         )
 
 
-def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> None:
+def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> None:
     result = solve_plan(
         PlanRequest(
             tier=2,
@@ -184,8 +245,9 @@ def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> No
     assert 0 <= result.attempts <= 8
     assert result.connected_candidates_examined >= 0
     assert result.manhattan_pruned_count >= 0
-    if result.rooms:
-        assert result.status == "FEASIBLE"
+
+    if result.status == "FEASIBLE":
+        assert result.modules
         assert result.connected_candidates_examined >= 1
         assert result.total_mass == result.room_mass + result.utility_mass
         assert result.organics_required_for_journey == result.total_mass
@@ -194,3 +256,9 @@ def test_solver_returns_persisted_mass_and_search_metrics_when_connected() -> No
             result.total_mass <= result.base.organics_capacity
         )
         assert sum(result.mass_breakdown.values()) == result.total_mass
+        assert all(isinstance(module, ModulePlacement) for module in result.modules)
+
+        authorities = [MODULE_BY_KEY[module.module_key].authority for module in result.modules]
+        assert PlacementAuthority.SYSTEM in authorities
+        assert PlacementAuthority.PLAYER in authorities
+        assert PlacementAuthority.SOLVER in authorities

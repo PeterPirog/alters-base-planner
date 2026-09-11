@@ -5,14 +5,14 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog import CONFIGURABLE_MODULES, MANDATORY_MODULES, MODULE_BY_KEY
+from .catalog import MODULE_BY_KEY, PLAYER_MODULES, SOLVER_MODULES, SYSTEM_MODULES
 from .models import PlanRequest
 
-_CONFIGURABLE_KEYS = {m.key for m in CONFIGURABLE_MODULES}
-_MANDATORY_KEYS = {m.key for m in MANDATORY_MODULES}
-_SOLVER_MANAGED_KEYS = {"corridor", "corridors", "elevator", "elevators"}
+_PLAYER_KEYS = {module.key for module in PLAYER_MODULES}
+_SYSTEM_KEYS = {module.key for module in SYSTEM_MODULES}
+_SOLVER_KEYS = {module.key for module in SOLVER_MODULES}
 _TOP_LEVEL_KEYS = {"$schema", "base_tier", "rooms", "solver", "output"}
-_SOLVER_KEYS = {"objective", "time_limit_s", "max_layout_attempts"}
+_SOLVER_CONFIG_KEYS = {"objective", "time_limit_s", "max_layout_attempts"}
 _OUTPUT_KEYS = {"svg", "png", "json"}
 
 
@@ -82,25 +82,25 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
 
     room_counts_raw = raw["rooms"]
     if not isinstance(room_counts_raw, dict):
-        raise ValueError("rooms must be a JSON object mapping module keys to counts")
+        raise ValueError("rooms must be a JSON object mapping PLAYER module keys to counts")
 
-    solver_managed_requested = sorted(set(room_counts_raw) & _SOLVER_MANAGED_KEYS)
-    if solver_managed_requested:
+    solver_requested = sorted(set(room_counts_raw) & _SOLVER_KEYS)
+    if solver_requested:
         raise ValueError(
-            "Corridor and Elevator counts are solver-managed and must not be configured by the "
-            "player. Remove: " + ", ".join(solver_managed_requested)
+            "SOLVER modules are generated automatically and must not be configured: "
+            + ", ".join(solver_requested)
         )
 
-    unknown = sorted(set(room_counts_raw) - _CONFIGURABLE_KEYS - _MANDATORY_KEYS)
+    system_requested = sorted(set(room_counts_raw) & _SYSTEM_KEYS)
+    if system_requested:
+        raise ValueError(
+            "SYSTEM modules are added exactly once automatically and must not be configured: "
+            + ", ".join(system_requested)
+        )
+
+    unknown = sorted(set(room_counts_raw) - _PLAYER_KEYS - _SYSTEM_KEYS - _SOLVER_KEYS)
     if unknown:
-        raise ValueError(f"Unknown room keys: {', '.join(unknown)}")
-
-    mandatory_requested = sorted(set(room_counts_raw) & _MANDATORY_KEYS)
-    if mandatory_requested:
-        raise ValueError(
-            "Mandatory rooms are added automatically and must not be configured: "
-            + ", ".join(mandatory_requested)
-        )
+        raise ValueError(f"Unknown module keys: {', '.join(unknown)}")
 
     room_counts: dict[str, int] = {}
     for key, value in room_counts_raw.items():
@@ -113,7 +113,7 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
     solver = raw.get("solver", {})
     if not isinstance(solver, dict):
         raise ValueError("solver must be a JSON object")
-    _reject_unknown_keys(solver, _SOLVER_KEYS, "solver")
+    _reject_unknown_keys(solver, _SOLVER_CONFIG_KEYS, "solver")
 
     objective = solver.get("objective", "weighted_pair_distance")
     if objective != "weighted_pair_distance":
@@ -134,7 +134,6 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
     svg = _require_non_empty_string(output_raw.get("svg", "layout.svg"), "output.svg")
     png = _require_non_empty_string(output_raw.get("png", "layout.png"), "output.png")
     json_path = _require_non_empty_string(output_raw.get("json", "layout.json"), "output.json")
-    output = OutputConfig(svg=Path(svg), png=Path(png), json=Path(json_path))
 
     return LoadedPlanConfig(
         request=PlanRequest(
@@ -144,5 +143,5 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
             time_limit_s=time_limit_s,
             max_layout_attempts=max_layout_attempts,
         ),
-        output=output,
+        output=OutputConfig(svg=Path(svg), png=Path(png), json=Path(json_path)),
     )
