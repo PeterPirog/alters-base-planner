@@ -26,8 +26,13 @@ def _sample_result() -> PlanResult:
             _module("workshop", "workshop-1", 6, 0),
             _module("corridor", "corridor-1", 4, 0),
         ],
+        objective_value=0.9,
+        objective_scale=10,
+        scaled_objective_value=9,
+        scaled_modified_manhattan_lower_bound=9,
         weighted_distance_score=0.9,
         normalized_weighted_distance=1.0,
+        modified_manhattan_lower_bound=0.9,
         pairwise_distances={"airlock-1|workshop-1": 1},
         room_mass=12,
         utility_mass=2,
@@ -36,6 +41,7 @@ def _sample_result() -> PlanResult:
         organics_capacity_margin=286,
         travel_feasible_at_full_tank=True,
         corridor_count=1,
+        fixed_objective_optima_proven=3,
     )
 
 
@@ -53,7 +59,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     payload = result_payload(_sample_result())
     modules = payload["modules"]
     assert isinstance(modules, list)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["feasibility"] == {
         "structural_feasible": True,
         "journey_feasible": True,
@@ -72,6 +78,14 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     assert corridor["module_key"] == "corridor"
     assert corridor["mass"] == MODULE_BY_KEY["corridor"].mass
     assert corridor["ports"]
+
+    optimization = payload["optimization"]
+    assert optimization["exact_integer_objective"] == {
+        "scale": 10,
+        "scaled_value": 9,
+        "scaled_modified_manhattan_lower_bound": 9,
+    }
+    assert optimization["search_diagnostics"]["fixed_objective_optima_proven"] == 3
 
 
 def test_svg_contains_metrics_and_room_labels() -> None:

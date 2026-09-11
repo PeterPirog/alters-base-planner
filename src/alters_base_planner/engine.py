@@ -8,16 +8,21 @@ from ortools.sat.python import cp_model
 
 from .base import builtin_base
 from .catalog import MODULE_BY_KEY, MODULES
-from .distance import evaluate_distances, weighted_modified_manhattan_lower_bound
-from .integrated_hard_solver import solve_fixed_layout_infrastructure
+from .fixed_flow_objective_solver import solve_fixed_layout_flow_objective
 from .models import (
     BaseGeometry,
     ModuleInstance,
     ModulePlacement,
+    PlacementAuthority,
     PlanRequest,
     PlanResult,
     expand_instances,
     footprint_cells,
+)
+from .objective import (
+    ScaledObjective,
+    build_scaled_objective,
+    scaled_modified_manhattan_lower_bound,
 )
 
 
@@ -65,7 +70,7 @@ def _validate_utility_geometry(
 
     for utility in utilities:
         spec = MODULE_BY_KEY.get(utility.module_key)
-        if spec is None or spec.authority.value != "solver":
+        if spec is None or spec.authority is not PlacementAuthority.SOLVER:
             raise AssertionError(
                 f"Selected infrastructure {utility.instance_id} is not a SOLVER module"
             )
@@ -106,9 +111,11 @@ def _mass_metrics(
     return room_mass, utility_mass, total_mass, margin, margin >= 0, mass_breakdown
 
 
-def _candidate_rank(result: PlanResult) -> tuple[float, int, int, int]:
+def _candidate_rank(result: PlanResult) -> tuple[int, int, int, int]:
+    if result.scaled_objective_value is None:
+        raise AssertionError("Cannot rank a candidate without an exact scaled objective value")
     return (
-        float(result.weighted_distance_score or 0.0),
+        result.scaled_objective_value,
         result.total_mass,
         result.elevator_module_count,
         result.corridor_count,
@@ -144,6 +151,7 @@ def _finalize_search_diagnostics(
     *,
     attempts: int,
     connected_candidates: int,
+    fixed_objective_optima_proven: int,
     manhattan_pruned: int,
     started_at: float,
     time_limit_reached: bool,
@@ -151,35 +159,54 @@ def _finalize_search_diagnostics(
 ) -> None:
     result.attempts = attempts
     result.connected_candidates_examined = connected_candidates
+    result.fixed_objective_optima_proven = fixed_objective_optima_proven
     result.manhattan_pruned_count = manhattan_pruned
     result.search_time_s = monotonic() - started_at
     result.time_limit_reached = time_limit_reached
     result.search_exhausted = search_exhausted
 
 
-def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
-    """Search room packings with an exact Corridor/Elevator hard-feasibility subproblem.
+def _validate_master_instances(
+    instances: list[ModuleInstance],
+    *,
+    root_instance_id: str,
+) -> None:
+    if not instances:
+        raise ValueError("Exact decomposition requires at least one non-SOLVER module instance")
+    instance_ids = [instance.instance_id for instance in instances]
+    if len(instance_ids) != len(set(instance_ids)):
+        raise ValueError("Module instance IDs must be unique")
+    if any(instance.spec.authority is PlacementAuthority.SOLVER for instance in instances):
+        raise ValueError("SOLVER modules must not be supplied to the room-packing master")
+    root = next((instance for instance in instances if instance.instance_id == root_instance_id), None)
+    if root is None or root.spec.key != "airlock":
+        raise ValueError("Exact decomposition root instance must identify the Airlock")
+    if sum(instance.spec.key == "airlock" for instance in instances) != 1:
+        raise ValueError("Exact decomposition requires exactly one Airlock instance")
 
-    Stage 2 uses an exact decomposition for hard feasibility:
 
-    1. the master CP-SAT model enumerates legal SYSTEM/PLAYER room packings;
-    2. a separate CP-SAT subproblem decides Corridor/Elevator selection and proves rooted
-       connectivity for each fixed packing;
-    3. the exact graph evaluator computes distances and gameplay objective ``F`` for the
-       infrastructure witness returned by the hard-feasibility subproblem.
+def _solve_instances(
+    base: BaseGeometry,
+    instances: list[ModuleInstance],
+    *,
+    time_limit_s: float,
+    max_layout_attempts: int,
+    root_instance_id: str = "airlock-1",
+    started_at: float | None = None,
+) -> PlanResult:
+    """Exact objective decomposition over a supplied non-SOLVER instance set.
 
-    This removes the greedy post-router from correctness. Global objective optimality is still
-    not claimed because Stage 3 must optimize true ``F`` over infrastructure alternatives,
-    rather than evaluating only one hard-feasible infrastructure witness per room packing.
+    This internal entry point is also used by tiny known-optimum tests. Production `solve_plan()`
+    supplies the canonical SYSTEM/PLAYER instance set produced by `expand_instances()`.
     """
 
-    started_at = monotonic()
-    if base is not None and base.tier != request.tier:
-        raise ValueError(
-            f"PlanRequest tier {request.tier} does not match supplied BaseGeometry tier {base.tier}"
-        )
-    base = base or builtin_base(request.tier)
-    instances = expand_instances(MODULES, request.room_counts)
+    _validate_master_instances(instances, root_instance_id=root_instance_id)
+    if time_limit_s <= 0:
+        raise ValueError("time_limit_s must be positive")
+    if max_layout_attempts <= 0:
+        raise ValueError("max_layout_attempts must be positive")
+
+    started_at = monotonic() if started_at is None else started_at
     model = cp_model.CpModel()
     candidates: dict[str, list[_Candidate]] = {}
     vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
@@ -198,6 +225,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
                 result,
                 attempts=0,
                 connected_candidates=0,
+                fixed_objective_optima_proven=0,
                 manhattan_pruned=0,
                 started_at=started_at,
                 time_limit_reached=False,
@@ -230,18 +258,22 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     solver.parameters.num_search_workers = 8
 
     best_result: PlanResult | None = None
+    common_objective: ScaledObjective | None = None
     connected_candidates = 0
+    fixed_objective_optima_proven = 0
     manhattan_pruned = 0
     room_packings_examined = 0
     time_limit_reached = False
     search_exhausted = False
     attempt_limit_reached = False
-    deadline = started_at + float(request.time_limit_s)
+    all_fixed_objectives_resolved = True
+    deadline = started_at + float(time_limit_s)
 
-    for _ in range(request.max_layout_attempts):
+    for _ in range(max_layout_attempts):
         remaining = deadline - monotonic()
         if remaining <= 0:
             time_limit_reached = True
+            all_fixed_objectives_resolved = False
             break
 
         solver.parameters.max_time_in_seconds = max(0.001, remaining)
@@ -251,6 +283,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             raise RuntimeError("CP-SAT rejected the generated placement model as invalid")
         if status == cp_model.UNKNOWN:
             time_limit_reached = True
+            all_fixed_objectives_resolved = False
             break
         if status == cp_model.INFEASIBLE:
             search_exhausted = True
@@ -281,46 +314,91 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         if len(chosen_vars) != len(instances):
             raise AssertionError("CP-SAT solution did not select exactly one placement per module")
 
-        manhattan_lb = weighted_modified_manhattan_lower_bound(rooms)
-        if (
-            best_result is not None
-            and best_result.weighted_distance_score is not None
-            and manhattan_lb > best_result.weighted_distance_score + 1e-12
-        ):
-            manhattan_pruned += 1
-            model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
-            continue
+        objective = build_scaled_objective(rooms)
+        if common_objective is None:
+            common_objective = objective
+        elif objective != common_objective:
+            raise AssertionError(
+                "Objective coefficients changed across room packings for one planning request"
+            )
+
+        scaled_lower_bound = scaled_modified_manhattan_lower_bound(rooms, objective)
+        if best_result is not None:
+            incumbent = best_result.scaled_objective_value
+            if incumbent is None:
+                raise AssertionError("Incumbent is missing its exact scaled objective")
+            if scaled_lower_bound > incumbent:
+                manhattan_pruned += 1
+                model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+                continue
 
         remaining = deadline - monotonic()
         if remaining <= 0:
             time_limit_reached = True
+            all_fixed_objectives_resolved = False
             break
 
-        infrastructure_result = solve_fixed_layout_infrastructure(
+        fixed_result = solve_fixed_layout_flow_objective(
             base,
             tuple(rooms),
             time_limit_s=remaining,
+            root_instance_id=root_instance_id,
         )
-        if infrastructure_result.status == "TIME_LIMIT":
+        if fixed_result.status == "TIME_LIMIT":
             time_limit_reached = True
+            all_fixed_objectives_resolved = False
             break
-        if infrastructure_result.status == "INFEASIBLE":
+        if fixed_result.status == "INFEASIBLE":
             model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
             continue
-        if infrastructure_result.status != "FEASIBLE":
+        if fixed_result.status not in {"OPTIMAL", "FEASIBLE"}:
+            raise AssertionError(f"Unexpected fixed objective status: {fixed_result.status}")
+        if fixed_result.distance_metrics is None:
+            raise AssertionError("Fixed objective solver returned a candidate without distances")
+        if fixed_result.objective_scale != objective.scale:
             raise AssertionError(
-                f"Unexpected infrastructure feasibility status: {infrastructure_result.status}"
+                "Fixed objective solver and master use different exact objective scales"
             )
 
-        utilities = list(infrastructure_result.utilities)
+        utilities = list(fixed_result.utilities)
         _validate_utility_geometry(base, rooms, utilities)
-        try:
-            distance_metrics = evaluate_distances(rooms, utilities)
-        except ValueError as exc:
+        distance_metrics = fixed_result.distance_metrics
+        exact_scaled_score = objective.scaled_score(distance_metrics.pairwise_distances)
+        if scaled_lower_bound > exact_scaled_score:
             raise AssertionError(
-                "Exact hard-feasibility subproblem returned a network rejected by the exact "
-                "distance/connectivity evaluator"
-            ) from exc
+                "Exact objective fell below the scaled modified-Manhattan lower bound: "
+                f"exact={exact_scaled_score}, lower_bound={scaled_lower_bound}"
+            )
+
+        if fixed_result.scaled_objective_value is not None:
+            if fixed_result.scaled_objective_value != exact_scaled_score:
+                raise AssertionError(
+                    "Fixed objective solver scaled score disagrees with exact Dijkstra distances"
+                )
+
+        fixed_proven = (
+            fixed_result.status == "OPTIMAL" and fixed_result.lexicographic_optimum_proven
+        )
+        if fixed_result.status == "OPTIMAL" and not fixed_proven:
+            raise AssertionError("OPTIMAL fixed objective result lacks lexicographic proof")
+        if fixed_proven:
+            fixed_objective_optima_proven += 1
+        else:
+            all_fixed_objectives_resolved = False
+
+        exact_score = objective.unscaled_score(exact_scaled_score)
+        exact_lower_bound = objective.unscaled_score(scaled_lower_bound)
+        if abs(exact_score - distance_metrics.weighted_score) > 1e-9:
+            raise AssertionError(
+                "Scaled objective disagrees with floating evaluator score: "
+                f"scaled={exact_score}, evaluator={distance_metrics.weighted_score}"
+            )
+        if abs(exact_lower_bound - distance_metrics.weighted_manhattan_lower_bound) > 1e-9:
+            raise AssertionError(
+                "Scaled lower bound disagrees with evaluator lower bound: "
+                f"scaled={exact_lower_bound}, "
+                f"evaluator={distance_metrics.weighted_manhattan_lower_bound}"
+            )
 
         connected_candidates += 1
         room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
@@ -329,20 +407,23 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         room_usage_weights = {
             room.instance_id: MODULE_BY_KEY[room.module_key].visit_weight for room in rooms
         }
+        fixed_status = "proven fixed-packing optimum" if fixed_proven else "best-known fixed packing"
         message = (
-            f"Exact hard-feasible connected candidate. Objective "
-            f"{distance_metrics.weighted_score:.4f}; modified-Manhattan lower bound "
-            f"{distance_metrics.weighted_manhattan_lower_bound:.4f}; Elevator modules "
-            f"{distance_metrics.elevator_module_count}; Corridors "
-            f"{distance_metrics.corridor_count}; Base Mass {total_mass}; journey requires "
-            f"{total_mass} Organics; tank capacity {base.organics_capacity}. "
-            f"Travel at full tank: {'YES' if travel_ok else 'NO'}."
+            f"Exact-objective connected candidate ({fixed_status}). Objective {exact_score:.4f}; "
+            f"scaled objective {exact_scaled_score}/{objective.scale}; modified-Manhattan lower "
+            f"bound {exact_lower_bound:.4f}; Elevator modules "
+            f"{distance_metrics.elevator_module_count}; Corridors {distance_metrics.corridor_count}; "
+            f"Base Mass {total_mass}; journey requires {total_mass} Organics; tank capacity "
+            f"{base.organics_capacity}. Travel at full tank: {'YES' if travel_ok else 'NO'}."
         )
         candidate_result = PlanResult(
             status="FEASIBLE",
             base=base,
             modules=[*rooms, *utilities],
-            objective_value=distance_metrics.weighted_score,
+            objective_value=exact_score,
+            objective_scale=objective.scale,
+            scaled_objective_value=exact_scaled_score,
+            scaled_modified_manhattan_lower_bound=scaled_lower_bound,
             attempts=room_packings_examined,
             message=message,
             room_mass=room_mass,
@@ -355,9 +436,9 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             elevator_module_count=distance_metrics.elevator_module_count,
             elevator_shaft_count=distance_metrics.elevator_shaft_count,
             corridor_count=distance_metrics.corridor_count,
-            weighted_distance_score=distance_metrics.weighted_score,
+            weighted_distance_score=exact_score,
             normalized_weighted_distance=distance_metrics.normalized_weighted_distance,
-            modified_manhattan_lower_bound=distance_metrics.weighted_manhattan_lower_bound,
+            modified_manhattan_lower_bound=exact_lower_bound,
             pairwise_distances=distance_metrics.pairwise_distances,
             pairwise_contributions=distance_metrics.pairwise_contributions,
             room_usage_weights=room_usage_weights,
@@ -367,20 +448,32 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             best_result = candidate_result
 
         model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
-        if infrastructure_result.time_limit_reached:
+        if fixed_result.time_limit_reached or not fixed_proven:
             time_limit_reached = True
             break
     else:
         attempt_limit_reached = True
+        all_fixed_objectives_resolved = False
 
     if monotonic() >= deadline and not search_exhausted:
         time_limit_reached = True
+        all_fixed_objectives_resolved = False
+
+    global_optimum_proven = bool(
+        best_result is not None
+        and search_exhausted
+        and all_fixed_objectives_resolved
+        and not time_limit_reached
+        and not attempt_limit_reached
+    )
 
     if best_result is not None:
+        best_result.global_objective_optimum_proven = global_optimum_proven
         _finalize_search_diagnostics(
             best_result,
             attempts=room_packings_examined,
             connected_candidates=connected_candidates,
+            fixed_objective_optima_proven=fixed_objective_optima_proven,
             manhattan_pruned=manhattan_pruned,
             started_at=started_at,
             time_limit_reached=time_limit_reached,
@@ -389,20 +482,26 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         if search_exhausted:
             stop_reason = "room-packing search exhausted"
         elif time_limit_reached:
-            stop_reason = f"global {request.time_limit_s:g}s search budget reached"
+            stop_reason = f"global {time_limit_s:g}s search budget reached"
         elif attempt_limit_reached:
-            stop_reason = f"{request.max_layout_attempts} layout-attempt limit reached"
+            stop_reason = f"{max_layout_attempts} layout-attempt limit reached"
         else:
             stop_reason = "search stopped"
+
+        proof_text = (
+            "Global exact lexicographic optimum PROVEN: every physical room packing was either "
+            "solved to its exact fixed-packing objective optimum, proven infrastructure-"
+            "infeasible, or excluded by a strict exact integer admissible lower bound."
+            if global_optimum_proven
+            else "Global objective optimality is not proven for this run."
+        )
         best_result.message += (
             f" Best objective among {connected_candidates} connected candidates examined from "
-            f"{room_packings_examined} unique room packings; {manhattan_pruned} additional "
-            "packings pruned by the admissible explicit-port modified-Manhattan lower bound; "
+            f"{room_packings_examined} unique room packings; {fixed_objective_optima_proven} "
+            f"fixed-packing lexicographic optima proven; {manhattan_pruned} additional packings "
+            "pruned by the strict exact-integer modified-Manhattan lower bound; "
             f"{stop_reason}. Identical-module label permutations are symmetry-broken. "
-            "Corridor/Elevator hard feasibility is solved exactly for each examined fixed room "
-            "packing. Mass is a tie-breaker only. Global objective optimality remains unproven "
-            "until true F is optimized over infrastructure alternatives rather than evaluated "
-            "for one hard-feasible infrastructure witness per room packing."
+            f"{proof_text}"
         )
         return best_result
 
@@ -412,8 +511,8 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
             base=base,
             attempts=room_packings_examined,
             message=(
-                f"No connected layout was found within the global {request.time_limit_s:g}s "
-                f"search budget after examining {room_packings_examined} unique room packings."
+                f"No connected layout was found within the global {time_limit_s:g}s search "
+                f"budget after examining {room_packings_examined} unique room packings."
             ),
         )
     elif search_exhausted and room_packings_examined == 0:
@@ -424,17 +523,17 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         )
     else:
         reason = (
-            "the complete room-packing search was exhausted"
+            "the complete exact room-packing search was exhausted"
             if search_exhausted
-            else f"the {request.max_layout_attempts} layout-attempt limit was reached"
+            else f"the {max_layout_attempts} layout-attempt limit was reached"
         )
         result = PlanResult(
             status="NO_CONNECTED_LAYOUT",
             base=base,
             attempts=room_packings_examined,
             message=(
-                "SYSTEM/PLAYER module packings were physically feasible, but the exact "
-                "Corridor/Elevator hard-feasibility subproblem found no connected layout before "
+                "SYSTEM/PLAYER module packings were physically feasible, but no connected "
+                "Corridor/Elevator layout exists among the exactly resolved packings before "
                 f"{reason}."
             ),
         )
@@ -443,9 +542,44 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         result,
         attempts=room_packings_examined,
         connected_candidates=connected_candidates,
+        fixed_objective_optima_proven=fixed_objective_optima_proven,
         manhattan_pruned=manhattan_pruned,
         started_at=started_at,
         time_limit_reached=time_limit_reached,
         search_exhausted=search_exhausted,
     )
     return result
+
+
+def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
+    """Optimize the Base with an exact room-packing / fixed-objective decomposition.
+
+    Stage 3 production search now uses:
+
+    1. a CP-SAT master that enumerates legal SYSTEM/PLAYER room packings;
+    2. the exact pair-flow CP-SAT subproblem that jointly selects Corridor/Elevator
+       infrastructure and proves the accepted fixed-packing lexicographic objective;
+    3. exact integer modified-Manhattan lower bounds to prune only when a packing cannot match
+       the incumbent primary objective;
+    4. exact integer objective ranking across fixed-packing optima.
+
+    A run reports `global_objective_optimum_proven=True` only after the master is exhausted and
+    every unpruned fixed packing has been solved exactly or proven infrastructure-infeasible.
+    Time or layout-attempt limits therefore preserve best-known semantics rather than creating a
+    false global proof.
+    """
+
+    started_at = monotonic()
+    if base is not None and base.tier != request.tier:
+        raise ValueError(
+            f"PlanRequest tier {request.tier} does not match supplied BaseGeometry tier {base.tier}"
+        )
+    base = base or builtin_base(request.tier)
+    instances = expand_instances(MODULES, request.room_counts)
+    return _solve_instances(
+        base,
+        instances,
+        time_limit_s=float(request.time_limit_s),
+        max_layout_attempts=request.max_layout_attempts,
+        started_at=started_at,
+    )
