@@ -317,6 +317,7 @@ class PlanResult:
     connected_candidates_examined: int = 0
     fixed_objective_optima_proven: int = 0
     manhattan_pruned_count: int = 0
+    incumbent_bound_pruned_count: int = 0
     search_time_s: float = 0.0
     time_limit_reached: bool = False
     search_exhausted: bool = False
