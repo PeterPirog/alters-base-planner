@@ -10,26 +10,44 @@ _DATA_DIR = Path(__file__).with_name("data")
 
 # Gameplay capacities are metadata, not geometry. Geometry itself lives only in
 # base-size1.csv ... base-size4.csv so it can be corrected without code changes.
+#
+# The built-in masks were cross-checked on 2026-09-11 against the supplied spatial
+# analysis of the mobile Base. That analysis gives the same exact 0/1/X matrices,
+# dimensions and 4x2 Organics Tank/core coordinates as the CSV files currently stored
+# in this repository. ``verified=True`` therefore means "validated against the project
+# geometry reference"; it does not claim an independent re-extraction from game assets.
 _BUILTIN_METADATA: dict[int, dict[str, object]] = {
     1: {
         "organics_capacity": 300,
-        "verified": False,
-        "note": "Editable provisional Base I mask. CSV cells are the geometry source of truth.",
+        "verified": True,
+        "note": (
+            "Validated mobile Base I mask: 22x12; fixed 4x2 core at x=8..11, y=6..7. "
+            "Matches the 2026-09-11 project spatial-analysis reference."
+        ),
     },
     2: {
         "organics_capacity": 450,
-        "verified": False,
-        "note": "Editable provisional Base II mask. CSV cells are the geometry source of truth.",
+        "verified": True,
+        "note": (
+            "Validated mobile Base II mask: 26x14; fixed 4x2 core at x=10..13, y=7..8. "
+            "Matches the 2026-09-11 project spatial-analysis reference."
+        ),
     },
     3: {
         "organics_capacity": 700,
-        "verified": False,
-        "note": "Editable provisional Base III mask. CSV cells are the geometry source of truth.",
+        "verified": True,
+        "note": (
+            "Validated mobile Base III mask: 30x16; fixed 4x2 core at x=12..15, y=8..9. "
+            "Matches the 2026-09-11 project spatial-analysis reference."
+        ),
     },
     4: {
         "organics_capacity": 800,
-        "verified": False,
-        "note": "Editable provisional Base IV mask. CSV cells are the geometry source of truth.",
+        "verified": True,
+        "note": (
+            "Validated mobile Base IV mask: 34x18; fixed 4x2 core at x=14..17, y=9..10. "
+            "Matches the 2026-09-11 project spatial-analysis reference."
+        ),
     },
 }
 
