@@ -1,17 +1,37 @@
 # The Alters Base Planner
 
-Optimization-based planner for the mobile base in **The Alters**.
+Optimization-based planner for the mobile Base in **The Alters**.
 
-The player selects the base tier and requested room counts in `config/plan.json`. Corridors and Elevators are solver-controlled and are added automatically.
+The user selects Base Tier I-IV and requested counts of optional modules. Baseline mandatory modules are added automatically. Corridor and Elevator are solver-controlled infrastructure and are added automatically when needed.
 
-## Model
+The project aims at a mathematically auditable optimizer, not a visual layout toy: geometry, legal ports, connectivity, travel distances, Base Mass and solver optimality status are all explicit in the result.
 
-The planner has two layers:
+## Project status
 
-1. **hard constraints** — all requested/mandatory modules must fit the selected Base tier, avoid the immovable core and overlaps, use legal explicit room ports and belong to one walkable network rooted at the Airlock;
-2. **one soft objective** — minimize the weighted sum of exact pairwise room travel distances.
+The domain model is unified around one `ModuleSpec` / `ModulePlacement` abstraction:
 
-The normative model is in `docs/OPTIMIZATION_MODEL.md`.
+```text
+SYSTEM  = baseline mandatory modules, added exactly once
+PLAYER  = optional modules whose exact counts come from the user
+SOLVER  = Corridor/Elevator infrastructure selected by optimization
+```
+
+Corridor and Elevator are already canonical module types in the catalogue and in result geometry.
+
+The **active solver is still transitional**:
+
+```text
+CP-SAT SYSTEM/PLAYER placement
+        -> deterministic Corridor/Elevator post-router
+        -> exact graph validation and distance evaluation
+        -> exact F ranking of examined connected candidates
+```
+
+Therefore returned layouts are currently **best-known feasible layouts under the configured search**, not proven global optima over the complete joint placement/routing problem.
+
+The next architectural milestone is Stage 2: wire solver-managed Corridor/Elevator placement and Airlock-rooted connectivity into the optimization domain, using the existing `hard_constraints.py` CP-SAT foundation instead of deepening the greedy router.
+
+See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth and `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract.
 
 ## Validated Base I-IV geometry
 
@@ -27,55 +47,109 @@ src/alters_base_planner/data/base-size4.csv
 CSV semantics:
 
 ```text
-0 = outside usable base
+0 = outside usable Base
 1 = buildable cell
-X = immovable blocked/core cell
+X = immovable blocked core cell
 ```
 
-The supplied 2026-09-11 spatial analysis contains explicit Base I-IV matrices. The repository CSVs were compared with those matrices and already matched them exactly, including the asymmetric fixed 4x2 core. The built-in masks therefore report `geometry_verified = true` against that project reference.
+The supplied 2026-09-11 spatial analysis contains explicit Base I-IV matrices. Repository CSVs were compared against those matrices and match them exactly, including the asymmetric fixed 4x2 core.
 
-| Tier | Grid | Fixed core |
-|---|---:|---|
-| I | 22x12 | x=8..11, y=6..7 |
-| II | 26x14 | x=10..13, y=7..8 |
-| III | 30x16 | x=12..15, y=8..9 |
-| IV | 34x18 | x=14..17, y=9..10 |
+| Tier | Grid | Fixed core | Organics capacity |
+|---|---:|---|---:|
+| I | 22x12 | x=8..11, y=6..7 | 300* |
+| II | 26x14 | x=10..13, y=7..8 | 450 |
+| III | 30x16 | x=12..15, y=8..9 | 700 |
+| IV | 34x18 | x=14..17, y=9..10 | 800 |
 
-The CSV data remain the runtime source of truth. Do not symmetrize the masks or recenter the core. Detailed provenance and coordinate conventions are recorded in `docs/BASE_GEOMETRY_REFERENCE.md`.
+`*` Tier-I value is the current planner value and has weaker provenance than Tier II-IV; the audit keeps that distinction explicit.
 
-## Explicit room ports
+The CSV data are runtime geometry. Do not symmetrize the masks or recenter the core. Detailed provenance is recorded in `docs/BASE_GEOMETRY_REFERENCE.md`.
 
-Every room type defines explicit logical LEFT/RIGHT access ports. Port definitions use **module-local floor-relative coordinates**:
+## Module ownership and configuration
+
+The current baseline automatically contains exactly one SYSTEM instance of:
+
+- Airlock;
+- Captain's Cabin;
+- Command Center;
+- Communication Room;
+- Kitchen;
+- Machinery;
+- Quantum Computer;
+- The Womb.
+
+These modules must not be listed in the user `rooms` configuration.
+
+PLAYER modules are optional and use exact requested counts. Verified count ceilings currently include:
 
 ```text
-local y = 0     -> room floor
-local y = H - 1 -> room top
+Recycler <= 1
+Rapidium Ark <= 5
 ```
 
-For a normal room of width `W` and height `H`, LEFT/RIGHT ports therefore are:
+SOLVER modules are:
 
 ```text
+Corridor  2x1, mass 2
+Elevator  2x1, mass 2
+```
+
+The canonical keys `corridor` and `elevator` are rejected from player room counts. Unknown aliases such as `corridors` and `elevators` are rejected as unknown keys.
+
+## Explicit module ports
+
+Standard modules expose logical LEFT/RIGHT ports in **module-local floor-relative coordinates**:
+
+```text
+local y = 0     -> floor
+local y = H - 1 -> top
+
 LEFT  = (0, 0)
-RIGHT = (W-1, 0)
+RIGHT = (W - 1, 0)
 ```
 
-This is intentionally different from the absolute Base grid, whose `y=0` row is at the top and whose `y` grows downward. When a local port is resolved into the Base grid:
+The absolute Base grid uses the opposite vertical convention (`y=0` at the top), so port conversion is:
 
 ```text
-world_y = room.y + (H - 1 - local_y)
+world_y = module.y + (H - 1 - local_y)
 ```
 
-Thus a normal floor port still resolves to the physical bottom row of a multi-row room, while a verified top-access exception resolves to its physical top row. The connection boundary is the corresponding outside left/right room edge. This matters for multi-row modules: **distance is measured to the real room floor, never to the centroid or ceiling**.
+A normal multi-row module is therefore accessed on its physical floor row, never through its centroid or ceiling.
 
-For a 1x1 room both logical ports occupy the same local and physical cell `(0,0)`, but LEFT and RIGHT remain separate logical directions. Crossing such a room as an intermediate transit room still costs its full width (`1`).
+For a 1x1 module, LEFT and RIGHT occupy the same physical cell but remain distinct logical sides.
 
-Verified exceptions are encoded directly in their port definitions. Radiation Repulsor retains top-row ports, which means local `y=H-1`, and is non-transit.
+Verified exception: **Radiation Repulsor** uses top access and is non-transit. **Rapidium Ark** is also non-transit. Non-transit modules still must connect to the Base, but they cannot act as walk-through bridges.
 
-Resolved absolute port coordinates (`cell`, `edge`, `utility_anchor`) are persisted for every room in `layout.json` for auditability.
+Resolved absolute port coordinates are persisted in `layout.json` for auditability.
+
+## Hard-feasibility rules
+
+A structurally valid layout must satisfy, among other invariants:
+
+- exact SYSTEM and requested PLAYER multiplicity;
+- exact irregular Base mask;
+- no use of `0` or `X` cells;
+- no overlap among any modules;
+- no unsupported rotation;
+- legal explicit ports only;
+- at least one legal network connection for every installed module;
+- global reachability from Airlock;
+- non-transit modules cannot bridge other modules;
+- Corridor/Elevator are solver-managed;
+- vertical travel only through immediately adjacent compatible Elevator modules;
+- no floating Corridor/Elevator islands.
+
+The central/right-side elevator layout seen in community designs is a useful search intuition, **not a hard constraint**.
 
 ## Objective function
 
-Each room type has an accepted default gameplay traffic weight `w` in `src/alters_base_planner/data/usage_weights.json`.
+Each room-like module has a gameplay traffic weight `w` in:
+
+```text
+src/alters_base_planner/data/usage_weights.json
+```
+
+These are planner heuristics, not hidden game constants.
 
 | Module | Weight |
 |---|---:|
@@ -101,25 +175,36 @@ Each room type has an accepted default gameplay traffic weight `w` in `src/alter
 | Quantum Computer | 0.10 |
 | The Womb | 0.10 |
 | Recycler / passive modules / Storage | 0.00 |
+| Corridor / Elevator | 0.00 |
 
-For every unordered pair of rooms with positive weight:
+For every unordered pair of positive-weight endpoint modules:
 
 ```text
-pair_score(i,j) = w(i) * w(j) * d(i,j)
+pair_score(i,j) = w_i * w_j * d(i,j)
 F = sum_{i<j} pair_score(i,j)
 ```
 
-### Exact distance semantics
-
-The endpoint rooms do **not** contribute their own width. Transit rooms do.
+The accepted optimization order is:
 
 ```text
-direct endpoint-room adjacency = 0
-one Corridor module            = +1
-one Elevator module            = +1
-intermediate transit room C    = +width(C) grid cells
-start room                     = 0
-destination room               = 0
+1. lower exact F
+2. lower total Base Mass
+3. fewer Elevator modules
+4. fewer Corridor modules
+```
+
+## Exact distance semantics
+
+Final distance is shortest legal path distance in the installed module graph.
+
+```text
+start endpoint module           = 0
+destination endpoint module     = 0
+direct compatible adjacency     = 0
+one traversed Corridor module   = +1
+one traversed Elevator module   = +1
+intermediate transit module C   = +width(C)
+non-transit module              = cannot be crossed
 ```
 
 Example:
@@ -132,63 +217,42 @@ d(C,B) = 0
 d(A,B) = 6
 ```
 
-Every individual Elevator is +1, so a four-module Elevator stack contributes 4 if all four modules are traversed.
+A four-module Elevator stack contributes 4 when all four Elevator modules are traversed.
 
-### Modified Manhattan lower bound
+## Modified Manhattan lower bound
 
-Before expensive automatic routing, the planner calculates an admissible modified Manhattan lower bound **between explicit ports**.
+Modified Manhattan is used only as an admissible search lower bound, never as final distance.
 
-On the same floor, horizontal distance is scaled by the 2x1 Corridor footprint:
+Same floor:
 
 ```text
 horizontal_lb = ceil(abs(edge_x_a - edge_x_b) / 2)
 ```
 
-Across floors, utility-anchor coordinates are used so Elevator width is not double-counted:
+Different floors use external 2x1 utility anchors:
 
 ```text
 horizontal_lb = ceil(abs(anchor_x_a - anchor_x_b) / 2)
-vertical_lb   = abs(port_y_a - port_y_b) + 1
+vertical_lb   = abs(edge_y_a - edge_y_b) + 1
 ```
 
 The weighted bound is:
 
 ```text
-F_LB = sum_{i<j} w(i) * w(j) * LB(i,j)
+F_LB = sum_{i<j} w_i * w_j * LB(i,j)
 ```
 
-If `F_LB` is already worse than the best exact solution, that room packing is pruned. The final reported objective always uses the exact legal module graph, not Manhattan approximation.
-
-## Hard constraints
-
-The solver enforces or validates:
-
-- exact requested room counts;
-- mandatory story/core rooms automatically included;
-- selected irregular Base I-IV CSV mask;
-- no overlap with the fixed `X` obstruction;
-- no room/module overlap;
-- documented module orientation;
-- explicit legal LEFT/RIGHT ports and their real floor rows;
-- direct room connections only where opposite-side port boundaries meet;
-- Corridors/Elevators only at valid external port anchors;
-- Corridors for horizontal utility connectivity;
-- vertical connectivity only between immediately adjacent Elevator modules at the same `x`;
-- one connected network rooted at Airlock;
-- non-transit terminal modules cannot be used as bridges;
-- all Corridors/Elevators belong to the access network;
-- continuous Elevator coverage across every used port-floor span;
-- verified module-count ceilings such as Recycler <= 1 and Rapidium Ark <= 5.
-
-For every adjacent floor pair `(y,y+1)`:
+The implementation must maintain:
 
 ```text
-ElevatorX[y] ∩ ElevatorX[y+1] != empty
+F_LB <= F_exact
 ```
 
-## Base Mass and journey cost
+A violation is an internal solver/model error and fails fast.
 
-Every feasible layout reports:
+## Base Mass and journey feasibility
+
+Every structurally feasible layout reports:
 
 ```text
 room_mass
@@ -197,37 +261,29 @@ total_base_mass
 organics_required_for_journey
 organics_tank_capacity
 capacity_margin
-travel_feasible_at_full_tank
+journey feasibility
 mass_breakdown
 ```
 
-For the mobile base:
+For the mobile Base:
 
 ```text
 organics_required_for_journey = total_base_mass
 ```
 
-Corridor mass = 2. Elevator module mass = 2.
+Structural feasibility and journey feasibility are separate. A layout can be geometrically/topologically valid yet too heavy to travel. Such a layout must never be labelled journey-feasible.
 
-Mass is not part of primary `F`; for equal `F`, lower mass may be used as a tie-breaker.
-
-Room size/mass evidence and known source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
+Room size/mass evidence and source conflicts are recorded in `docs/ROOM_DATA_AUDIT.md`.
 
 ## Example graphical result
 
-The planner generates a color-coded diagram with the Base Tier, optimization score, average distances, module legend and journey mass.
+The planner generates PNG/SVG plans from the selected exact Base mask.
 
 ![Example optimized base layout](docs/example-layout.svg)
 
-The actual result is generated from the selected `base-sizeN.csv` mask and JSON plan. PNG/SVG semantics:
+The rendering distinguishes unavailable/core/buildable cells, module types, Corridors and Elevators. One y-grid cell is rendered twice as tall as one x-grid cell.
 
-- **black** — unavailable cells, outside the base and the fixed core;
-- **white** — empty buildable cells;
-- distinct colors — room types;
-- grey — Corridor;
-- magenta — Elevator.
-
-One y-grid cell is rendered twice as tall as one x-grid cell. The legend shows each room's **size, mass and usage weight**. The chart title reports Base Tier, `F`, arithmetic and weighted mean distance, room mass, utility mass, **TOTAL BASE MASS**, and journey Organics versus tank capacity.
+The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current transitional architecture it has not.
 
 ## Player configuration
 
@@ -261,7 +317,7 @@ Edit `config/plan.json`:
 }
 ```
 
-Mandatory rooms are added automatically. `corridor`, `corridors`, `elevator` and `elevators` are invalid player configuration keys — utility count and placement are solver outputs.
+SYSTEM modules are injected automatically. Corridor/Elevator counts are solver outputs.
 
 ## Run from a fresh clone
 
@@ -269,7 +325,7 @@ Python **3.11 or newer** is required.
 
 ### Windows PowerShell
 
-Because this repository is private, clone it while authenticated to GitHub.
+Because this repository is private, clone it while authenticated to GitHub:
 
 ```powershell
 git clone https://github.com/PeterPirog/alters-base-planner.git
@@ -282,27 +338,27 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Edit `config/plan.json`, then run:
+Run:
 
 ```powershell
 python -m alters_base_planner.cli config/plan.json
 ```
 
-Equivalent installed CLI command:
+Equivalent installed command:
 
 ```powershell
 alters-base-planner config/plan.json
 ```
 
-Successful calculation writes the paths configured in `config/plan.json`, normally:
+Configured output normally includes:
 
 ```text
-layout.png   # graphical plan
-layout.svg   # vector graphical plan
-layout.json  # full machine-readable result, ports and audit metrics
+layout.png
+layout.svg
+layout.json
 ```
 
-Open the generated PNG directly from PowerShell:
+Open the PNG from PowerShell:
 
 ```powershell
 Start-Process .\layout.png
@@ -322,37 +378,23 @@ python -m alters_base_planner.cli config/plan.json
 
 ## Streamlit UI
 
-The JSON configuration remains the source of room counts. The optional Streamlit interface runs the same solver and displays/downloads the generated diagram:
-
 ```bash
 python -m streamlit run app.py
 ```
 
+The UI uses the same configuration and solver semantics as the CLI, clearly separates structural/journey feasibility, and exposes the auditable result JSON.
+
 ## Result JSON
 
-The JSON output persists the exact objective, modified-Manhattan lower bound, arithmetic/weighted mean distance, pairwise distances/contributions, resolved explicit room ports, usage weights, generated utility counts, geometry provenance, module masses and journey feasibility.
+The JSON output persists the exact objective for the returned candidate, modified-Manhattan lower bound, pairwise distances/contributions, resolved ports, usage weights, installed solver infrastructure, geometry provenance, mass metrics, journey feasibility and search/optimality diagnostics.
 
-## Optimization engine status
-
-The current implementation:
-
-1. reads selected Base geometry from CSV;
-2. enumerates legal room placements with OR-Tools CP-SAT;
-3. resolves floor-relative module ports into absolute Base-grid access rows;
-4. calculates weighted modified-Manhattan lower bounds and prunes dominated packings;
-5. constructs Corridors/Elevators automatically from external port anchors;
-6. validates connectivity and continuous vertical Elevator coverage;
-7. computes exact shortest paths with intermediate-room traversal costs;
-8. evaluates exact `F` for every connected candidate generated;
-9. retains the smallest examined `F`;
-10. persists Base Mass, port coordinates and journey metrics;
-11. renders PNG/SVG output.
-
-The current placement + post-router architecture does **not yet prove** global optimality across the full joint room + Corridor + Elevator search space, so:
+A current feasible result has:
 
 ```text
 global_objective_optimum_proven = false
 ```
+
+until the complete joint problem (or exact decomposition with valid bounds) establishes a proof.
 
 ## Development
 
@@ -360,6 +402,23 @@ global_objective_optimum_proven = false
 ruff check .
 pytest -q
 ```
+
+CI runs both commands on Python 3.11, 3.12 and 3.13.
+
+## Roadmap summary
+
+```text
+Stage 0  data/contract stabilization           COMPLETE / maintain
+Stage 1  unified Module domain                 COMPLETE / maintain
+Stage 2  integrated hard feasibility           NEXT
+Stage 3  exact objective integration           planned
+Stage 4  benchmark/performance suite           planned
+Stage 5  user-facing planning quality          planned
+Stage 6  progression-aware mobile Base         deferred
+Stage 7  The Last Variable DLC                 deferred until exact data
+```
+
+The DLC is intentionally not approximated with mobile Base geometry.
 
 ## License / trademarks
 
