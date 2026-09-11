@@ -139,12 +139,12 @@ def test_generated_utilities_are_solver_module_placements() -> None:
     assert result.status == "FEASIBLE"
     assert len(result.utilities) == 1
     utility = result.utilities[0]
-    assert utility.module_key == "corridor"
+    # Both canonical solver modules provide horizontal attachment. Choosing one here is a
+    # satisfiability witness, not a hidden routing objective or tie-breaker.
+    assert utility.module_key in {"corridor", "elevator"}
     assert MODULE_BY_KEY[utility.module_key].authority is PlacementAuthority.SOLVER
-    assert (utility.width, utility.height) == (
-        MODULE_BY_KEY["corridor"].width,
-        MODULE_BY_KEY["corridor"].height,
-    )
+    spec = MODULE_BY_KEY[utility.module_key]
+    assert (utility.width, utility.height) == (spec.width, spec.height)
 
 
 def test_generated_utilities_cannot_overlap_each_other() -> None:
