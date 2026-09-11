@@ -10,6 +10,7 @@ from alters_base_planner.catalog import (
 )
 from alters_base_planner.models import (
     ModulePlacement,
+    ModuleType,
     PlacementAuthority,
     PortSide,
     floor_ports,
@@ -38,6 +39,13 @@ def test_authority_partitions_cover_catalog_without_overlap() -> None:
     assert all(module.authority is PlacementAuthority.SYSTEM for module in SYSTEM_MODULES)
     assert all(module.authority is PlacementAuthority.PLAYER for module in PLAYER_MODULES)
     assert all(module.authority is PlacementAuthority.SOLVER for module in SOLVER_MODULES)
+
+
+def test_placement_authority_does_not_override_game_module_type() -> None:
+    assert MODULE_BY_KEY["kitchen"].authority is PlacementAuthority.SYSTEM
+    assert MODULE_BY_KEY["womb"].authority is PlacementAuthority.SYSTEM
+    assert MODULE_BY_KEY["kitchen"].module_type is ModuleType.WORK
+    assert MODULE_BY_KEY["womb"].module_type is ModuleType.WORK
 
 
 def test_solver_infrastructure_is_canonical_module_data() -> None:
