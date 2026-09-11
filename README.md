@@ -22,6 +22,7 @@ The production solver now uses an **exact objective decomposition**:
 CP-SAT SYSTEM/PLAYER room-packing master
         -> exact integer modified-Manhattan lower bound
         -> exact fixed-packing pair-flow CP-SAT
+             optional exact cut: scaled_F <= incumbent_scaled_F
              jointly selects Corridor/Elevator infrastructure
              minimizes exact weighted travel F
              then mass -> Elevators -> Corridors
@@ -31,13 +32,19 @@ CP-SAT SYSTEM/PLAYER room-packing master
 
 The old deterministic greedy post-router is not part of the correctness boundary.
 
-For a fixed room packing, the pair-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT completes all four phases. Across room packings, the master may prune only when the exact integer admissible bound satisfies:
+For a fixed room packing, the pair-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT completes all four phases. Across room packings, the master may prune by the admissible lower bound only when:
 
 ```text
 scaled_F_LB > incumbent_scaled_F
 ```
 
-Equality is not pruned because an equal primary objective can still improve Base mass, Elevator count or Corridor count.
+After an exact incumbent exists, later fixed subproblems also receive the proof-safe constraint:
+
+```text
+scaled_F <= incumbent_scaled_F
+```
+
+Both rules deliberately preserve equality where required: an equal primary objective can still improve Base mass, Elevator count or Corridor count. If the bounded exact fixed model is proven infeasible, that packing cannot match or improve the incumbent primary objective and can be excluded without weakening the global proof.
 
 A run sets:
 
@@ -45,7 +52,7 @@ A run sets:
 global_objective_optimum_proven = true
 ```
 
-**only** when the room-packing search is exhausted and every unpruned packing has been solved to its exact fixed-packing optimum or proven infrastructure-infeasible. A time limit or layout-attempt limit therefore yields a best-known feasible result, never a false proof.
+**only** when the room-packing search is exhausted and every relevant packing is either solved to its exact fixed-packing optimum, proven infrastructure-infeasible, or excluded by a proof-safe exact bound. A time limit or layout-attempt limit therefore yields a best-known feasible result, never a false proof.
 
 The exhaustive reference solvers remain independent correctness oracles for tiny instances:
 
@@ -61,7 +68,7 @@ global_objective_oracle.py
     exhaustive tiny-instance room + infrastructure proof oracle
 ```
 
-See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level contract, `docs/OPTIMIZATION_MODEL.md` for the mathematical solver contract and `docs/STAGE3_OBJECTIVE_ORACLE.md` for proof/validation details.
+See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level contract, `docs/OPTIMIZATION_MODEL.md` for the mathematical solver contract, `docs/STAGE3_OBJECTIVE_ORACLE.md` for proof/validation details and `docs/BENCHMARKS.md` for Stage-4 measurement methodology.
 
 ## Base I-IV geometry
 
@@ -344,6 +351,15 @@ pytest -q
 
 CI runs both commands on Python 3.11, 3.12 and 3.13.
 
+Stage-4 benchmark harness:
+
+```bash
+alters-base-benchmark --suite smoke
+alters-base-benchmark --suite representative
+```
+
+Representative benchmarks are deliberately opt-in and are not part of normal CI. See `docs/BENCHMARKS.md`.
+
 ## Roadmap
 
 ```text
@@ -351,13 +367,13 @@ Stage 0  data/contract stabilization           COMPLETE / maintain
 Stage 1  unified Module domain                 COMPLETE / maintain
 Stage 2  exact hard-feasibility decomposition  COMPLETE / maintain
 Stage 3  exact objective decomposition         COMPLETE / harden
-Stage 4  benchmark/performance engineering     NEXT
+Stage 4  benchmark/performance engineering     IN PROGRESS
 Stage 5  user-facing planning quality          planned
 Stage 6  progression-aware mobile Base         deferred
 Stage 7  The Last Variable DLC                 deferred until exact data
 ```
 
-Stage 3 correctness is validated on independently exhaustive tiny known-optimum cases. This does **not** imply that a realistic Tier I-IV run will always finish a global proof inside its configured budget; when it does not, the planner reports the best-known feasible result explicitly.
+Stage 3 correctness is validated on independently exhaustive tiny known-optimum cases. Stage 4 is improving scalability without weakening those exact semantics. This does **not** imply that a realistic Tier I-IV run will always finish a global proof inside its configured budget; when it does not, the planner reports the best-known feasible result explicitly.
 
 The DLC is intentionally not approximated with mobile-Base geometry.
 
