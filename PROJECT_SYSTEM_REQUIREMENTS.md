@@ -51,7 +51,7 @@ produce a layout that:
 
 The target architecture is one **joint exact optimizer**, or an **exact decomposition with valid bounds**, over module placement, solver infrastructure, connectivity and the true gameplay objective.
 
-The current placement -> post-router -> exact-evaluation architecture is transitional and must not be deepened unnecessarily.
+The former deterministic placement -> greedy post-router architecture is no longer acceptable as a correctness boundary. Stage 2 now uses an exact hard-feasibility decomposition. Stage 3 must extend exactness to the true objective rather than reintroducing heuristic routing.
 
 ---
 
@@ -231,7 +231,7 @@ In the canonical model:
 - Corridor provides horizontal LEFT/RIGHT connectivity;
 - Elevator provides horizontal attachment plus vertical UP/DOWN connectivity to immediately adjacent stacked Elevator modules.
 
-Transitional implementation details may remain during migration, but target semantics must be expressible through module/port compatibility rather than ad-hoc duplicated geometry models.
+These semantics must remain expressible through canonical module/port compatibility rather than a separate heuristic router.
 
 ---
 
@@ -316,7 +316,7 @@ Corridor is 2x1, solver-managed, horizontal, must fit the Base, avoid overlaps, 
 
 ### H10 — Elevator semantics and continuity
 
-Elevator is 2x1, solver-managed. Vertical movement exists only between immediately adjacent compatible Elevator modules. Each used vertical level is represented by an Elevator module.
+Elevator is 2x1 and solver-managed. Vertical movement exists only between immediately adjacent compatible Elevator modules. Each used vertical level is represented by an Elevator module.
 
 A shifted shaft is legal only through a real transfer path on a shared floor. Community preference for a central shaft is not a hard rule.
 
@@ -508,19 +508,27 @@ Community “central elevator” strategies may guide search but must not become
 
 ## 11. OR-Tools / solver correctness requirements
 
-### 11.1 Current implementation state
+### 11.1 Stage 1 domain state — COMPLETE / MAINTAIN
 
-**Stage 1 domain unification is complete.** `ModuleSpec` is the canonical definition for SYSTEM/PLAYER/SOLVER modules; `ModulePlacement` represents every concrete installed module, including Corridor and Elevator; configuration ownership is derived from `PlacementAuthority`.
+`ModuleSpec` is the canonical definition for SYSTEM/PLAYER/SOLVER modules; `ModulePlacement` represents every concrete installed module, including Corridor and Elevator; configuration ownership is derived from `PlacementAuthority`.
 
-This does **not** mean the active optimization is joint yet.
+### 11.2 Stage 2 hard-feasibility architecture — COMPLETE / MAINTAIN
 
-The production CP-SAT model still solves the SYSTEM/PLAYER placement subproblem using pre-enumerated legal candidates:
+The production solver uses an exact decomposition for hard feasibility:
+
+```text
+room-packing master CP-SAT
+        -> fixed-packing Corridor/Elevator hard-feasibility CP-SAT
+        -> exact graph evaluator
+```
+
+The room-packing master uses pre-enumerated legal SYSTEM/PLAYER candidates:
 
 ```text
 P[i,c] = 1 iff module instance i uses candidate placement c
 ```
 
-Required current constraints:
+It enforces:
 
 ```text
 ExactlyOne(P[i,*])                  for every SYSTEM/PLAYER instance
@@ -528,24 +536,33 @@ AtMostOne(cell occupancy literals) for every Base cell
 symmetry breaking                  for identical instances
 ```
 
-Candidate enumeration prefilters positions outside `1` cells, overlapping `X` or requiring unsupported rotation.
+Candidate enumeration prefilters positions outside `1` cells, overlapping `X` or requiring unsupported rotation. Its centre/port-proximity score is only a search-order surrogate, never gameplay objective `F`.
 
-The current CP-SAT ordering/surrogate is a search device only and MUST NOT be presented as the gameplay objective.
+For each fixed room packing, the exact infrastructure subproblem decides Corridor/Elevator selection and enforces:
 
-Corridor/Elevator routing and exact `F` evaluation still happen after room placement, so the current engine does not prove a global optimum over the complete problem.
+- canonical 2x1 SOLVER anchors;
+- shared room/utility no-overlap;
+- legal explicit port adjacency;
+- exact room-to-utility anchor compatibility;
+- horizontal utility connectivity;
+- vertical connectivity only through adjacent stacked Elevators;
+- non-transit terminal behaviour;
+- exact Airlock-rooted single-commodity flow;
+- at least one reachable access port for every non-root installed room;
+- every selected utility as network demand, preventing floating infrastructure.
 
-### 11.2 Existing integrated hard-feasibility foundation
+`INFEASIBLE` from this subproblem is a proof that the fixed room packing has no legal infrastructure network under the accepted hard model. `UNKNOWN`/budget exhaustion must remain unknown/time-limited and must never be relabelled infeasible.
 
-`src/alters_base_planner/hard_constraints.py` already contains a reusable CP-SAT hard-feasibility layer for placement options plus Corridor/Elevator anchor variables, shared occupancy, port connectivity, non-transit semantics and Airlock-rooted flow. Synthetic tests validate key feasible/infeasible cases.
+The exact graph evaluator is an independent consistency check. If the hard CP-SAT returns a feasible witness that the exact evaluator rejects, the planner must fail fast as an internal modelling error.
 
-It is not yet wired into the production `solve_plan()` path and therefore does not make Stage 2 complete.
+The subproblem currently has no gameplay objective; it returns one hard-feasible infrastructure witness. Therefore the current engine still cannot prove global objective optimality.
 
-### 11.3 Target exact formulation
+### 11.3 Stage 3 exact-objective target — NEXT
 
 The project must evolve toward either:
 
-1. one integrated exact CP-SAT formulation; or
-2. an exact decomposition with valid lower bounds and an optimality proof.
+1. one integrated exact objective formulation; or
+2. an exact objective decomposition with valid lower bounds and an optimality proof.
 
 The target model/decomposition must cover:
 
@@ -565,7 +582,7 @@ Never set:
 global_objective_optimum_proven = true
 ```
 
-unless the complete joint problem or exact decomposition has actually established the proof.
+unless the complete objective problem or exact decomposition has actually established the proof.
 
 ### 11.4 Model validation and fail-fast behaviour
 
@@ -573,7 +590,7 @@ Every CP-SAT model must pass `CpModel.validate()` before solving. Internal invar
 
 ### 11.5 Search budget
 
-`time_limit_s` is one global wall-clock budget for the complete planning call, not a fresh budget per packing attempt.
+`time_limit_s` is one global wall-clock budget for the complete planning call, not a fresh budget per packing or subproblem.
 
 Persist at minimum:
 
@@ -680,14 +697,14 @@ Known decisions/conflicts include:
 
 ### Stage 0 — Data and contract stabilization — COMPLETE / MAINTAIN
 
-Deliverables achieved/maintained:
+Delivered/maintained:
 
 - validated Base I-IV CSV geometry;
 - module dimensions/masses and key limits;
 - standard floor ports plus verified exception(s);
 - traffic-weight audit;
 - JSON validation;
-- exact post-routing distance evaluator;
+- exact graph distance evaluator;
 - CI on Python 3.11/3.12/3.13.
 
 Acceptance: tests and CI remain green after every future change.
@@ -698,44 +715,45 @@ Delivered:
 
 - explicit `SYSTEM`, `PLAYER`, `SOLVER` authority;
 - one canonical `ModuleSpec` catalogue including Corridor/Elevator;
-- one `ModulePlacement` geometry representation for concrete installed modules;
+- one `ModulePlacement` geometry representation for installed modules;
 - shared occupancy/geometry helpers;
 - standard derived ports;
 - canonical utility port/vertical-connectivity data;
 - authority-driven configuration validation;
 - regression coverage for authority partitions and unified placements.
 
-Stage 1 completion does not imply joint optimization; the post-router is still transitional.
+### Stage 2 — Exact hard-feasibility decomposition — COMPLETE / MAINTAIN
 
-### Stage 2 — Integrated hard-feasibility model — NEXT
+Delivered:
 
-Goal: move Corridor/Elevator placement and network correctness into the active optimization domain.
-
-Deliverables:
-
-- production decision variables for Corridor/Elevator placement;
-- shared no-overlap constraints;
-- per-module legal connection semantics;
-- exact Airlock-rooted connectivity (flow or equivalent);
-- exact non-transit handling;
-- exact Elevator vertical continuity;
+- production Corridor/Elevator decision variables in an exact fixed-packing subproblem;
+- shared room/utility no-overlap;
+- legal explicit port/anchor connectivity;
+- Airlock-rooted single-commodity flow;
+- non-transit terminal handling;
+- adjacent-Elevator-only vertical connectivity;
 - no floating utilities;
-- integration of the existing `hard_constraints.py` foundation into production solving.
+- exact `INFEASIBLE` proof for a fixed room packing;
+- global time budget propagation into the subproblem;
+- fail-fast cross-check against the exact graph evaluator;
+- synthetic feasible/infeasible regression cases.
 
-Acceptance: small synthetic cases with independently known feasible/infeasible outcomes are proven correctly by CP-SAT or an exact decomposition, and production candidates no longer depend on greedy routing for correctness.
+The room-packing master plus exact infrastructure subproblem is an accepted exact decomposition for **hard feasibility**. It deliberately does not claim objective optimality.
 
-### Stage 3 — Exact objective integration
+### Stage 3 — Exact objective integration — NEXT
 
-Goal: optimize true `F`, not only evaluate it after a candidate is routed.
+Goal: optimize true `F` over infrastructure alternatives and obtain valid objective bounds/proofs.
 
 Deliverables:
 
-- exact path-cost representation or exact routing subproblem;
-- valid lower bounds;
+- exact path-cost representation or exact objective routing subproblem;
+- valid lower bounds across room placement and infrastructure choices;
 - incumbent/bound reporting;
-- optimality proof on benchmark instances when search completes.
+- exact lexicographic tie-break handling;
+- optimality proof on benchmark instances when search completes;
+- tiny independently exhaustive cases that match the exact optimum.
 
-Acceptance: match exhaustive enumeration on small instances exactly.
+Acceptance: compare against exhaustive enumeration on small instances and match the true optimum exactly.
 
 ### Stage 4 — Performance and benchmark suite
 
@@ -744,7 +762,7 @@ Deliverables:
 - representative Tier I-IV benchmark plans;
 - deterministic seeds/options where practical;
 - runtime, candidate count, pruning, bound quality and objective metrics;
-- symmetry breaking and domain reduction;
+- symmetry breaking and mathematically safe domain reduction;
 - regression thresholds that detect solver-quality degradation.
 
 No performance claim without reproducible benchmark evidence.
@@ -799,6 +817,8 @@ Minimum categories:
 - Airlock reachability;
 - utility overlap rejection;
 - Elevator continuity;
+- no floating utilities;
+- fixed-packing hard-feasibility proof cases;
 - Manhattan LB admissibility;
 - objective contribution sum invariant;
 - mass/journey calculation;
@@ -807,7 +827,7 @@ Minimum categories:
 - time-budget semantics;
 - end-to-end PNG/SVG/JSON generation.
 
-Future exact solver work must add tiny instances whose optimum is independently known by exhaustive enumeration.
+Stage 3 exact-objective work must add tiny instances whose optimum is independently known by exhaustive enumeration.
 
 ---
 
@@ -823,7 +843,7 @@ When developing this repository through dialogue:
 6. Treat solver correctness as more important than cosmetic features.
 7. Add tests for every new hard invariant or distance/objective rule.
 8. Keep documentation synchronized with implementation.
-9. Never hide heuristic routing, incomplete search, time limits or lack of optimality proof.
+9. Never hide incomplete search, time limits or lack of objective optimality proof.
 10. After each significant iteration report global progress, CI, remaining architectural gaps and the next highest-value milestone.
 
 For major solver changes, prefer an auditable branch/PR workflow unless the Project Manager explicitly requests direct changes to `main`.
@@ -836,7 +856,7 @@ The core mobile-Base planner succeeds when, for a selected tier and requested op
 
 1. model all SYSTEM, PLAYER and SOLVER modules correctly;
 2. prove hard feasibility/infeasibility under the exact Base mask;
-3. generate Corridor/Elevator placement as part of the optimization problem;
+3. generate Corridor/Elevator placement through an exact optimization/decomposition model;
 4. enforce legal ports, Airlock-rooted connectivity, terminal behaviour and Elevator rules;
 5. compute exact travel distances and true weighted `F`;
 6. minimize true `F` and, when search completes, provide a valid global optimality proof;
@@ -845,4 +865,4 @@ The core mobile-Base planner succeeds when, for a selected tier and requested op
 9. pass the full CI/benchmark suite without regression;
 10. remain extensible to progression-aware and DLC modes without corrupting the mobile-Base model.
 
-Until item 6 is achieved for the complete joint problem, returned layouts must be described as **best-known feasible layouts under the current search architecture**, never as globally optimal designs.
+Items 1-4 are now structurally represented in the Stage-2 architecture. Item 6 is not yet achieved. Until the complete objective problem has an exact proof mechanism, returned layouts must be described as **best-known feasible layouts under the current search architecture**, never as globally optimal designs.
