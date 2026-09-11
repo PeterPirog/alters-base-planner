@@ -5,7 +5,8 @@ from pathlib import Path
 from textwrap import fill as wrap_text
 
 from .catalog import MODULE_BY_KEY
-from .models import PlanResult
+from .models import ModulePlacement, PlacementAuthority, PlanResult
+from .serialization import average_pair_distance
 
 _COLOR_LIST = (
     "#4E79A7",
@@ -42,7 +43,11 @@ _COLOR_LIST = (
 MODULE_COLORS = {
     key: _COLOR_LIST[index % len(_COLOR_LIST)]
     for index, key in enumerate(
-        sorted(key for key, spec in MODULE_BY_KEY.items() if spec.authority.value != "solver")
+        sorted(
+            key
+            for key, spec in MODULE_BY_KEY.items()
+            if spec.authority is not PlacementAuthority.SOLVER
+        )
     )
 }
 
@@ -50,11 +55,18 @@ _UTILITY_COLORS = {"corridor": "#D1D5DB", "elevator": "#E879F9"}
 _UTILITY_LABELS = {"corridor": "C", "elevator": "E"}
 
 
-def average_pair_distance(result: PlanResult) -> float:
-    """Arithmetic mean of all positive-weight unordered room-pair distances."""
-
-    values = list(result.pairwise_distances.values())
-    return sum(values) / len(values) if values else 0.0
+def _partition_modules(
+    result: PlanResult,
+) -> tuple[list[ModulePlacement], list[ModulePlacement]]:
+    rooms: list[ModulePlacement] = []
+    utilities: list[ModulePlacement] = []
+    for module in result.modules:
+        spec = MODULE_BY_KEY[module.module_key]
+        if spec.authority is PlacementAuthority.SOLVER:
+            utilities.append(module)
+        else:
+            rooms.append(module)
+    return rooms, utilities
 
 
 def _metrics_caption(result: PlanResult) -> str:
@@ -77,6 +89,7 @@ def _utility_visual(module_key: str) -> tuple[str, str]:
 def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
     """Render SVG using game-like rectangular cells: height = 2 * width."""
 
+    rooms, utilities = _partition_modules(result)
     base = result.base
     header_h = 38
     width_px = base.width * cell_w
@@ -87,15 +100,13 @@ def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
         f'<text x="8" y="23" font-family="sans-serif" font-size="12" fill="#f8fafc">{escape(_metrics_caption(result))}</text>',
     ]
 
-    # Anything outside allowed_cells stays black. Allowed empty cells are white;
-    # fixed blocked cells are also black by design.
     for x, y in base.allowed_cells:
         fill = "#000000" if (x, y) in base.blocked_cells else "#FFFFFF"
         parts.append(
             f'<rect x="{x*cell_w}" y="{header_h+y*cell_h}" width="{cell_w}" height="{cell_h}" fill="{fill}" stroke="#808080" stroke-width="1"/>'
         )
 
-    for utility in result.utilities:
+    for utility in utilities:
         fill, label = _utility_visual(utility.module_key)
         parts.append(
             f'<rect x="{utility.x*cell_w}" y="{header_h+utility.y*cell_h}" width="{utility.width*cell_w}" height="{utility.height*cell_h}" rx="3" fill="{fill}" stroke="#111827" stroke-width="1"/>'
@@ -104,7 +115,7 @@ def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
             f'<text x="{(utility.x+utility.width/2)*cell_w}" y="{header_h+(utility.y+utility.height/2)*cell_h+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0f172a">{label}</text>'
         )
 
-    for room in result.rooms:
+    for room in rooms:
         spec = MODULE_BY_KEY[room.module_key]
         fill = MODULE_COLORS[room.module_key]
         x = room.x * cell_w
@@ -114,9 +125,8 @@ def render_svg(result: PlanResult, cell_w: int = 24, cell_h: int = 48) -> str:
         parts.append(
             f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" fill="{fill}" stroke="#111827" stroke-width="1.5"/>'
         )
-        name = escape(spec.name)
         parts.append(
-            f'<text x="{x+w/2}" y="{y+h/2+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#071018">{name}</text>'
+            f'<text x="{x+w/2}" y="{y+h/2+4}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#071018">{escape(spec.name)}</text>'
         )
 
     parts.append("</svg>")
@@ -132,8 +142,9 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch, Rectangle
 
+    rooms, utilities = _partition_modules(result)
     base = result.base
-    used_module_keys = sorted({room.module_key for room in result.rooms})
+    used_module_keys = sorted({room.module_key for room in rooms})
     legend_rows = len(used_module_keys) + 4
     fig_w = max(10.5, base.width * 0.34 + 4.5)
     fig_h = max(8.0, base.height * 0.68 + 2.2, legend_rows * 0.28)
@@ -141,7 +152,6 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
     fig.patch.set_facecolor("white")
     ax.set_facecolor("black")
 
-    # Entire bounding box remains black: unavailable/outside-base cells.
     for x, y in base.allowed_cells:
         cell_color = "black" if (x, y) in base.blocked_cells else "white"
         edge_color = "#404040" if cell_color == "black" else "#B0B0B0"
@@ -149,7 +159,7 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
             Rectangle((x, y), 1, 1, facecolor=cell_color, edgecolor=edge_color, linewidth=0.55)
         )
 
-    for utility in result.utilities:
+    for utility in utilities:
         face, label = _utility_visual(utility.module_key)
         for xx, yy in utility.cells:
             ax.add_patch(
@@ -172,7 +182,7 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
             fontweight="bold",
         )
 
-    for room in result.rooms:
+    for room in rooms:
         spec = MODULE_BY_KEY[room.module_key]
         color = MODULE_COLORS[room.module_key]
         for xx, yy in room.cells:
@@ -199,7 +209,6 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
 
     ax.set_xlim(0, base.width)
     ax.set_ylim(base.height, 0)
-    # One y-grid unit is rendered twice as tall as one x-grid unit.
     ax.set_aspect(2.0, adjustable="box")
     ax.set_xticks(range(base.width + 1))
     ax.set_yticks(range(base.height + 1))
