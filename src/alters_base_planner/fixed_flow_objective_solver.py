@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from fractions import Fraction
 from time import monotonic
 
 from ortools.sat.python import cp_model
@@ -18,6 +16,7 @@ from .models import (
     ResolvedPort,
     resolve_ports,
 )
+from .objective import ObjectivePair, build_scaled_objective
 
 NodeId = str
 Anchor = tuple[int, int]
@@ -51,14 +50,6 @@ class _Arc:
     target: NodeId
     cost: int
     conditions: tuple[cp_model.IntVar, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class _Pair:
-    pair_id: str
-    source_instance_id: str
-    target_instance_id: str
-    coefficient: int
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
@@ -182,44 +173,13 @@ def _build_path_graph(
     return tuple(nodes), room_nodes, tuple(arcs)
 
 
-def _scaled_pairs(
-    rooms: tuple[ModulePlacement, ...],
-) -> tuple[int, tuple[_Pair, ...]]:
-    """Convert decimal traffic weights to exact integer pair coefficients."""
-
-    active = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
-    fractional: list[tuple[str, str, str, Fraction]] = []
-    scale = 1
-
-    for index, room_a in enumerate(active):
-        weight_a = Fraction(str(MODULE_BY_KEY[room_a.module_key].visit_weight))
-        for room_b in active[index + 1 :]:
-            weight_b = Fraction(str(MODULE_BY_KEY[room_b.module_key].visit_weight))
-            weight = weight_a * weight_b
-            pair_id = f"{room_a.instance_id}|{room_b.instance_id}"
-            fractional.append((pair_id, room_a.instance_id, room_b.instance_id, weight))
-            scale = math.lcm(scale, weight.denominator)
-
-    pairs: list[_Pair] = []
-    for pair_id, source, target, weight in fractional:
-        coefficient_fraction = weight * scale
-        if coefficient_fraction.denominator != 1:
-            raise AssertionError("Objective weight scaling did not produce an integer coefficient")
-        coefficient = coefficient_fraction.numerator
-        if coefficient <= 0:
-            raise AssertionError("Positive-weight objective pair has a non-positive coefficient")
-        pairs.append(_Pair(pair_id, source, target, coefficient))
-
-    return scale, tuple(pairs)
-
-
 def _add_pair_flow_objective(
     model: cp_model.CpModel,
     *,
     nodes: tuple[NodeId, ...],
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
-    pairs: tuple[_Pair, ...],
+    pairs: tuple[ObjectivePair, ...],
 ):
     """Add one unit-flow shortest-path problem per weighted endpoint pair."""
 
@@ -369,13 +329,13 @@ def solve_fixed_layout_flow_objective(
         root_instance_id=root_instance_id,
     )
     nodes, room_nodes, arcs = _build_path_graph(rooms, compiled)
-    scale, pairs = _scaled_pairs(rooms)
+    objective = build_scaled_objective(rooms)
     primary_expr = _add_pair_flow_objective(
         compiled.model,
         nodes=nodes,
         room_nodes=room_nodes,
         arcs=arcs,
-        pairs=pairs,
+        pairs=objective.pairs,
     )
     compiled.model.minimize(primary_expr)
 
@@ -392,11 +352,11 @@ def solve_fixed_layout_flow_objective(
     if status == cp_model.MODEL_INVALID:
         raise AssertionError("CP-SAT rejected the fixed pair-flow objective model")
     if status == cp_model.INFEASIBLE:
-        return FixedFlowObjectiveResult(status="INFEASIBLE", objective_scale=scale)
+        return FixedFlowObjectiveResult(status="INFEASIBLE", objective_scale=objective.scale)
     if status == cp_model.UNKNOWN:
         return FixedFlowObjectiveResult(
             status="TIME_LIMIT",
-            objective_scale=scale,
+            objective_scale=objective.scale,
             time_limit_reached=True,
         )
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -408,7 +368,7 @@ def solve_fixed_layout_flow_objective(
             status="FEASIBLE",
             utilities=utilities,
             metrics=metrics,
-            scale=scale,
+            scale=objective.scale,
             scaled_objective_value=None,
             primary_proven=False,
             lexicographic_proven=False,
@@ -417,9 +377,7 @@ def solve_fixed_layout_flow_objective(
         )
 
     primary_optimum = int(round(solver.objective_value))
-    scaled_evaluator_value = sum(
-        pair.coefficient * metrics.pairwise_distances[pair.pair_id] for pair in pairs
-    )
+    scaled_evaluator_value = objective.scaled_score(metrics.pairwise_distances)
     if scaled_evaluator_value != primary_optimum:
         raise AssertionError(
             "Pair-flow optimum disagrees with exact Dijkstra evaluation: "
@@ -454,7 +412,7 @@ def solve_fixed_layout_flow_objective(
             status="FEASIBLE",
             utilities=last_utilities,
             metrics=last_metrics,
-            scale=scale,
+            scale=objective.scale,
             scaled_objective_value=primary_optimum,
             primary_proven=True,
             lexicographic_proven=False,
@@ -480,7 +438,7 @@ def solve_fixed_layout_flow_objective(
             status="FEASIBLE",
             utilities=last_utilities,
             metrics=last_metrics,
-            scale=scale,
+            scale=objective.scale,
             scaled_objective_value=primary_optimum,
             primary_proven=True,
             lexicographic_proven=False,
@@ -506,7 +464,7 @@ def solve_fixed_layout_flow_objective(
             status="FEASIBLE",
             utilities=last_utilities,
             metrics=last_metrics,
-            scale=scale,
+            scale=objective.scale,
             scaled_objective_value=primary_optimum,
             primary_proven=True,
             lexicographic_proven=False,
@@ -514,9 +472,7 @@ def solve_fixed_layout_flow_objective(
             time_limit_reached=True,
         )
 
-    final_scaled_evaluator = sum(
-        pair.coefficient * last_metrics.pairwise_distances[pair.pair_id] for pair in pairs
-    )
+    final_scaled_evaluator = objective.scaled_score(last_metrics.pairwise_distances)
     if final_scaled_evaluator != primary_optimum:
         raise AssertionError(
             "Lexicographic pair-flow solution changed the proven exact F optimum: "
@@ -527,7 +483,7 @@ def solve_fixed_layout_flow_objective(
         status="OPTIMAL",
         utilities=last_utilities,
         metrics=last_metrics,
-        scale=scale,
+        scale=objective.scale,
         scaled_objective_value=primary_optimum,
         primary_proven=True,
         lexicographic_proven=True,
