@@ -183,13 +183,12 @@ def _room_port_components(
             root = find(port_index[(room_idx, local_idx)])
             components.add(root)
             x, row = port.utility_anchor
+            # A horizontal port at the Base edge can resolve to a negative/outside anchor.
+            # Reject that anchor before constructing its footprint; it is simply unavailable.
+            if x < 0 or x + _CORRIDOR_SPEC.width > base.width:
+                continue
             cells = _anchor_cells((x, row))
-            if (
-                x >= 0
-                and x + _CORRIDOR_SPEC.width <= base.width
-                and cells <= base.buildable_cells
-                and not (cells & occupied)
-            ):
+            if cells <= base.buildable_cells and not (cells & occupied):
                 component_anchors.setdefault(root, set()).add((x, row))
         module_components[room_idx] = components
 
