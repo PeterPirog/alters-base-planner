@@ -1,5 +1,6 @@
 import pytest
 
+import alters_base_planner.fixed_flow_objective_solver as flow_solver_module
 from alters_base_planner.catalog import MODULE_BY_KEY
 from alters_base_planner.fixed_flow_objective_solver import solve_fixed_layout_flow_objective
 from alters_base_planner.fixed_objective_oracle import solve_fixed_layout_objective
@@ -187,3 +188,58 @@ def test_pair_flow_zero_budget_reports_time_limit_without_false_proof() -> None:
     assert result.time_limit_reached is True
     assert result.primary_objective_optimum_proven is False
     assert result.lexicographic_optimum_proven is False
+
+
+def test_pair_flow_reports_primary_model_size_and_timings() -> None:
+    base = _base(10, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 6, 0),
+    )
+
+    result = solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
+    diagnostics = result.diagnostics
+
+    assert diagnostics.graph_node_count > 0
+    assert diagnostics.graph_arc_count > 0
+    assert diagnostics.objective_pair_count == 1
+    assert diagnostics.cp_sat_variable_count > 0
+    assert diagnostics.cp_sat_constraint_count > 0
+    assert diagnostics.model_build_time_s >= 0
+    assert diagnostics.cp_sat_solve_time_s >= 0
+    assert diagnostics.total_time_s >= diagnostics.model_build_time_s
+
+
+def test_pair_flow_budget_includes_model_construction(monkeypatch) -> None:
+    base = _base(8, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 4, 0),
+    )
+    clock = {"now": 0.0}
+    real_compile = flow_solver_module.compile_fixed_layout_hard_model
+
+    def delayed_compile(*args, **kwargs):
+        compiled = real_compile(*args, **kwargs)
+        clock["now"] = 2.0
+        return compiled
+
+    monkeypatch.setattr(flow_solver_module, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        flow_solver_module,
+        "compile_fixed_layout_hard_model",
+        delayed_compile,
+    )
+
+    result = flow_solver_module.solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=1.0,
+    )
+
+    assert result.status == "TIME_LIMIT"
+    assert result.time_limit_reached is True
+    assert result.primary_objective_optimum_proven is False
+    assert result.lexicographic_optimum_proven is False
+    assert result.diagnostics.model_build_time_s == pytest.approx(2.0)
+    assert result.diagnostics.cp_sat_solve_time_s == pytest.approx(0.0)
