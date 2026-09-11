@@ -383,7 +383,7 @@ Weighted bound:
 F_LB = sum(i<j) w_i * w_j * LB(i,j)
 ```
 
-Production represents F and F_LB on one exact integer scale. A room packing is prunable only when:
+Production represents F and F_LB on one exact integer scale. A room packing is prunable by this bound only when:
 
 ```text
 scaled_F_LB > incumbent_scaled_F
@@ -396,6 +396,8 @@ Fail-fast invariant:
 ```text
 scaled_F_LB <= scaled_F_exact
 ```
+
+A separate exact incumbent cut may also be applied inside a fixed-packing subproblem after an incumbent exists. That cut is not Modified Manhattan and must be reported separately.
 
 ---
 
@@ -474,12 +476,19 @@ The fixed packing is optimized in four proof-preserving phases:
 
 Each phase is considered proven only on CP-SAT `OPTIMAL`.
 
+After a feasible exact incumbent with primary objective `B` exists, production may constrain later fixed subproblems by:
+
+```text
+scaled_F <= B
+```
+
+The inequality must remain non-strict because a packing with equal F can still improve mass, Elevator count or Corridor count. If CP-SAT proves this bounded fixed model infeasible, the packing cannot match or improve the incumbent primary objective. Such a certificate is a valid exact decomposition proof even when it does not distinguish hard infrastructure infeasibility from strict objective domination.
+
 Production sets `global_objective_optimum_proven=true` only when:
 
 - a feasible incumbent exists;
 - the room-packing master is exhausted;
-- all unpruned packings are fully lexicographically optimal or proven infrastructure-infeasible;
-- every pruned packing satisfies strict exact integer `F_LB > incumbent_F`;
+- every relevant packing is either fully lexicographically optimal, proven infrastructure-infeasible, strictly excluded by exact integer `F_LB > incumbent_F`, or proven unable to satisfy the equality-preserving exact incumbent cut `scaled_F <= incumbent_F`;
 - no time limit stopped the search;
 - no layout-attempt limit stopped the search.
 
@@ -489,9 +498,11 @@ Otherwise a feasible result is best-known feasible.
 
 Every CP-SAT model passes `CpModel.validate()` before solving. Internal mathematical/model inconsistencies fail fast rather than being hidden as ordinary infeasibility.
 
+Once an objective prefix has been proven and fixed by equality, a later lexicographic phase cannot legitimately become infeasible. `INFEASIBLE` or `MODEL_INVALID` in such a tie-break phase is an internal model/solver contradiction and must fail fast rather than be reported as ordinary timeout or infeasibility.
+
 ### 11.5 Global budget
 
-`time_limit_s` is one global wall-clock budget for the complete planning call. A fixed-packing subproblem receives only the remaining time.
+`time_limit_s` is one global wall-clock budget for the complete planning call. A fixed-packing subproblem receives only the remaining time, and its model construction consumes that same remaining budget.
 
 `max_layout_attempts` is also a search-completeness limit; reaching it suppresses a global proof.
 
@@ -502,6 +513,7 @@ room_packings_examined
 connected_candidates_examined
 fixed_objective_optima_proven
 manhattan_pruned_count
+incumbent_bound_pruned_count
 search_time_s
 time_limit_reached
 search_exhausted
@@ -618,16 +630,22 @@ Delivered:
 
 Stage-3 completion means the architecture can prove the global accepted objective when configured search completes. It does not imply full Base I-IV instances will always complete within practical budgets.
 
-### Stage 4 — Performance and benchmark suite — NEXT
+### Stage 4 — Performance and benchmark suite — IN PROGRESS
 
-Deliverables:
+Delivered or active:
 
 - representative Tier I-IV benchmark configurations;
-- model-size and construction metrics;
-- runtime, candidate count, pruning rate and proof-completion metrics;
-- objective/incumbent/bound quality tracking;
-- mathematically safe domain reduction and symmetry breaking;
-- regression thresholds for solver-quality degradation.
+- fixed-subproblem model-size, construction and CP-SAT timing metrics;
+- auditable pruning/proof-completion diagnostics;
+- opt-in reproducible benchmark workflow;
+- exact equality-preserving incumbent objective cut for fixed subproblems.
+
+Remaining Stage-4 work includes:
+
+- representative before/after benchmark evidence for accepted optimizations;
+- stronger mathematically safe domain reduction and symmetry breaking;
+- objective/incumbent/bound quality tracking where it materially improves diagnosis;
+- regression thresholds based on reproducible evidence rather than one noisy timing run.
 
 No performance claim without reproducible benchmark evidence.
 
@@ -666,6 +684,7 @@ Minimum categories:
 - modified-Manhattan admissibility;
 - exact scaled objective reconstruction;
 - objective contribution invariant;
+- exact incumbent-cut equality and bounded-infeasibility semantics;
 - mass/journey calculation;
 - config ownership/count validation;
 - time/attempt budget semantics;
