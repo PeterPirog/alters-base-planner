@@ -126,6 +126,8 @@ This fail-fast boundary is intentional: model/evaluator disagreement is a correc
 - fixed-layout infrastructure infeasibility;
 - zero-budget timeout semantics without false proof flags.
 
+The full repository CI currently exercises these cases together with the existing suite on Python 3.11, 3.12 and 3.13. Ruff and all 100 tests pass at this validation point.
+
 Passing these cases is necessary but not by itself sufficient to promote the pair-flow solver to production. Before production adoption it must also be benchmarked on a broader known-optimum suite and integrated with the room-packing master without weakening global proof semantics.
 
 ## Global tiny-instance objective oracle
