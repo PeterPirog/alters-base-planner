@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 1
+BENCHMARK_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +61,15 @@ class BenchmarkRecord:
     total_mass: int
     elevator_module_count: int
     corridor_count: int
+    fixed_subproblem_count: int
+    max_fixed_graph_nodes: int
+    max_fixed_graph_arcs: int
+    max_fixed_objective_pairs: int
+    max_fixed_cp_sat_variables: int
+    max_fixed_cp_sat_constraints: int
+    fixed_model_build_time_s: float
+    fixed_cp_sat_solve_time_s: float
+    fixed_subproblem_time_s: float
 
 
 SMOKE_CASES: tuple[BenchmarkCase, ...] = (
@@ -176,6 +185,15 @@ def record_from_result(
         total_mass=result.total_mass,
         elevator_module_count=result.elevator_module_count,
         corridor_count=result.corridor_count,
+        fixed_subproblem_count=result.fixed_subproblem_count,
+        max_fixed_graph_nodes=result.max_fixed_graph_nodes,
+        max_fixed_graph_arcs=result.max_fixed_graph_arcs,
+        max_fixed_objective_pairs=result.max_fixed_objective_pairs,
+        max_fixed_cp_sat_variables=result.max_fixed_cp_sat_variables,
+        max_fixed_cp_sat_constraints=result.max_fixed_cp_sat_constraints,
+        fixed_model_build_time_s=result.fixed_model_build_time_s,
+        fixed_cp_sat_solve_time_s=result.fixed_cp_sat_solve_time_s,
+        fixed_subproblem_time_s=result.fixed_subproblem_time_s,
     )
 
 
@@ -248,6 +266,36 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 elevators=raw["elevator_module_count"],
                 corridors=raw["corridor_count"],
                 proof="yes" if raw["global_objective_optimum_proven"] else "no",
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Fixed-packing model diagnostics",
+            "",
+            "Counts are maxima over fixed-packing subproblems in the run; timing columns are totals.",
+            "",
+            "| Case | Subproblems | Nodes | Arcs | Pairs | CP vars | CP constraints | Build s | CP-SAT s | Fixed total s |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        lines.append(
+            "| {name} | {count} | {nodes} | {arcs} | {pairs} | {variables} | {constraints} | "
+            "{build:.3f} | {solve:.3f} | {total:.3f} |".format(
+                name=raw["name"],
+                count=raw["fixed_subproblem_count"],
+                nodes=raw["max_fixed_graph_nodes"],
+                arcs=raw["max_fixed_graph_arcs"],
+                pairs=raw["max_fixed_objective_pairs"],
+                variables=raw["max_fixed_cp_sat_variables"],
+                constraints=raw["max_fixed_cp_sat_constraints"],
+                build=raw["fixed_model_build_time_s"],
+                solve=raw["fixed_cp_sat_solve_time_s"],
+                total=raw["fixed_subproblem_time_s"],
             )
         )
 
