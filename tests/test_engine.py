@@ -6,10 +6,10 @@ from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import (
     _candidate_positions,
     _mass_metrics,
-    _route_utilities,
     _validate_utility_geometry,
     solve_plan,
 )
+from alters_base_planner.integrated_hard_solver import solve_fixed_layout_infrastructure
 from alters_base_planner.models import (
     BaseGeometry,
     ModuleInstance,
@@ -106,12 +106,15 @@ def test_rapidium_ark_cannot_be_used_as_walkthrough_bridge() -> None:
         source="unit-test",
         verified=True,
     )
-    rooms = [
+    rooms = (
         ModulePlacement("airlock-1", "airlock", 0, 1, 4, 1),
         ModulePlacement("ark-1", "rapidium_ark", 4, 0, 4, 2),
         ModulePlacement("workshop-1", "workshop", 8, 1, 4, 1),
-    ]
-    assert _route_utilities(base, rooms) is None
+    )
+
+    result = solve_fixed_layout_infrastructure(base, rooms, time_limit_s=2.0)
+
+    assert result.status == "INFEASIBLE"
 
 
 def test_generated_utilities_are_solver_module_placements() -> None:
@@ -126,14 +129,16 @@ def test_generated_utilities_are_solver_module_placements() -> None:
         source="unit-test",
         verified=True,
     )
-    rooms = [
+    rooms = (
         ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
         ModulePlacement("workshop-1", "workshop", 6, 0, 4, 1),
-    ]
-    utilities = _route_utilities(base, rooms)
-    assert utilities is not None
-    assert len(utilities) == 1
-    utility = utilities[0]
+    )
+
+    result = solve_fixed_layout_infrastructure(base, rooms, time_limit_s=2.0)
+
+    assert result.status == "FEASIBLE"
+    assert len(result.utilities) == 1
+    utility = result.utilities[0]
     assert utility.module_key == "corridor"
     assert MODULE_BY_KEY[utility.module_key].authority is PlacementAuthority.SOLVER
     assert (utility.width, utility.height) == (
