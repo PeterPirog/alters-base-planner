@@ -18,7 +18,7 @@ SOLVER  = Corridor/Elevator infrastructure selected by optimization
 
 Corridor and Elevator are canonical module types in the catalogue and in result geometry.
 
-The active solver now uses an **exact hard-feasibility decomposition**:
+The active production solver now uses an **exact hard-feasibility decomposition**:
 
 ```text
 CP-SAT SYSTEM/PLAYER room-packing master
@@ -29,9 +29,25 @@ CP-SAT SYSTEM/PLAYER room-packing master
 
 For every examined fixed room packing, the infrastructure subproblem decides Corridor/Elevator occupancy, shared no-overlap, explicit port attachment, stacked-Elevator vertical edges, non-transit behaviour, Airlock-rooted connectivity and the absence of floating utilities. If that subproblem returns `INFEASIBLE`, no legal Corridor/Elevator network exists for that fixed packing under the accepted hard model.
 
-This removes the old deterministic greedy post-router from correctness. It does **not** yet prove the global gameplay optimum: the Stage-2 subproblem returns one hard-feasible infrastructure witness, while Stage 3 must optimize the true distance objective `F` over infrastructure alternatives and supply valid bounds/proofs. Consequently current layouts remain **best-known feasible layouts under the configured search**, and `global_objective_optimum_proven` remains false.
+This removes the old deterministic greedy post-router from correctness. It does **not** yet prove the global gameplay optimum: the production Stage-2 subproblem returns one hard-feasible infrastructure witness.
 
-See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth and `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract.
+Stage 3 is now under exact-objective validation. The repository contains:
+
+```text
+fixed_objective_oracle.py
+    exhaustive exact infrastructure optimization for one fixed room packing
+
+fixed_flow_objective_solver.py
+    exact CP-SAT pair-flow formulation for one fixed room packing
+    cross-validated against the exhaustive oracle
+
+global_objective_oracle.py
+    exhaustive tiny-instance room + infrastructure proof oracle
+```
+
+The pair-flow formulation jointly selects Corridor/Elevator infrastructure and minimizes the exact weighted travel objective before the accepted mass/Elevator/Corridor tie-breakers. It is a scalable candidate, not yet the production correctness boundary. Production `global_objective_optimum_proven` therefore remains false until the room-packing master and exact objective subproblem are integrated with valid global bounds/proof semantics.
+
+See `PROJECT_SYSTEM_REQUIREMENTS.md` for the project-level source of truth, `docs/OPTIMIZATION_MODEL.md` for the normative mathematical/solver contract, and `docs/STAGE3_OBJECTIVE_ORACLE.md` for the Stage-3 validation architecture.
 
 ## Validated Base I-IV geometry
 
@@ -283,7 +299,7 @@ The planner generates PNG/SVG plans from the selected exact Base mask.
 
 The rendering distinguishes unavailable/core/buildable cells, module types, Corridors and Elevators. One y-grid cell is rendered twice as tall as one x-grid cell.
 
-The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current Stage-2 hard-feasibility architecture, global objective optimality is still not proven.
+The diagram/report includes key optimization and mass metrics and indicates whether global optimality has been proven. Under the current production Stage-2 hard-feasibility architecture, global objective optimality is still not proven.
 
 ## Player configuration
 
@@ -388,7 +404,7 @@ The UI uses the same configuration and solver semantics as the CLI, clearly sepa
 
 The JSON output persists the exact objective for the returned candidate, modified-Manhattan lower bound, pairwise distances/contributions, resolved ports, usage weights, installed solver infrastructure, geometry provenance, mass metrics, journey feasibility and search/optimality diagnostics.
 
-A current feasible result has:
+A current feasible production result has:
 
 ```text
 global_objective_optimum_proven = false
@@ -411,12 +427,14 @@ CI runs both commands on Python 3.11, 3.12 and 3.13.
 Stage 0  data/contract stabilization           COMPLETE / maintain
 Stage 1  unified Module domain                 COMPLETE / maintain
 Stage 2  exact hard-feasibility decomposition  COMPLETE / maintain
-Stage 3  exact objective integration           NEXT
-Stage 4  benchmark/performance suite           planned
+Stage 3  exact objective integration           IN PROGRESS
+Stage 4  benchmark/performance suite           NEXT / overlaps Stage 3
 Stage 5  user-facing planning quality          planned
 Stage 6  progression-aware mobile Base         deferred
 Stage 7  The Last Variable DLC                 deferred until exact data
 ```
+
+Stage 3 now has exhaustive fixed/global reference oracles and a pair-flow exact fixed-packing candidate. The next milestone is benchmarked master/subproblem integration with valid global bounds and proof propagation.
 
 The DLC is intentionally not approximated with mobile Base geometry.
 
