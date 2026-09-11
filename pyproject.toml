@@ -19,6 +19,7 @@ dev = ["pytest>=8.3", "ruff>=0.8"]
 
 [project.scripts]
 alters-base-planner = "alters_base_planner.cli:main"
+alters-base-benchmark = "alters_base_planner.benchmark:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/alters_base_planner"]
