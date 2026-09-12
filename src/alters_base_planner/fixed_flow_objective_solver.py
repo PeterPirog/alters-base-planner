@@ -286,6 +286,27 @@ def _pair_flow_domain(
     )
 
 
+def _endpoint_choice(
+    model: cp_model.CpModel,
+    *,
+    pair_id: str,
+    role: str,
+    nodes: tuple[NodeId, ...],
+) -> dict[NodeId, cp_model.IntVar | int]:
+    """Represent endpoint choice without variables when only one port remains possible."""
+
+    if not nodes:
+        raise ValueError("Endpoint choice requires at least one candidate node")
+    if len(nodes) == 1:
+        return {nodes[0]: 1}
+
+    choices = {
+        node: model.new_bool_var(f"pair_{role}__{pair_id}__{node}") for node in nodes
+    }
+    model.add_exactly_one(choices.values())
+    return choices
+
+
 def _add_pair_flow_objective(
     model: cp_model.CpModel,
     *,
@@ -322,16 +343,18 @@ def _add_pair_flow_objective(
             model.add_bool_or([])
             continue
 
-        source_choice = {
-            node: model.new_bool_var(f"pair_source__{pair.pair_id}__{node}")
-            for node in domain.source_nodes
-        }
-        target_choice = {
-            node: model.new_bool_var(f"pair_target__{pair.pair_id}__{node}")
-            for node in domain.target_nodes
-        }
-        model.add_exactly_one(source_choice.values())
-        model.add_exactly_one(target_choice.values())
+        source_choice = _endpoint_choice(
+            model,
+            pair_id=pair.pair_id,
+            role="source",
+            nodes=domain.source_nodes,
+        )
+        target_choice = _endpoint_choice(
+            model,
+            pair_id=pair.pair_id,
+            role="target",
+            nodes=domain.target_nodes,
+        )
 
         flow = {
             arc_index: model.new_bool_var(
@@ -468,6 +491,10 @@ def solve_fixed_layout_flow_objective(
     source-to-target path in the unconditional supergraph. The supergraph ignores infrastructure
     selection conditions and is therefore a relaxation of every realizable network; removing
     arcs outside all relaxed endpoint paths is proof-safe and cannot change the exact optimum.
+
+    Singleton endpoint choices are represented by constants rather than auxiliary Boolean
+    variables. This is an exact presolve: once domain reduction leaves only one endpoint port,
+    its choice is logically fixed and no decision variable is required.
 
     ``scaled_objective_upper_bound`` is an optional exact decomposition cut. When supplied, the
     fixed subproblem only needs solutions with scaled ``F <= bound``. Equality is deliberately
