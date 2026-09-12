@@ -219,6 +219,73 @@ Known-optimum correctness remains protected separately by the exhaustive Stage-3
 
 The opt-in benchmark workflow is deliberately separate from normal CI. Benchmark artifacts are evidence for performance engineering, not pass/fail correctness gates.
 
+## Example-plan review evidence
+
+Relevant solver pull requests publish example-plan evidence through
+`.github/workflows/example-layout.yml`. Changes to `src/**`, tests, the example
+configuration, packaging helper, project dependencies or this document trigger
+the dedicated workflow. It also runs on relevant pushes to `main` and by manual
+dispatch. Its canonical input is `config/example-plan.json`, executed through
+the production CLI:
+
+```bash
+python -m alters_base_planner.cli config/example-plan.json
+```
+
+The `example-plan-evidence` Actions artifact contains
+`example-plan-<short-commit-sha>.zip`. Inside the ZIP:
+
+```text
+example-plan-result/
+    input/example-plan.json
+    output/layout.json
+    output/layout.png       # if generated
+    output/layout.svg       # if generated
+    run-metadata.json
+```
+
+Metadata schema version 1 records the checked-out commit, Git ref, UTC timestamp,
+Python/OR-Tools/planner versions, source configuration path, optimizer process
+exit code, status, Base tier, exact/scaled objective and modified-Manhattan lower
+bound, feasibility/proof flags, mass, infrastructure counts, search diagnostics,
+fixed-subproblem model diagnostics and pair-flow actual/full-domain totals and
+maxima. Values are copied from the canonical result without recomputing solver
+metrics; unavailable values are JSON `null`. The full layout remains separate.
+On pull requests the commit identifies the checked-out Actions merge revision,
+and the ref identifies the pull-request merge ref.
+
+The workflow captures a nonzero optimizer exit code, packages available files,
+and uploads with `if: always()` **before** the final acceptance gate. A timeout,
+infeasible result or other optimizer failure therefore keeps diagnostic evidence
+while failing the job. If no layout was written, input and metadata are still
+packaged. Malformed JSON is preserved verbatim in the ZIP with a parse error in
+metadata, and the helper fails clearly.
+
+Acceptance requires a successful optimizer process, `status == FEASIBLE`,
+nonempty JSON/PNG/SVG files, a nonempty module list and
+`structural_feasible == true`. **FEASIBLE does not mean global optimum proven.**
+A best-known feasible result with `global_objective_optimum_proven == false`
+passes this smoke-quality case. F, mass, Elevator/Corridor counts and runtime
+are review evidence, not numerical CI thresholds.
+
+For local packaging, run from the repository root after the production CLI,
+passing its actual exit code (for example, `0` after success):
+
+```bash
+python scripts/create_example_evidence.py --optimizer-exit-code 0
+python scripts/create_example_evidence.py --verify
+```
+
+Use a fresh `--destination` for repeated packaging; existing evidence is never
+overwritten. Production outputs must come from the current run (CI uses a clean
+checkout). The helper also accepts the captured code through
+`OPTIMIZER_EXIT_CODE`; if unavailable it records `null`, which fails acceptance.
+
+The ZIP is ephemeral CI review evidence. Generated ZIP archives and layout
+outputs are not committed or kept in Git history. Artifact review complements
+but does not replace correctness tests, independent reference oracles and
+mathematical proofs. One example run does not establish a performance improvement.
+
 ## Stage-4 optimization discipline
 
 The benchmark and model-size instrumentation are now in place. Performance changes must remain mathematically exact and should be evaluated from measured evidence rather than timing anecdotes. Safe candidates include:
