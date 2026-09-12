@@ -45,6 +45,10 @@ class _FixedDiagnosticsAggregate:
     max_graph_nodes: int = 0
     max_graph_arcs: int = 0
     max_objective_pairs: int = 0
+    max_pair_flow_variables: int = 0
+    max_pair_flow_full_variables: int = 0
+    total_pair_flow_variables: int = 0
+    total_pair_flow_full_variables: int = 0
     max_cp_sat_variables: int = 0
     max_cp_sat_constraints: int = 0
     model_build_time_s: float = 0.0
@@ -59,6 +63,16 @@ class _FixedDiagnosticsAggregate:
             self.max_objective_pairs,
             diagnostics.objective_pair_count,
         )
+        self.max_pair_flow_variables = max(
+            self.max_pair_flow_variables,
+            diagnostics.pair_flow_variable_count,
+        )
+        self.max_pair_flow_full_variables = max(
+            self.max_pair_flow_full_variables,
+            diagnostics.pair_flow_full_variable_count,
+        )
+        self.total_pair_flow_variables += diagnostics.pair_flow_variable_count
+        self.total_pair_flow_full_variables += diagnostics.pair_flow_full_variable_count
         self.max_cp_sat_variables = max(
             self.max_cp_sat_variables,
             diagnostics.cp_sat_variable_count,
@@ -76,6 +90,10 @@ class _FixedDiagnosticsAggregate:
         result.max_fixed_graph_nodes = self.max_graph_nodes
         result.max_fixed_graph_arcs = self.max_graph_arcs
         result.max_fixed_objective_pairs = self.max_objective_pairs
+        result.max_fixed_pair_flow_variables = self.max_pair_flow_variables
+        result.max_fixed_pair_flow_full_variables = self.max_pair_flow_full_variables
+        result.total_fixed_pair_flow_variables = self.total_pair_flow_variables
+        result.total_fixed_pair_flow_full_variables = self.total_pair_flow_full_variables
         result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
         result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
         result.fixed_model_build_time_s = self.model_build_time_s
