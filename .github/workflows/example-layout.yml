@@ -2,6 +2,10 @@ name: Generate optimized example layout
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "config/example-plan.json"
+      - ".github/workflows/example-layout.yml"
   push:
     branches: [main]
     paths:
@@ -14,8 +18,8 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install planner
@@ -38,6 +42,7 @@ jobs:
           print('weighted_average_pair_distance=', data['optimization']['weighted_average_pair_distance'])
           print('total_base_mass=', data['journey']['total_base_mass'])
           print('organics_required=', data['journey']['organics_required'])
+          print('global_objective_optimum_proven=', data['optimization']['global_objective_optimum_proven'])
           PY
       - uses: actions/upload-artifact@v4
         with:
