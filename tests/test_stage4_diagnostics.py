@@ -1,3 +1,5 @@
+import pytest
+
 from alters_base_planner.engine import _FixedDiagnosticsAggregate
 from alters_base_planner.fixed_flow_objective_solver import FixedFlowObjectiveDiagnostics
 from alters_base_planner.models import BaseGeometry, PlanResult
@@ -60,6 +62,6 @@ def test_fixed_diagnostics_aggregate_preserves_pair_flow_maxima_and_totals() -> 
     assert result.total_fixed_pair_flow_full_variables == 1550
     assert result.max_fixed_cp_sat_variables == 1000
     assert result.max_fixed_cp_sat_constraints == 1200
-    assert result.fixed_model_build_time_s == 0.30000000000000004
-    assert result.fixed_cp_sat_solve_time_s == 0.9
-    assert result.fixed_subproblem_time_s == 1.4
+    assert result.fixed_model_build_time_s == pytest.approx(0.3)
+    assert result.fixed_cp_sat_solve_time_s == pytest.approx(0.9)
+    assert result.fixed_subproblem_time_s == pytest.approx(1.4)
