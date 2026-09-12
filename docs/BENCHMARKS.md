@@ -87,7 +87,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Benchmark schema version 3 records the end-to-end search/proof metrics:
+Benchmark schema version 4 records the end-to-end search/proof metrics:
 
 ```text
 status
@@ -123,6 +123,10 @@ fixed_subproblem_count
 max_fixed_graph_nodes
 max_fixed_graph_arcs
 max_fixed_objective_pairs
+max_fixed_pair_flow_variables
+max_fixed_pair_flow_full_variables
+total_fixed_pair_flow_variables
+total_fixed_pair_flow_full_variables
 max_fixed_cp_sat_variables
 max_fixed_cp_sat_constraints
 fixed_model_build_time_s
@@ -135,6 +139,31 @@ The `max_*` values are maxima across all exact fixed-packing subproblems attempt
 `fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and pair-flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside CP-SAT solve calls across the four objective phases. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, CP-SAT phases and exact evaluator work.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
+
+## Pair-flow variable-domain reduction
+
+The exact fixed-packing objective originally created one flow Boolean for every combination of positive-weight objective pair and directed graph arc. The current formulation first restricts each pair to the arcs that can lie on a source-to-target path in the unconditional directed supergraph. Infrastructure-selection conditions are ignored for this reachability analysis, so the supergraph is a relaxation of every realizable network. An arc that cannot belong to an endpoint path even in this relaxation cannot belong to any realizable endpoint path and can be removed without changing feasibility or the optimum.
+
+Endpoint ports are also treated as terminals, and singleton endpoint choices are represented by constants rather than auxiliary Boolean variables. These are exact presolve/domain reductions, not heuristic routing rules.
+
+The benchmark records both the actual pair-flow Boolean count after pair-specific domain reduction and the corresponding full-domain count from the previous formulation:
+
+```text
+max_fixed_pair_flow_variables
+max_fixed_pair_flow_full_variables
+total_fixed_pair_flow_variables
+total_fixed_pair_flow_full_variables
+```
+
+The two `total_*` fields are sums over the same fixed-packing subproblems and therefore support a meaningful aggregate structural-reduction ratio:
+
+```text
+reduction = 1 - total_actual / total_full
+```
+
+The benchmark report must use these totals for the reduction percentage. A ratio derived from independent maxima would be potentially misleading because the maxima need not come from the same subproblem.
+
+These counts are structural diagnostics. A lower flow-variable count is evidence that the formulation is smaller; it is not by itself evidence that end-to-end runtime improved. Runtime claims still require representative benchmark measurements on comparable environments.
 
 ## Exact incumbent objective cut
 
