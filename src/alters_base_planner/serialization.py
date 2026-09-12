@@ -3,7 +3,7 @@ from __future__ import annotations
 from .catalog import MODULE_BY_KEY
 from .models import ModulePlacement, PlacementAuthority, PlanResult, resolve_ports
 
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 2
 
 
 def average_pair_distance(result: PlanResult) -> float:
