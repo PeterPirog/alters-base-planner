@@ -326,6 +326,10 @@ class PlanResult:
     max_fixed_graph_nodes: int = 0
     max_fixed_graph_arcs: int = 0
     max_fixed_objective_pairs: int = 0
+    max_fixed_pair_flow_variables: int = 0
+    max_fixed_pair_flow_full_variables: int = 0
+    total_fixed_pair_flow_variables: int = 0
+    total_fixed_pair_flow_full_variables: int = 0
     max_fixed_cp_sat_variables: int = 0
     max_fixed_cp_sat_constraints: int = 0
     fixed_model_build_time_s: float = 0.0
