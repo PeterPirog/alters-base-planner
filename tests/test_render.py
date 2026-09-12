@@ -73,7 +73,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     payload = result_payload(_sample_result())
     modules = payload["modules"]
     assert isinstance(modules, list)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 2
     assert payload["feasibility"] == {
         "structural_feasible": True,
         "journey_feasible": True,
