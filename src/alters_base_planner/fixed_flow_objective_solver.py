@@ -34,6 +34,8 @@ class FixedFlowObjectiveDiagnostics:
     graph_node_count: int = 0
     graph_arc_count: int = 0
     objective_pair_count: int = 0
+    pair_flow_variable_count: int = 0
+    pair_flow_full_variable_count: int = 0
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
     model_build_time_s: float = 0.0
@@ -70,6 +72,16 @@ class _Arc:
     target: NodeId
     cost: int
     conditions: tuple[cp_model.IntVar, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _PairFlowDomain:
+    """Exact pair-specific subgraph that can participate in a source-to-target path."""
+
+    source_nodes: tuple[NodeId, ...]
+    target_nodes: tuple[NodeId, ...]
+    nodes: tuple[NodeId, ...]
+    arc_indices: tuple[int, ...]
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
@@ -193,6 +205,87 @@ def _build_path_graph(
     return tuple(nodes), room_nodes, tuple(arcs)
 
 
+def _reachable_nodes(
+    starts: tuple[NodeId, ...],
+    *,
+    arcs: tuple[_Arc, ...],
+    adjacency: dict[NodeId, list[int]],
+    allowed_arc_indices: set[int],
+    reverse: bool,
+) -> set[NodeId]:
+    """Return reachability in the unconditional directed supergraph."""
+
+    reached = set(starts)
+    stack = list(starts)
+    while stack:
+        node = stack.pop()
+        for arc_index in adjacency[node]:
+            if arc_index not in allowed_arc_indices:
+                continue
+            arc = arcs[arc_index]
+            next_node = arc.source if reverse else arc.target
+            if next_node not in reached:
+                reached.add(next_node)
+                stack.append(next_node)
+    return reached
+
+
+def _pair_flow_domain(
+    *,
+    nodes: tuple[NodeId, ...],
+    arcs: tuple[_Arc, ...],
+    source_nodes: tuple[NodeId, ...],
+    target_nodes: tuple[NodeId, ...],
+    incoming_arcs: dict[NodeId, list[int]],
+    outgoing_arcs: dict[NodeId, list[int]],
+) -> _PairFlowDomain:
+    """Remove arcs that cannot belong to any legal endpoint-to-endpoint path.
+
+    The graph used here ignores arc-selection conditions, so it is a supergraph of every
+    realizable infrastructure graph. Removing an arc that is not on any source-to-target path in
+    this relaxation therefore cannot remove a realizable path. Endpoint ports are also terminals:
+    entering the source or leaving the destination is unnecessary because every non-negative-cost
+    walk contains an equal-or-better simple source-to-target path without such endpoint revisits.
+    """
+
+    source_set = set(source_nodes)
+    target_set = set(target_nodes)
+    allowed_arc_indices = {
+        arc_index
+        for arc_index, arc in enumerate(arcs)
+        if arc.target not in source_set and arc.source not in target_set
+    }
+
+    forward = _reachable_nodes(
+        source_nodes,
+        arcs=arcs,
+        adjacency=outgoing_arcs,
+        allowed_arc_indices=allowed_arc_indices,
+        reverse=False,
+    )
+    backward = _reachable_nodes(
+        target_nodes,
+        arcs=arcs,
+        adjacency=incoming_arcs,
+        allowed_arc_indices=allowed_arc_indices,
+        reverse=True,
+    )
+    relevant_nodes = forward & backward
+    relevant_sources = tuple(node for node in source_nodes if node in relevant_nodes)
+    relevant_targets = tuple(node for node in target_nodes if node in relevant_nodes)
+    relevant_arcs = tuple(
+        arc_index
+        for arc_index in sorted(allowed_arc_indices)
+        if arcs[arc_index].source in relevant_nodes and arcs[arc_index].target in relevant_nodes
+    )
+    return _PairFlowDomain(
+        source_nodes=relevant_sources,
+        target_nodes=relevant_targets,
+        nodes=tuple(node for node in nodes if node in relevant_nodes),
+        arc_indices=relevant_arcs,
+    )
+
+
 def _add_pair_flow_objective(
     model: cp_model.CpModel,
     *,
@@ -200,8 +293,12 @@ def _add_pair_flow_objective(
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
     pairs: tuple[ObjectivePair, ...],
-):
-    """Add one unit-flow shortest-path problem per weighted endpoint pair."""
+) -> tuple[object, int, int]:
+    """Add exact pair flows after proof-safe pair-specific domain reduction.
+
+    Returns the weighted objective expression, the number of arc-flow Boolean variables actually
+    created and the number that the previous full `pairs x arcs` formulation would have created.
+    """
 
     incoming_arcs: dict[NodeId, list[int]] = {node: [] for node in nodes}
     outgoing_arcs: dict[NodeId, list[int]] = {node: [] for node in nodes}
@@ -210,39 +307,58 @@ def _add_pair_flow_objective(
         incoming_arcs[arc.target].append(arc_index)
 
     weighted_terms = []
+    pair_flow_variable_count = 0
+    pair_flow_full_variable_count = len(arcs) * len(pairs)
     for pair in pairs:
-        source_nodes = room_nodes[pair.source_instance_id]
-        target_nodes = room_nodes[pair.target_instance_id]
+        domain = _pair_flow_domain(
+            nodes=nodes,
+            arcs=arcs,
+            source_nodes=room_nodes[pair.source_instance_id],
+            target_nodes=room_nodes[pair.target_instance_id],
+            incoming_arcs=incoming_arcs,
+            outgoing_arcs=outgoing_arcs,
+        )
+        if not domain.source_nodes or not domain.target_nodes:
+            model.add_bool_or([])
+            continue
+
         source_choice = {
             node: model.new_bool_var(f"pair_source__{pair.pair_id}__{node}")
-            for node in source_nodes
+            for node in domain.source_nodes
         }
         target_choice = {
             node: model.new_bool_var(f"pair_target__{pair.pair_id}__{node}")
-            for node in target_nodes
+            for node in domain.target_nodes
         }
         model.add_exactly_one(source_choice.values())
         model.add_exactly_one(target_choice.values())
 
-        flow = [
-            model.new_bool_var(f"pair_flow__{pair.pair_id}__{arc.arc_id}")
-            for arc in arcs
-        ]
-        for arc_index, arc in enumerate(arcs):
-            for condition in arc.conditions:
-                model.add(flow[arc_index] <= condition)
+        flow = {
+            arc_index: model.new_bool_var(
+                f"pair_flow__{pair.pair_id}__{arcs[arc_index].arc_id}"
+            )
+            for arc_index in domain.arc_indices
+        }
+        pair_flow_variable_count += len(flow)
+        for arc_index, variable in flow.items():
+            for condition in arcs[arc_index].conditions:
+                model.add(variable <= condition)
 
-        for node in nodes:
-            incoming = sum(flow[index] for index in incoming_arcs[node])
-            outgoing = sum(flow[index] for index in outgoing_arcs[node])
+        for node in domain.nodes:
+            incoming = sum(
+                flow[index] for index in incoming_arcs[node] if index in flow
+            )
+            outgoing = sum(
+                flow[index] for index in outgoing_arcs[node] if index in flow
+            )
             source = source_choice.get(node, 0)
             target = target_choice.get(node, 0)
             model.add(incoming + source == outgoing + target)
 
-        path_cost = sum(arc.cost * flow[index] for index, arc in enumerate(arcs))
+        path_cost = sum(arcs[index].cost * variable for index, variable in flow.items())
         weighted_terms.append(pair.coefficient * path_cost)
 
-    return sum(weighted_terms)
+    return sum(weighted_terms), pair_flow_variable_count, pair_flow_full_variable_count
 
 
 def _extract_utilities(
@@ -348,6 +464,11 @@ def solve_fixed_layout_flow_objective(
     room pair by a unit flow over the conditional module graph. Minimizing the sum of weighted
     arc costs is therefore equivalent to minimizing the sum of exact shortest-path distances.
 
+    Before variables are created, each pair flow is restricted to arcs that lie on at least one
+    source-to-target path in the unconditional supergraph. The supergraph ignores infrastructure
+    selection conditions and is therefore a relaxation of every realizable network; removing
+    arcs outside all relaxed endpoint paths is proof-safe and cannot change the exact optimum.
+
     ``scaled_objective_upper_bound`` is an optional exact decomposition cut. When supplied, the
     fixed subproblem only needs solutions with scaled ``F <= bound``. Equality is deliberately
     retained because a layout with the incumbent primary objective may still improve mass,
@@ -387,7 +508,11 @@ def solve_fixed_layout_flow_objective(
     )
     nodes, room_nodes, arcs = _build_path_graph(rooms, compiled)
     objective = build_scaled_objective(rooms)
-    primary_expr = _add_pair_flow_objective(
+    (
+        primary_expr,
+        pair_flow_variable_count,
+        pair_flow_full_variable_count,
+    ) = _add_pair_flow_objective(
         compiled.model,
         nodes=nodes,
         room_nodes=room_nodes,
@@ -408,6 +533,8 @@ def solve_fixed_layout_flow_objective(
             graph_node_count=len(nodes),
             graph_arc_count=len(arcs),
             objective_pair_count=len(objective.pairs),
+            pair_flow_variable_count=pair_flow_variable_count,
+            pair_flow_full_variable_count=pair_flow_full_variable_count,
             cp_sat_variable_count=primary_variable_count,
             cp_sat_constraint_count=primary_constraint_count,
             model_build_time_s=model_build_time_s,
