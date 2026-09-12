@@ -5,6 +5,11 @@ on:
   pull_request:
     paths:
       - "config/example-plan.json"
+      - "src/**"
+      - "scripts/create_example_evidence.py"
+      - "tests/**"
+      - "pyproject.toml"
+      - "docs/BENCHMARKS.md"
       - ".github/workflows/example-layout.yml"
   push:
     branches: [main]
@@ -12,7 +17,14 @@ on:
       - "config/example-plan.json"
       - "config/plan.json"
       - "src/**"
+      - "scripts/create_example_evidence.py"
+      - "tests/**"
+      - "pyproject.toml"
+      - "docs/BENCHMARKS.md"
       - ".github/workflows/example-layout.yml"
+
+permissions:
+  contents: read
 
 jobs:
   generate:
@@ -27,28 +39,23 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
       - name: Run optimizer
-        run: python -m alters_base_planner.cli config/example-plan.json
-      - name: Verify generated outputs
+        id: optimizer
         run: |
-          test -s layout.png
-          test -s layout.svg
-          test -s layout.json
-          python - <<'PY'
-          import json
-          data = json.load(open('layout.json', encoding='utf-8'))
-          assert data['status'] == 'FEASIBLE', data['status']
-          print('objective=', data['optimization']['weighted_distance_score'])
-          print('average_pair_distance=', data['optimization']['average_pair_distance'])
-          print('weighted_average_pair_distance=', data['optimization']['weighted_average_pair_distance'])
-          print('total_base_mass=', data['journey']['total_base_mass'])
-          print('organics_required=', data['journey']['organics_required'])
-          print('global_objective_optimum_proven=', data['optimization']['global_objective_optimum_proven'])
-          PY
-      - uses: actions/upload-artifact@v4
+          exit_code=0
+          python -m alters_base_planner.cli config/example-plan.json || exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+      - name: Create evidence package
+        if: always()
+        env:
+          OPTIMIZER_EXIT_CODE: ${{ steps.optimizer.outputs.exit_code }}
+        run: python scripts/create_example_evidence.py
+      - name: Upload evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: optimized-layout
-          path: |
-            layout.png
-            layout.svg
-            layout.json
+          name: example-plan-evidence
+          path: example-plan-*.zip
           if-no-files-found: error
+      - name: Enforce example baseline acceptance
+        if: always()
+        run: python scripts/create_example_evidence.py --verify
