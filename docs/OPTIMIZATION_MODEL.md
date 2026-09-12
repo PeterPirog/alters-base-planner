@@ -386,7 +386,7 @@ scaled_F <= B
 
 This cut is exact and non-strict. Equality is mandatory because `scaled_F == B` may still improve total mass, Elevator count or Corridor count. If CP-SAT proves the bounded model infeasible, the packing cannot match or improve the incumbent primary objective. This certificate is sufficient for global optimization even if the bounded solve does not distinguish structural infeasibility from true fixed optimum `scaled_F > B`.
 
-The fixed packing is optimized in proof-preserving phases under the remaining global deadline:
+The fixed packing is optimized with a **single exact lexicographic-scalarized objective** under the remaining global deadline, replacing the previous four sequential optimization phases. The accepted lexicographic order is
 
 ```text
 1. exact scaled F
@@ -395,11 +395,24 @@ The fixed packing is optimized in proof-preserving phases under the remaining gl
 4. Corridor count
 ```
 
-Room mass is constant for a fixed packing, therefore minimizing utility mass in phase 2 is equivalent to minimizing total Base mass.
+and is enforced by one linear objective with exact mixed-radix dominance weights derived from valid finite bounds on the lower-order objectives taken from the fixed hard model's utility-anchor domain:
 
-`lexicographic_optimum_proven=true` requires all four phases to return CP-SAT `OPTIMAL`.
+```text
+W_C = 1
+W_E = C_max + 1
+W_M = E_max * W_E + C_max + 1
+W_F = M_max * W_M + E_max * W_E + C_max + 1
 
-After any proven objective prefix is fixed by equality, later `INFEASIBLE` or `MODEL_INVALID` status is an internal contradiction: the previous witness still satisfies the fixed prefix. Such statuses fail fast rather than being converted into ordinary timeout/infeasibility.
+minimize  W_F * scaled_F + W_M * utility_mass + W_E * elevator_count + W_C * corridor_count
+```
+
+where `C_max`, `E_max` are the numbers of legal Corridor and Elevator anchors and `M_max` is the maximum utility mass over that anchor domain. Because one unit of any higher-priority objective strictly dominates the maximum possible loss across every lower-priority objective, the scalarized objective is order-preserving with the lexicographic order, so one CP-SAT solve is exactly equivalent to the sequential phases while returning the best lexicographic incumbent at any point in the search. Room mass is constant for a fixed packing, therefore utility mass is exactly total Base mass up to a constant.
+
+Before the model is solved, the scalarized objective maximum `W_F * scaled_F_max + W_M * M_max + W_E * E_max + W_C * C_max` is checked to fit signed 64-bit CP-SAT arithmetic; an overflow would corrupt exactness and therefore fails fast.
+
+`lexicographic_optimum_proven=true` is set only when CP-SAT proves that single scalarized objective `OPTIMAL`, which simultaneously proves the exact `F` optimum and every tie-breaker. A timed-out incumbent is reported `FEASIBLE` with its exact objective tuple but carries no optimality proof.
+
+Because the proof is a single objective, a `MODEL_INVALID` status is an internal contradiction and fails fast; `INFEASIBLE` under the incumbent cut remains the exact proof that the packing cannot match the incumbent primary objective.
 
 ### 9.3 Independent exact evaluator
 

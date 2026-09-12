@@ -465,7 +465,7 @@ CP-SAT room-packing master
 
 The fixed subproblem jointly chooses Corridor/Elevator infrastructure and one legal path for each positive-weight room pair. Accepted distance costs are represented directly as conditional graph arc costs.
 
-The fixed packing is optimized in four proof-preserving phases:
+The fixed packing is optimized with a **single exact lexicographic-scalarized objective**, replacing the previous four sequential proof-preserving phases:
 
 ```text
 1. exact scaled F
@@ -474,7 +474,9 @@ The fixed packing is optimized in four proof-preserving phases:
 4. Corridor count
 ```
 
-Each phase is considered proven only on CP-SAT `OPTIMAL`.
+The mixed-radix dominance weights are derived from valid finite bounds on the lower-order objectives taken from the fixed hard model's utility-anchor domain, so the single linear objective is order-preserving with the lexicographic order and one CP-SAT solve is exactly equivalent to the sequential phases. The scalarized objective maximum is checked to fit signed 64-bit CP-SAT arithmetic before solving.
+
+The lexicographic optimum is considered proven only on CP-SAT `OPTIMAL` for that single scalarized objective, which simultaneously proves the exact `F` optimum; a timed-out incumbent remains best-known with no proof claim.
 
 After a feasible exact incumbent with primary objective `B` exists, production may constrain later fixed subproblems by:
 
@@ -498,7 +500,7 @@ Otherwise a feasible result is best-known feasible.
 
 Every CP-SAT model passes `CpModel.validate()` before solving. Internal mathematical/model inconsistencies fail fast rather than being hidden as ordinary infeasibility.
 
-Once an objective prefix has been proven and fixed by equality, a later lexicographic phase cannot legitimately become infeasible. `INFEASIBLE` or `MODEL_INVALID` in such a tie-break phase is an internal model/solver contradiction and must fail fast rather than be reported as ordinary timeout or infeasibility.
+A `MODEL_INVALID` status from the fixed-packing lexicographic-scalarized model is an internal model/solver contradiction and must fail fast rather than be reported as ordinary timeout or infeasibility. An `INFEASIBLE` status under the incumbent cut remains the valid exact certificate that the packing cannot match the incumbent primary objective.
 
 ### 11.5 Global budget
 
@@ -638,7 +640,8 @@ Delivered or active:
 - fixed-subproblem model-size, construction and CP-SAT timing metrics;
 - auditable pruning/proof-completion diagnostics;
 - opt-in reproducible benchmark workflow;
-- exact equality-preserving incumbent objective cut for fixed subproblems.
+- exact equality-preserving incumbent objective cut for fixed subproblems;
+- single exact mixed-radix lexicographic-scalarized fixed-objective solve (replacing the four sequential tie-breaker phases), with dominance weights derived from the fixed hard model's utility-anchor domain and a signed-64-bit objective safety check.
 
 Remaining Stage-4 work includes:
 

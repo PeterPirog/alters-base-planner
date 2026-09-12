@@ -106,20 +106,20 @@ vertical movement                       = adjacent same-x Elevators only
 
 All pair flows share the same Corridor/Elevator decision variables. Infrastructure is therefore optimized jointly rather than independently for each pair.
 
-### Lexicographic proof phases
+### Lexicographic scalarization
 
-The fixed-packing solver uses four sequential CP-SAT optimization phases under one remaining global deadline:
+The fixed-packing solver optimizes the accepted lexicographic order with a **single exact mixed-radix scalarized objective** under one remaining global deadline, replacing the previous four sequential optimization phases:
 
 ```text
-1. minimize scaled exact F
-2. constrain F to its proven optimum; minimize utility mass
-3. constrain mass to its proven optimum; minimize Elevator count
-4. constrain Elevator count to its proven optimum; minimize Corridor count
+1. exact scaled F
+2. utility mass
+3. Elevator count
+4. Corridor count
 ```
 
-Non-SOLVER room mass is constant for a fixed packing, so minimizing utility mass is exactly equivalent to minimizing total Base mass in phase 2.
+The dominance weights are derived from valid finite bounds on the lower-order objectives taken from the fixed hard model's utility-anchor domain (`W_C = 1`, `W_E = C_max + 1`, `W_M = E_max * W_E + C_max + 1`, `W_F = M_max * W_M + E_max * W_E + C_max + 1`), so the single linear objective is order-preserving with the lexicographic order and one CP-SAT solve is exactly equivalent to the sequential phases. Non-SOLVER room mass is constant for a fixed packing, so utility mass is exactly total Base mass up to a constant.
 
-A phase is proven only when CP-SAT returns `OPTIMAL`. `lexicographic_optimum_proven=true` requires completion of all four phases. A feasible incumbent produced before all phases are proven remains best-known for that packing.
+The proof is set only when CP-SAT returns `OPTIMAL` for that single scalarized objective; `lexicographic_optimum_proven=true` then also proves the exact `F` optimum. A feasible incumbent produced on timeout remains best-known for that packing and carries no optimality claim.
 
 ### Independent evaluator cross-check
 

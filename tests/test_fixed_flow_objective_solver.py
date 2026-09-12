@@ -46,7 +46,7 @@ def _assert_matches_reference(base: BaseGeometry, rooms: tuple[ModulePlacement, 
     assert flow.status == "OPTIMAL"
     assert flow.primary_objective_optimum_proven is True
     assert flow.lexicographic_optimum_proven is True
-    assert flow.completed_phase == "Corridor tie-breaker"
+    assert flow.completed_phase == "lexicographic scalarization"
     assert flow.time_limit_reached is False
     assert flow.distance_metrics is not None
     assert reference.distance_metrics is not None

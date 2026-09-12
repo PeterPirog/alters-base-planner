@@ -335,6 +335,14 @@ class PlanResult:
     fixed_model_build_time_s: float = 0.0
     fixed_cp_sat_solve_time_s: float = 0.0
     fixed_subproblem_time_s: float = 0.0
+    fixed_lexicographic_weight_f: int = 0
+    fixed_lexicographic_weight_mass: int = 0
+    fixed_lexicographic_weight_elevator: int = 0
+    fixed_lexicographic_weight_corridor: int = 0
+    fixed_lexicographic_corridor_bound: int = 0
+    fixed_lexicographic_elevator_bound: int = 0
+    fixed_lexicographic_mass_bound: int = 0
+    fixed_lexicographic_objective_value: int = 0
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:

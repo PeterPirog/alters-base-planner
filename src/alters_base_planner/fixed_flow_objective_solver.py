@@ -24,11 +24,13 @@ Anchor = tuple[int, int]
 
 @dataclass(frozen=True, slots=True)
 class FixedFlowObjectiveDiagnostics:
-    """Performance diagnostics for one fixed-packing exact objective subproblem.
+    """Performance and proof diagnostics for one fixed-packing exact objective subproblem.
 
-    Counts describe the primary pair-flow model before the three lexicographic equality
-    constraints are appended. Timings are wall-clock measurements for performance analysis only;
-    they never participate in correctness or objective decisions.
+    Counts describe the single lexicographic-scalarized pair-flow model. The ``lexicographic_*``
+    fields record the exact mixed-radix dominance weights, the valid finite bounds they were
+    derived from, the resulting lexicographic incumbent value and the signed-64-bit safety check.
+    Timings are wall-clock measurements for performance analysis only; they never participate in
+    correctness or objective decisions.
     """
 
     graph_node_count: int = 0
@@ -38,6 +40,15 @@ class FixedFlowObjectiveDiagnostics:
     pair_flow_full_variable_count: int = 0
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
+    lexicographic_weight_f: int = 0
+    lexicographic_weight_mass: int = 0
+    lexicographic_weight_elevator: int = 0
+    lexicographic_weight_corridor: int = 0
+    lexicographic_corridor_bound: int = 0
+    lexicographic_elevator_bound: int = 0
+    lexicographic_mass_bound: int = 0
+    lexicographic_objective_value: int = 0
+    lexicographic_max_value: int = 0
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
@@ -49,8 +60,14 @@ class FixedFlowObjectiveResult:
 
     The formulation jointly selects Corridor/Elevator infrastructure and one legal path for
     every positive-weight endpoint pair. Its primary integer objective is exactly the accepted
-    weighted distance ``F`` after rational scaling. Lexicographic tie-breakers are then solved
-    sequentially under equality constraints that preserve all previously proven optima.
+    weighted distance ``F`` after rational scaling. The accepted lexicographic order
+    (``F`` then utility mass then Elevator count then Corridor count) is enforced by a single
+    exact mixed-radix scalarized objective with dominance weights proven from valid finite bounds,
+    so one CP-SAT solve replaces the previous sequential tie-breaker phases.
+
+    ``lexicographic_objective_value`` is the exact scalar value of that objective for the
+    returned incumbent; it is meaningful only together with the dominance weights recorded in
+    ``diagnostics``.
     """
 
     status: str
@@ -62,6 +79,7 @@ class FixedFlowObjectiveResult:
     lexicographic_optimum_proven: bool = False
     completed_phase: str = "none"
     time_limit_reached: bool = False
+    lexicographic_objective_value: int | None = None
     diagnostics: FixedFlowObjectiveDiagnostics = FixedFlowObjectiveDiagnostics()
 
 
@@ -433,17 +451,83 @@ def _solve_phase(
     return status, max(0.0, monotonic() - solve_started)
 
 
-def _validate_tie_phase_status(status: int, phase: str) -> None:
-    """Reject solver states that contradict an already-proven feasible optimum prefix."""
+_SIGNED_INT64_MAX = (1 << 63) - 1
 
-    if status == cp_model.MODEL_INVALID:
-        raise AssertionError(f"CP-SAT rejected the fixed pair-flow model during {phase}")
-    if status == cp_model.INFEASIBLE:
-        raise AssertionError(
-            "Previously proven fixed pair-flow optimum became infeasible during " f"{phase}"
+
+def lexicographic_dominance_weights(
+    *,
+    corridor_count_max: int,
+    elevator_count_max: int,
+    utility_mass_max: int,
+) -> tuple[int, int, int, int]:
+    """Derive exact mixed-radix dominance weights for the accepted lexicographic order.
+
+    The accepted order minimizes, in priority order: exact scaled ``F``, utility mass, Elevator
+    count and Corridor count. Given valid finite upper bounds on the three lower-order objectives,
+    the weights ``(W_F, W_M, W_E, W_C)`` are chosen so that one unit of any higher-priority
+    objective strictly dominates the maximum possible loss across every lower-priority objective:
+
+    - ``W_C = 1``
+    - ``W_E = C_max + 1``
+    - ``W_M = E_max * W_E + C_max + 1``
+    - ``W_F = M_max * W_M + E_max * W_E + C_max + 1``
+
+    For non-negative integer objective components this makes the single linear objective
+    ``W_F * F + W_M * mass + W_E * elevators + W_C * corridors`` order-preserving with the
+    lexicographic order, so one CP-SAT solve is exactly equivalent to the sequential phases.
+    """
+
+    if corridor_count_max < 0 or elevator_count_max < 0 or utility_mass_max < 0:
+        raise ValueError("Lexicographic bounds must be non-negative")
+
+    w_c = 1
+    w_e = corridor_count_max + 1
+    w_m = elevator_count_max * w_e + corridor_count_max + 1
+    w_f = utility_mass_max * w_m + elevator_count_max * w_e + corridor_count_max + 1
+    return w_f, w_m, w_e, w_c
+
+
+def lexicographic_objective_upper_bound(
+    *,
+    weight_f: int,
+    weight_mass: int,
+    weight_elevator: int,
+    weight_corridor: int,
+    scaled_f_max: int,
+    utility_mass_max: int,
+    elevator_count_max: int,
+    corridor_count_max: int,
+) -> int:
+    """Return the valid finite maximum of the scalarized objective (all components at their maxima)."""
+
+    if (
+        min(weight_f, weight_mass, weight_elevator, weight_corridor) < 1
+        or scaled_f_max < 0
+        or utility_mass_max < 0
+        or elevator_count_max < 0
+        or corridor_count_max < 0
+    ):
+        raise ValueError("Lexicographic weights and bounds must be valid non-negative values")
+    return (
+        weight_f * scaled_f_max
+        + weight_mass * utility_mass_max
+        + weight_elevator * elevator_count_max
+        + weight_corridor * corridor_count_max
+    )
+
+
+def _assert_lexicographic_objective_fits_int64(lexicographic_max: int) -> None:
+    """Fail fast if the scalarized objective could exceed signed 64-bit CP-SAT arithmetic."""
+
+    if lexicographic_max < 0:
+        raise AssertionError("Lexicographic objective upper bound must be non-negative")
+    if lexicographic_max > _SIGNED_INT64_MAX:
+        raise ValueError(
+            "Exact lexicographic scalarization exceeds signed 64-bit CP-SAT objective bounds: "
+            f"lexicographic_max={lexicographic_max}, limit={_SIGNED_INT64_MAX}. "
+            "The fixed packing's utility-anchor domain or objective scale is too large for an "
+            "overflow-safe dominance weighting."
         )
-    if status not in (cp_model.UNKNOWN, cp_model.FEASIBLE, cp_model.OPTIMAL):
-        raise AssertionError(f"Unexpected CP-SAT status during {phase}: {status}")
 
 
 def _result_from_solution(
@@ -457,6 +541,7 @@ def _result_from_solution(
     lexicographic_proven: bool,
     completed_phase: str,
     time_limit_reached: bool,
+    lexicographic_objective_value: int | None,
     diagnostics: FixedFlowObjectiveDiagnostics,
 ) -> FixedFlowObjectiveResult:
     return FixedFlowObjectiveResult(
@@ -469,6 +554,7 @@ def _result_from_solution(
         lexicographic_optimum_proven=lexicographic_proven,
         completed_phase=completed_phase,
         time_limit_reached=time_limit_reached,
+        lexicographic_objective_value=lexicographic_objective_value,
         diagnostics=diagnostics,
     )
 
@@ -503,15 +589,15 @@ def solve_fixed_layout_flow_objective(
     cannot match or improve the incumbent primary objective, even though it does not distinguish
     hard infrastructure infeasibility from strict objective domination.
 
-    The phases are solved lexicographically under one wall-clock budget that includes model
-    construction as well as CP-SAT search:
+    The accepted lexicographic order (exact scaled ``F`` then utility mass then Elevator count
+    then Corridor count) is enforced by a single exact mixed-radix scalarized objective. The
+    dominance weights are derived from valid finite bounds on the lower-order objectives taken
+    from the fixed hard model's utility-anchor domain, so one CP-SAT solve under one wall-clock
+    budget (including model construction and search) is exactly equivalent to the sequential
+    lexicographic phases while yielding the best lexicographic incumbent at any point.
 
-    1. scaled exact weighted distance ``F``;
-    2. utility mass (room mass is constant for the fixed packing);
-    3. Elevator count;
-    4. Corridor count.
-
-    A proof flag is set only when CP-SAT proves the corresponding optimization phase optimal.
+    Both proof flags are set only when CP-SAT proves the scalarized objective optimal; a timed-out
+    incumbent is reported ``FEASIBLE`` with the exact objective tuple but no optimality claim.
     """
 
     if scaled_objective_upper_bound is not None and (
@@ -546,24 +632,77 @@ def solve_fixed_layout_flow_objective(
         arcs=arcs,
         pairs=objective.pairs,
     )
+
+    corridor_spec = MODULE_BY_KEY["corridor"]
+    elevator_spec = MODULE_BY_KEY["elevator"]
+    corridor_count_expr = sum(compiled.variables.corridor.values())
+    elevator_count_expr = sum(compiled.variables.elevator.values())
+    utility_mass_expr = (
+        sum(corridor_spec.mass * variable for variable in compiled.variables.corridor.values())
+        + sum(elevator_spec.mass * variable for variable in compiled.variables.elevator.values())
+    )
+
+    # Valid finite bounds on the lower-order objectives, derived from the fixed hard model's
+    # utility-anchor domain (each anchor selects at most one Corridor or one Elevator module).
+    corridor_count_max = len(compiled.variables.corridor)
+    elevator_count_max = len(compiled.variables.elevator)
+    utility_mass_max = corridor_count_max * corridor_spec.mass + elevator_count_max * elevator_spec.mass
+
+    # Valid finite upper bound on the primary scaled-F objective: a simple path charges each arc at
+    # most once, so every pair's path cost is bounded by the total arc cost of the shared graph.
+    total_arc_cost = sum(arc.cost for arc in arcs)
+    scaled_f_max = total_arc_cost * sum(pair.coefficient for pair in objective.pairs)
+
+    weight_f, weight_mass, weight_elevator, weight_corridor = lexicographic_dominance_weights(
+        corridor_count_max=corridor_count_max,
+        elevator_count_max=elevator_count_max,
+        utility_mass_max=utility_mass_max,
+    )
+    lexicographic_max = lexicographic_objective_upper_bound(
+        weight_f=weight_f,
+        weight_mass=weight_mass,
+        weight_elevator=weight_elevator,
+        weight_corridor=weight_corridor,
+        scaled_f_max=scaled_f_max,
+        utility_mass_max=utility_mass_max,
+        elevator_count_max=elevator_count_max,
+        corridor_count_max=corridor_count_max,
+    )
+    _assert_lexicographic_objective_fits_int64(lexicographic_max)
+
     if scaled_objective_upper_bound is not None:
         compiled.model.add(primary_expr <= scaled_objective_upper_bound)
-    compiled.model.minimize(primary_expr)
+    lexicographic_expr = (
+        weight_f * primary_expr
+        + weight_mass * utility_mass_expr
+        + weight_elevator * elevator_count_expr
+        + weight_corridor * corridor_count_expr
+    )
+    compiled.model.minimize(lexicographic_expr)
 
-    primary_proto = compiled.model.Proto()
-    primary_variable_count = len(primary_proto.variables)
-    primary_constraint_count = len(primary_proto.constraints)
+    model_proto = compiled.model.Proto()
+    model_variable_count = len(model_proto.variables)
+    model_constraint_count = len(model_proto.constraints)
     model_build_time_s = max(0.0, monotonic() - started_at)
 
-    def diagnostics() -> FixedFlowObjectiveDiagnostics:
+    def diagnostics(lexicographic_objective_value: int) -> FixedFlowObjectiveDiagnostics:
         return FixedFlowObjectiveDiagnostics(
             graph_node_count=len(nodes),
             graph_arc_count=len(arcs),
             objective_pair_count=len(objective.pairs),
             pair_flow_variable_count=pair_flow_variable_count,
             pair_flow_full_variable_count=pair_flow_full_variable_count,
-            cp_sat_variable_count=primary_variable_count,
-            cp_sat_constraint_count=primary_constraint_count,
+            cp_sat_variable_count=model_variable_count,
+            cp_sat_constraint_count=model_constraint_count,
+            lexicographic_weight_f=weight_f,
+            lexicographic_weight_mass=weight_mass,
+            lexicographic_weight_elevator=weight_elevator,
+            lexicographic_weight_corridor=weight_corridor,
+            lexicographic_corridor_bound=corridor_count_max,
+            lexicographic_elevator_bound=elevator_count_max,
+            lexicographic_mass_bound=utility_mass_max,
+            lexicographic_objective_value=lexicographic_objective_value,
+            lexicographic_max_value=lexicographic_max,
             model_build_time_s=model_build_time_s,
             cp_sat_solve_time_s=cp_sat_solve_time_s,
             total_time_s=max(0.0, monotonic() - started_at),
@@ -576,7 +715,7 @@ def solve_fixed_layout_flow_objective(
         solver,
         compiled.model,
         deadline=deadline,
-        phase="primary exact F",
+        phase="lexicographic scalarization",
     )
     cp_sat_solve_time_s += phase_solve_time
     if status == cp_model.MODEL_INVALID:
@@ -590,162 +729,71 @@ def solve_fixed_layout_flow_objective(
         return FixedFlowObjectiveResult(
             status=result_status,
             objective_scale=objective.scale,
-            diagnostics=diagnostics(),
+            diagnostics=diagnostics(0),
         )
     if status == cp_model.UNKNOWN:
         return FixedFlowObjectiveResult(
             status="TIME_LIMIT",
             objective_scale=objective.scale,
             time_limit_reached=True,
-            diagnostics=diagnostics(),
+            diagnostics=diagnostics(0),
         )
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise AssertionError(f"Unexpected CP-SAT primary objective status: {status}")
+        raise AssertionError(f"Unexpected CP-SAT lexicographic objective status: {status}")
 
     utilities, metrics = _evaluate_solution(solver, compiled, rooms)
+    lexicographic_value = int(round(solver.objective_value))
+    exact_scaled_f = objective.scaled_score(metrics.pairwise_distances)
+    if (
+        scaled_objective_upper_bound is not None
+        and exact_scaled_f > scaled_objective_upper_bound
+    ):
+        raise AssertionError(
+            "Lexicographic incumbent violates the exact incumbent objective cut: "
+            f"F={exact_scaled_f}, bound={scaled_objective_upper_bound}"
+        )
+    utility_mass = sum(MODULE_BY_KEY[module.module_key].mass for module in utilities)
+    elevator_count = sum(1 for module in utilities if module.module_key == "elevator")
+    corridor_count = sum(1 for module in utilities if module.module_key == "corridor")
+    expected_lexicographic = (
+        weight_f * exact_scaled_f
+        + weight_mass * utility_mass
+        + weight_elevator * elevator_count
+        + weight_corridor * corridor_count
+    )
+    if expected_lexicographic != lexicographic_value:
+        raise AssertionError(
+            "Scalarized lexicographic objective disagrees with the exact incumbent evaluation: "
+            f"model_lex={lexicographic_value}, evaluated_lex={expected_lexicographic} "
+            f"(F={exact_scaled_f}, mass={utility_mass}, "
+            f"elevators={elevator_count}, corridors={corridor_count})"
+        )
+
     if status != cp_model.OPTIMAL:
         return _result_from_solution(
             status="FEASIBLE",
             utilities=utilities,
             metrics=metrics,
             scale=objective.scale,
-            scaled_objective_value=None,
+            scaled_objective_value=exact_scaled_f,
             primary_proven=False,
             lexicographic_proven=False,
-            completed_phase="primary exact F",
+            completed_phase="lexicographic scalarization",
             time_limit_reached=True,
-            diagnostics=diagnostics(),
-        )
-
-    primary_optimum = int(round(solver.objective_value))
-    if (
-        scaled_objective_upper_bound is not None
-        and primary_optimum > scaled_objective_upper_bound
-    ):
-        raise AssertionError(
-            "Pair-flow optimum violates the exact incumbent objective cut: "
-            f"optimum={primary_optimum}, bound={scaled_objective_upper_bound}"
-        )
-    scaled_evaluator_value = objective.scaled_score(metrics.pairwise_distances)
-    if scaled_evaluator_value != primary_optimum:
-        raise AssertionError(
-            "Pair-flow optimum disagrees with exact Dijkstra evaluation: "
-            f"model={primary_optimum}, evaluator={scaled_evaluator_value}"
-        )
-    compiled.model.add(primary_expr == primary_optimum)
-
-    last_utilities = utilities
-    last_metrics = metrics
-    completed_phase = "primary exact F"
-
-    corridor_spec = MODULE_BY_KEY["corridor"]
-    elevator_spec = MODULE_BY_KEY["elevator"]
-    utility_mass_expr = sum(
-        corridor_spec.mass * variable
-        for variable in compiled.variables.corridor.values()
-    ) + sum(
-        elevator_spec.mass * variable
-        for variable in compiled.variables.elevator.values()
-    )
-    compiled.model.minimize(utility_mass_expr)
-    status, phase_solve_time = _solve_phase(
-        solver,
-        compiled.model,
-        deadline=deadline,
-        phase="mass tie-breaker",
-    )
-    cp_sat_solve_time_s += phase_solve_time
-    _validate_tie_phase_status(status, "mass tie-breaker")
-    if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
-        last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
-    if status != cp_model.OPTIMAL:
-        return _result_from_solution(
-            status="FEASIBLE",
-            utilities=last_utilities,
-            metrics=last_metrics,
-            scale=objective.scale,
-            scaled_objective_value=primary_optimum,
-            primary_proven=True,
-            lexicographic_proven=False,
-            completed_phase=completed_phase,
-            time_limit_reached=True,
-            diagnostics=diagnostics(),
-        )
-    mass_optimum = int(round(solver.objective_value))
-    compiled.model.add(utility_mass_expr == mass_optimum)
-    completed_phase = "mass tie-breaker"
-
-    elevator_count_expr = sum(compiled.variables.elevator.values())
-    compiled.model.minimize(elevator_count_expr)
-    status, phase_solve_time = _solve_phase(
-        solver,
-        compiled.model,
-        deadline=deadline,
-        phase="Elevator tie-breaker",
-    )
-    cp_sat_solve_time_s += phase_solve_time
-    _validate_tie_phase_status(status, "Elevator tie-breaker")
-    if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
-        last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
-    if status != cp_model.OPTIMAL:
-        return _result_from_solution(
-            status="FEASIBLE",
-            utilities=last_utilities,
-            metrics=last_metrics,
-            scale=objective.scale,
-            scaled_objective_value=primary_optimum,
-            primary_proven=True,
-            lexicographic_proven=False,
-            completed_phase=completed_phase,
-            time_limit_reached=True,
-            diagnostics=diagnostics(),
-        )
-    elevator_optimum = int(round(solver.objective_value))
-    compiled.model.add(elevator_count_expr == elevator_optimum)
-    completed_phase = "Elevator tie-breaker"
-
-    corridor_count_expr = sum(compiled.variables.corridor.values())
-    compiled.model.minimize(corridor_count_expr)
-    status, phase_solve_time = _solve_phase(
-        solver,
-        compiled.model,
-        deadline=deadline,
-        phase="Corridor tie-breaker",
-    )
-    cp_sat_solve_time_s += phase_solve_time
-    _validate_tie_phase_status(status, "Corridor tie-breaker")
-    if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
-        last_utilities, last_metrics = _evaluate_solution(solver, compiled, rooms)
-    if status != cp_model.OPTIMAL:
-        return _result_from_solution(
-            status="FEASIBLE",
-            utilities=last_utilities,
-            metrics=last_metrics,
-            scale=objective.scale,
-            scaled_objective_value=primary_optimum,
-            primary_proven=True,
-            lexicographic_proven=False,
-            completed_phase=completed_phase,
-            time_limit_reached=True,
-            diagnostics=diagnostics(),
-        )
-
-    final_scaled_evaluator = objective.scaled_score(last_metrics.pairwise_distances)
-    if final_scaled_evaluator != primary_optimum:
-        raise AssertionError(
-            "Lexicographic pair-flow solution changed the proven exact F optimum: "
-            f"primary={primary_optimum}, final={final_scaled_evaluator}"
+            lexicographic_objective_value=lexicographic_value,
+            diagnostics=diagnostics(lexicographic_value),
         )
 
     return _result_from_solution(
         status="OPTIMAL",
-        utilities=last_utilities,
-        metrics=last_metrics,
+        utilities=utilities,
+        metrics=metrics,
         scale=objective.scale,
-        scaled_objective_value=primary_optimum,
+        scaled_objective_value=exact_scaled_f,
         primary_proven=True,
         lexicographic_proven=True,
-        completed_phase="Corridor tie-breaker",
+        completed_phase="lexicographic scalarization",
         time_limit_reached=False,
-        diagnostics=diagnostics(),
+        lexicographic_objective_value=lexicographic_value,
+        diagnostics=diagnostics(lexicographic_value),
     )

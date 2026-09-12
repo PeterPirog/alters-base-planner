@@ -32,7 +32,7 @@ CP-SAT SYSTEM/PLAYER room-packing master
 
 The old deterministic greedy post-router is not part of the correctness boundary.
 
-For a fixed room packing, the pair-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT completes all four phases. Across room packings, the master may prune by the admissible lower bound only when:
+For a fixed room packing, the pair-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT returns `OPTIMAL` for its single exact mixed-radix lexicographic-scalarized objective. Across room packings, the master may prune by the admissible lower bound only when:
 
 ```text
 scaled_F_LB > incumbent_scaled_F
