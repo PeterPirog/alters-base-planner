@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 3
+BENCHMARK_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +66,10 @@ class BenchmarkRecord:
     max_fixed_graph_nodes: int
     max_fixed_graph_arcs: int
     max_fixed_objective_pairs: int
+    max_fixed_pair_flow_variables: int
+    max_fixed_pair_flow_full_variables: int
+    total_fixed_pair_flow_variables: int
+    total_fixed_pair_flow_full_variables: int
     max_fixed_cp_sat_variables: int
     max_fixed_cp_sat_constraints: int
     fixed_model_build_time_s: float
@@ -191,6 +195,10 @@ def record_from_result(
         max_fixed_graph_nodes=result.max_fixed_graph_nodes,
         max_fixed_graph_arcs=result.max_fixed_graph_arcs,
         max_fixed_objective_pairs=result.max_fixed_objective_pairs,
+        max_fixed_pair_flow_variables=result.max_fixed_pair_flow_variables,
+        max_fixed_pair_flow_full_variables=result.max_fixed_pair_flow_full_variables,
+        total_fixed_pair_flow_variables=result.total_fixed_pair_flow_variables,
+        total_fixed_pair_flow_full_variables=result.total_fixed_pair_flow_full_variables,
         max_fixed_cp_sat_variables=result.max_fixed_cp_sat_variables,
         max_fixed_cp_sat_constraints=result.max_fixed_cp_sat_constraints,
         fixed_model_build_time_s=result.fixed_model_build_time_s,
@@ -299,6 +307,37 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 build=raw["fixed_model_build_time_s"],
                 solve=raw["fixed_cp_sat_solve_time_s"],
                 total=raw["fixed_subproblem_time_s"],
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Pair-flow domain reduction",
+            "",
+            "Actual counts are pair-flow Boolean variables after exact pair-specific domain reduction; full-domain counts are the previous pairs x graph-arcs formulation.",
+            "",
+            "| Case | Max actual | Max full | Total actual | Total full | Removed | Reduction |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        actual = raw["total_fixed_pair_flow_variables"]
+        full = raw["total_fixed_pair_flow_full_variables"]
+        removed = full - actual
+        reduction = "-" if full == 0 else f"{100.0 * removed / full:.1f}%"
+        lines.append(
+            "| {name} | {max_actual} | {max_full} | {actual} | {full} | {removed} | "
+            "{reduction} |".format(
+                name=raw["name"],
+                max_actual=raw["max_fixed_pair_flow_variables"],
+                max_full=raw["max_fixed_pair_flow_full_variables"],
+                actual=actual,
+                full=full,
+                removed=removed,
+                reduction=reduction,
             )
         )
 
