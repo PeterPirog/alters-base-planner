@@ -1,10 +1,11 @@
 {
-  "base_tier": 4,
+  "$schema": "./plan.schema.json",
+  "base_tier": 1,
   "rooms": {},
   "solver": {
     "objective": "weighted_pair_distance",
-    "time_limit_s": 2,
-    "max_layout_attempts": 40
+    "time_limit_s": 20,
+    "max_layout_attempts": 20
   },
   "output": {
     "svg": "layout.svg",
