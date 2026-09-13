@@ -310,13 +310,21 @@ Accepted lexicographic order:
 
 Traffic weights come from `src/alters_base_planner/data/usage_weights.json` and are planner heuristics, not hidden game constants.
 
+The catalogue supplies defaults. An optional per-plan `usage_weights` map may override only known
+SYSTEM/PLAYER modules with finite values in `[0, 1]`; omitted keys retain their defaults. This map
+is copied and resolved independently for each solve. Runtime code never mutates the catalogue.
+Corridor/Elevator cannot be objective endpoints and always retain effective endpoint weight `0`.
+
 No undocumented soft objective may compete with this order. Community layout strategies may guide search only.
 
 ### 7.1 Exact coefficient scaling
 
-`objective.py` interprets each documented decimal traffic weight with exact rational arithmetic and chooses a common denominator scale. Each pair obtains a positive integer coefficient.
+`objective.py` interprets each effective per-plan decimal traffic weight with exact rational arithmetic and chooses a common denominator scale. Each pair obtains a positive integer coefficient.
 
-The same `ScaledObjective` is shared by the pair-flow optimizer, Dijkstra reconstruction, lower-bound calculation and global incumbent ranking. The mathematical proof boundary therefore uses integer arithmetic rather than floating-point epsilon comparisons.
+The effective weight map is passed explicitly through the room-packing search, pair-flow optimizer,
+exhaustive reference oracles, modified-Manhattan lower bounds and independent Dijkstra evaluator.
+The same `ScaledObjective` is shared by optimization and exact cross-checks. The mathematical proof
+boundary therefore uses integer arithmetic rather than floating-point epsilon comparisons.
 
 ---
 
@@ -410,13 +418,13 @@ where `C_max`, `E_max` are the numbers of legal Corridor and Elevator anchors an
 
 Before the model is solved, the scalarized objective maximum `W_F * scaled_F_max + W_M * M_max + W_E * E_max + W_C * C_max` is checked to fit signed 64-bit CP-SAT arithmetic; an overflow would corrupt exactness and therefore fails fast.
 
-`lexicographic_optimum_proven=true` is set only when CP-SAT proves that single scalarized objective `OPTIMAL`, which simultaneously proves the exact `F` optimum and every tie-breaker. A timed-out incumbent is reported `FEASIBLE` with its exact objective tuple but carries no optimality proof.
+`lexicographic_optimum_proven=true` is set only when CP-SAT proves that single scalarized objective `OPTIMAL`, which simultaneously proves the exact `F` optimum and every tie-breaker. A timed-out incumbent is reported `FEASIBLE` with its exact objective tuple but carries no optimality proof. Its selected infrastructure is fixed and independently evaluated with exact Dijkstra; if timeout left non-shortest auxiliary pair flows, those flow witnesses are replaced analytically by the shorter legal paths for incumbent reporting. This can only improve the same feasible infrastructure and never creates an optimality claim.
 
 Because the proof is a single objective, a `MODEL_INVALID` status is an internal contradiction and fails fast; `INFEASIBLE` under the incumbent cut remains the exact proof that the packing cannot match the incumbent primary objective.
 
 ### 9.3 Independent exact evaluator
 
-Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. CP-SAT evaluates both the primary pair-flow expression and the complete scalarized expression directly as exact integer linear expressions. The model primary value is compared with the scaled value reconstructed independently from evaluator pair distances, and the complete scalar identity is checked separately. Any disagreement fails fast.
+Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. CP-SAT evaluates both the primary pair-flow expression and the complete scalarized expression directly as exact integer linear expressions. For an `OPTIMAL` fixed solve, the model primary value must equal the scaled value reconstructed independently from evaluator pair distances and the complete scalar identity must also match; any disagreement fails fast. For a timeout `FEASIBLE` incumbent, Dijkstra may be strictly lower because CP-SAT had not yet minimized every auxiliary flow witness. A higher Dijkstra value remains impossible and fails fast; a lower value is the exact shortest-path repair on the same selected infrastructure and becomes the unproven incumbent value.
 
 The exact lower bound is also checked against the exact evaluated objective.
 
@@ -543,6 +551,10 @@ geometry source / verification
 global_objective_optimum_proven
 search diagnostics
 ```
+
+`room_usage_weights` and each serialized non-SOLVER module's `usage_weight` report the effective
+per-plan values actually used for that run, not unconditionally the catalogue defaults. Serialized
+Corridor/Elevator weights remain `0`.
 
 Audit invariants include:
 

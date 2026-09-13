@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Mapping
 from pathlib import Path
 
 from .models import ModuleSpec, ModuleType, PlacementAuthority, floor_ports, top_ports
@@ -157,3 +159,45 @@ if set(USAGE_WEIGHTS) != set(MODULE_BY_KEY):
     missing = sorted(set(MODULE_BY_KEY) - set(USAGE_WEIGHTS))
     extra = sorted(set(USAGE_WEIGHTS) - set(MODULE_BY_KEY))
     raise RuntimeError(f"Usage-weight catalog mismatch; missing={missing}, extra={extra}")
+
+
+def resolve_usage_weights(
+    overrides: Mapping[str, object] | None = None,
+) -> dict[str, float]:
+    """Return independent effective SYSTEM/PLAYER weights for one plan."""
+
+    overrides = {} if overrides is None else overrides
+    if not isinstance(overrides, Mapping):
+        raise ValueError("usage_weights must be an object mapping module keys to weights")
+
+    unknown = sorted(set(overrides) - set(MODULE_BY_KEY))
+    if unknown:
+        raise ValueError(f"Unknown module keys in usage_weights: {unknown}")
+
+    solver_keys = sorted(
+        key
+        for key in overrides
+        if MODULE_BY_KEY[key].authority is PlacementAuthority.SOLVER
+    )
+    if solver_keys:
+        raise ValueError(
+            "SOLVER modules cannot be objective endpoints in usage_weights: "
+            f"{solver_keys}"
+        )
+
+    effective = {
+        spec.key: spec.visit_weight for spec in (*SYSTEM_MODULES, *PLAYER_MODULES)
+    }
+    for key, weight in overrides.items():
+        if (
+            isinstance(weight, bool)
+            or not isinstance(weight, (int, float))
+            or not math.isfinite(float(weight))
+            or not 0.0 <= weight <= 1.0
+        ):
+            raise ValueError(
+                f"Usage weight for {key} must be a finite number from 0 to 1"
+            )
+        effective[key] = float(weight)
+
+    return effective

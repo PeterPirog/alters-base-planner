@@ -259,6 +259,7 @@ class PlanRequest:
     objective: str = "weighted_pair_distance"
     time_limit_s: float = 15.0
     max_layout_attempts: int = 20
+    usage_weights: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.tier not in (1, 2, 3, 4):
@@ -283,6 +284,22 @@ class PlanRequest:
                 raise ValueError("room count keys must be non-empty strings")
             if isinstance(count, bool) or not isinstance(count, int) or count < 0:
                 raise ValueError(f"room count for {key} must be a non-negative integer")
+        if not isinstance(self.usage_weights, dict):
+            raise ValueError("usage_weights must be an object mapping module keys to weights")
+        self.usage_weights = dict(self.usage_weights)
+        for key, weight in self.usage_weights.items():
+            if not isinstance(key, str) or not key:
+                raise ValueError("usage weight keys must be non-empty strings")
+            if (
+                isinstance(weight, bool)
+                or not isinstance(weight, (int, float))
+                or not math.isfinite(float(weight))
+                or not 0.0 <= weight <= 1.0
+            ):
+                raise ValueError(
+                    f"usage weight for {key} must be a finite number from 0 to 1"
+                )
+            self.usage_weights[key] = float(weight)
 
 
 @dataclass(slots=True)

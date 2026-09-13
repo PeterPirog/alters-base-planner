@@ -2,7 +2,7 @@ import pytest
 from ortools.sat.python import cp_model
 
 import alters_base_planner.fixed_flow_objective_solver as flow_solver_module
-from alters_base_planner.catalog import MODULE_BY_KEY
+from alters_base_planner.catalog import MODULE_BY_KEY, resolve_usage_weights
 from alters_base_planner.distance import evaluate_distances
 from alters_base_planner.fixed_flow_objective_solver import solve_fixed_layout_flow_objective
 from alters_base_planner.fixed_objective_oracle import solve_fixed_layout_objective
@@ -229,6 +229,58 @@ def test_primary_pair_flow_expression_is_cross_checked_against_dijkstra(monkeypa
     monkeypatch.setattr(flow_solver_module, "build_scaled_objective", mismatching_objective)
     with pytest.raises(AssertionError, match="primary objective disagrees.*Dijkstra"):
         solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
+
+
+def test_custom_weights_match_pair_flow_and_independent_dijkstra_objectives() -> None:
+    base = _base(10, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 6, 0),
+    )
+    usage_weights = resolve_usage_weights({"airlock": 0.75, "workshop": 0.2})
+
+    result = solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+    reference = solve_fixed_layout_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == "OPTIMAL"
+    assert result.objective_scale == 20
+    assert result.scaled_objective_value == 3
+    assert result.distance_metrics is not None
+    assert result.distance_metrics.weighted_score == pytest.approx(0.15)
+    assert result.distance_metrics.weighted_manhattan_lower_bound == pytest.approx(0.15)
+    assert reference.status == "OPTIMAL"
+    assert reference.distance_metrics is not None
+    assert result.distance_metrics.weighted_score == reference.distance_metrics.weighted_score
+
+
+def test_custom_zero_weight_keeps_room_hard_connectivity_in_fixed_solver() -> None:
+    base = _base(10, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 6, 0),
+    )
+    usage_weights = resolve_usage_weights({"workshop": 0.0})
+
+    result = solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == "OPTIMAL"
+    assert result.scaled_objective_value == 0
+    assert _signature(result) == (("corridor", 4, 0),)
 
 
 def test_pair_flow_matches_reference_for_two_corridor_route() -> None:

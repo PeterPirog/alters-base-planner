@@ -191,6 +191,11 @@ src/alters_base_planner/data/usage_weights.json
 
 They are not hidden game constants.
 
+Each plan may override SYSTEM and PLAYER weights with an optional top-level
+`usage_weights` object. Omitted keys keep their catalogue defaults. Overrides are isolated to
+that plan and never mutate the catalogue. Corridor and Elevator remain path infrastructure with
+effective endpoint weight `0` and cannot be overridden.
+
 For every unordered positive-weight room pair:
 
 ```text
@@ -218,7 +223,10 @@ The accepted lexicographic optimization order is:
 4. fewer Corridor modules
 ```
 
-Catalogue decimal weights are converted to exact rational/integer coefficients for CP-SAT and proof comparisons. Result JSON includes both the user-facing objective and its exact scaled integer representation.
+Effective per-plan decimal weights are converted to exact rational/integer coefficients for
+CP-SAT and proof comparisons. The same resolved map is used by pair-flow optimization,
+modified-Manhattan bounds and independent Dijkstra evaluation. Result JSON includes both the
+user-facing objective, effective room weights and its exact scaled integer representation.
 
 ## Modified-Manhattan lower bound
 
@@ -285,6 +293,11 @@ Example `config/plan.json`:
     "dormitory": 1,
     "small_storage": 2
   },
+  "usage_weights": {
+    "airlock": 1.0,
+    "workshop": 0.75,
+    "small_storage": 0.0
+  },
   "solver": {
     "objective": "weighted_pair_distance",
     "time_limit_s": 15,
@@ -299,6 +312,8 @@ Example `config/plan.json`:
 ```
 
 SYSTEM modules are injected automatically. Corridor/Elevator counts are never user inputs.
+`usage_weights` is optional and may contain only known SYSTEM/PLAYER module keys with finite
+numeric values from `0.0` through `1.0`. A zero-weight room still must be placed and connected.
 
 ## Run
 
@@ -340,7 +355,21 @@ python -m alters_base_planner.cli config/plan.json
 python -m streamlit run app.py
 ```
 
-The UI uses the same solver semantics as the CLI.
+Open `http://localhost:8501/`. The default **Form** mode provides:
+
+- Base Tier I-IV selection;
+- visible, locked count `1` controls for all mandatory SYSTEM modules;
+- exact PLAYER room-count controls with catalogue limits such as Recycler `<= 1` and Rapidium
+  Ark `<= 5`;
+- Corridor and Elevator shown as solver-generated `AUTO` infrastructure;
+- a fixed-row SYSTEM/PLAYER usage-weight editor and **Reset weights to defaults** action;
+- advanced time-limit and layout-attempt controls;
+- **Download plan JSON** before solving.
+
+The **JSON file** mode remains a fully supported alternative. Uploaded and form-generated data
+use the same canonical parser and the same exact `solve_plan` call. Generated `alters-plan.json`
+files include every effective SYSTEM/PLAYER weight and can be uploaded again without losing the
+configuration.
 
 ## Development
 

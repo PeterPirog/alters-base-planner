@@ -1,6 +1,6 @@
 import pytest
 
-from alters_base_planner.catalog import MODULE_BY_KEY
+from alters_base_planner.catalog import MODULE_BY_KEY, resolve_usage_weights
 from alters_base_planner.models import ModulePlacement
 from alters_base_planner.objective import (
     ScaledObjective,
@@ -102,3 +102,34 @@ def test_scaled_lower_bound_rejects_objective_for_different_room_set() -> None:
 
     with pytest.raises(ValueError, match="missing from the supplied room set"):
         scaled_modified_manhattan_lower_bound((rooms[0],), objective)
+
+
+def test_custom_usage_weights_change_exact_coefficients_and_lower_bound() -> None:
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 6, 0),
+    )
+    usage_weights = resolve_usage_weights({"airlock": 0.75, "workshop": 0.2})
+
+    objective = build_scaled_objective(rooms, usage_weights)
+
+    assert objective.scale == 20
+    assert objective.pairs[0].coefficient == 3
+    assert scaled_modified_manhattan_lower_bound(
+        rooms, usage_weights=usage_weights
+    ) == 3
+
+
+def test_custom_zero_weight_removes_room_from_exact_objective_pairs() -> None:
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 6, 0),
+        _room("command-center-1", "command_center", 12, 0),
+    )
+    usage_weights = resolve_usage_weights({"workshop": 0.0})
+
+    objective = build_scaled_objective(rooms, usage_weights)
+
+    assert [pair.pair_id for pair in objective.pairs] == [
+        "airlock-1|command-center-1"
+    ]

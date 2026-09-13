@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 
@@ -418,10 +419,15 @@ def _evaluate_solution(
     solver: cp_model.CpSolver,
     compiled,
     rooms: tuple[ModulePlacement, ...],
+    usage_weights: Mapping[str, float] | None,
 ) -> tuple[tuple[ModulePlacement, ...], DistanceMetrics]:
     utilities = _extract_utilities(solver, compiled)
     try:
-        metrics = evaluate_distances(list(rooms), list(utilities))
+        metrics = (
+            evaluate_distances(list(rooms), list(utilities))
+            if usage_weights is None
+            else evaluate_distances(list(rooms), list(utilities), usage_weights)
+        )
     except ValueError as exc:
         raise AssertionError(
             "Pair-flow objective model returned infrastructure rejected by the exact evaluator"
@@ -570,6 +576,7 @@ def solve_fixed_layout_flow_objective(
     time_limit_s: float,
     root_instance_id: str = "airlock-1",
     scaled_objective_upper_bound: int | None = None,
+    usage_weights: Mapping[str, float] | None = None,
 ) -> FixedFlowObjectiveResult:
     """Optimize exact ``F`` and all accepted tie-breakers for one fixed room packing.
 
@@ -600,8 +607,10 @@ def solve_fixed_layout_flow_objective(
     budget (including model construction and search) is exactly equivalent to the sequential
     lexicographic phases while yielding the best lexicographic incumbent at any point.
 
-    Both proof flags are set only when CP-SAT proves the scalarized objective optimal; a timed-out
-    incumbent is reported ``FEASIBLE`` with the exact objective tuple but no optimality claim.
+    Both proof flags are set only when CP-SAT proves the scalarized objective optimal. A timed-out
+    incumbent may contain non-shortest auxiliary pair flows; its selected infrastructure is
+    re-evaluated by exact Dijkstra and reported ``FEASIBLE`` with that proof-safe exact objective
+    tuple but no optimality claim.
     """
 
     if scaled_objective_upper_bound is not None and (
@@ -624,7 +633,11 @@ def solve_fixed_layout_flow_objective(
         root_instance_id=root_instance_id,
     )
     nodes, room_nodes, arcs = _build_path_graph(rooms, compiled)
-    objective = build_scaled_objective(rooms)
+    objective = (
+        build_scaled_objective(rooms)
+        if usage_weights is None
+        else build_scaled_objective(rooms, usage_weights)
+    )
     (
         primary_expr,
         pair_flow_variable_count,
@@ -747,22 +760,24 @@ def solve_fixed_layout_flow_objective(
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise AssertionError(f"Unexpected CP-SAT lexicographic objective status: {status}")
 
-    utilities, metrics = _evaluate_solution(solver, compiled, rooms)
-    lexicographic_value = solver.value(lexicographic_expr)
-    model_scaled_f = solver.value(primary_expr)
+    utilities, metrics = _evaluate_solution(solver, compiled, rooms, usage_weights)
+    solver_lexicographic_value = solver.value(lexicographic_expr)
+    solver_scaled_f = solver.value(primary_expr)
     dijkstra_scaled_f = objective.scaled_score(metrics.pairwise_distances)
-    if model_scaled_f != dijkstra_scaled_f:
+    if dijkstra_scaled_f > solver_scaled_f or (
+        status == cp_model.OPTIMAL and solver_scaled_f != dijkstra_scaled_f
+    ):
         raise AssertionError(
             "Pair-flow primary objective disagrees with exact Dijkstra evaluation: "
-            f"model_F={model_scaled_f}, dijkstra_F={dijkstra_scaled_f}"
+            f"model_F={solver_scaled_f}, dijkstra_F={dijkstra_scaled_f}"
         )
     if (
         scaled_objective_upper_bound is not None
-        and model_scaled_f > scaled_objective_upper_bound
+        and dijkstra_scaled_f > scaled_objective_upper_bound
     ):
         raise AssertionError(
             "Lexicographic incumbent violates the exact incumbent objective cut: "
-            f"F={model_scaled_f}, bound={scaled_objective_upper_bound}"
+            f"F={dijkstra_scaled_f}, bound={scaled_objective_upper_bound}"
         )
     utility_mass = sum(MODULE_BY_KEY[module.module_key].mass for module in utilities)
     elevator_count = sum(1 for module in utilities if module.module_key == "elevator")
@@ -773,10 +788,10 @@ def solve_fixed_layout_flow_objective(
         + weight_elevator * elevator_count
         + weight_corridor * corridor_count
     )
-    if expected_lexicographic != lexicographic_value:
+    if status == cp_model.OPTIMAL and expected_lexicographic != solver_lexicographic_value:
         raise AssertionError(
             "Scalarized lexicographic objective disagrees with the exact incumbent evaluation: "
-            f"model_lex={lexicographic_value}, evaluated_lex={expected_lexicographic} "
+            f"model_lex={solver_lexicographic_value}, evaluated_lex={expected_lexicographic} "
             f"(F={dijkstra_scaled_f}, mass={utility_mass}, "
             f"elevators={elevator_count}, corridors={corridor_count})"
         )
@@ -787,13 +802,13 @@ def solve_fixed_layout_flow_objective(
             utilities=utilities,
             metrics=metrics,
             scale=objective.scale,
-            scaled_objective_value=model_scaled_f,
+            scaled_objective_value=dijkstra_scaled_f,
             primary_proven=False,
             lexicographic_proven=False,
             completed_phase="lexicographic scalarization",
             time_limit_reached=True,
-            lexicographic_objective_value=lexicographic_value,
-            diagnostics=diagnostics(lexicographic_value),
+            lexicographic_objective_value=expected_lexicographic,
+            diagnostics=diagnostics(expected_lexicographic),
         )
 
     return _result_from_solution(
@@ -801,11 +816,11 @@ def solve_fixed_layout_flow_objective(
         utilities=utilities,
         metrics=metrics,
         scale=objective.scale,
-        scaled_objective_value=model_scaled_f,
+        scaled_objective_value=dijkstra_scaled_f,
         primary_proven=True,
         lexicographic_proven=True,
         completed_phase="lexicographic scalarization",
         time_limit_reached=False,
-        lexicographic_objective_value=lexicographic_value,
-        diagnostics=diagnostics(lexicographic_value),
+        lexicographic_objective_value=expected_lexicographic,
+        diagnostics=diagnostics(expected_lexicographic),
     )

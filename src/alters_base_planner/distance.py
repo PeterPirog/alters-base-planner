@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .catalog import MODULE_BY_KEY
@@ -74,13 +75,21 @@ def modified_manhattan_room_lower_bound(a: ModulePlacement, b: ModulePlacement) 
     return int(best)
 
 
-def weighted_modified_manhattan_lower_bound(rooms: list[ModulePlacement]) -> float:
-    active = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
+def weighted_modified_manhattan_lower_bound(
+    rooms: list[ModulePlacement],
+    usage_weights: Mapping[str, float] | None = None,
+) -> float:
+    def room_weight(room: ModulePlacement) -> float:
+        if usage_weights is None:
+            return MODULE_BY_KEY[room.module_key].visit_weight
+        return usage_weights[room.module_key]
+
+    active = [room for room in rooms if room_weight(room) > 0]
     total = 0.0
     for idx, room_a in enumerate(active):
-        weight_a = MODULE_BY_KEY[room_a.module_key].visit_weight
+        weight_a = room_weight(room_a)
         for room_b in active[idx + 1 :]:
-            weight_b = MODULE_BY_KEY[room_b.module_key].visit_weight
+            weight_b = room_weight(room_b)
             total += weight_a * weight_b * modified_manhattan_room_lower_bound(room_a, room_b)
     return total
 
@@ -344,14 +353,21 @@ def _validate_single_access_network(
 
 
 def evaluate_distances(
-    rooms: list[ModulePlacement], utilities: list[ModulePlacement]
+    rooms: list[ModulePlacement],
+    utilities: list[ModulePlacement],
+    usage_weights: Mapping[str, float] | None = None,
 ) -> DistanceMetrics:
     _validate_solver_infrastructure(utilities)
     _validate_vertical_elevator_coverage(rooms, utilities)
     graph, endpoints, shaft_count = _build_module_graph(rooms, utilities)
     _validate_single_access_network(rooms, graph, endpoints)
 
-    active_rooms = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
+    def room_weight(room: ModulePlacement) -> float:
+        if usage_weights is None:
+            return MODULE_BY_KEY[room.module_key].visit_weight
+        return usage_weights[room.module_key]
+
+    active_rooms = [room for room in rooms if room_weight(room) > 0]
     pairwise: dict[str, int] = {}
     contributions: dict[str, float] = {}
     manhattan_bounds: dict[str, int] = {}
@@ -361,7 +377,7 @@ def evaluate_distances(
 
     for idx, room_a in enumerate(active_rooms):
         distances = _dijkstra(graph, endpoints[room_a.instance_id])
-        weight_a = MODULE_BY_KEY[room_a.module_key].visit_weight
+        weight_a = room_weight(room_a)
         for room_b in active_rooms[idx + 1 :]:
             best = min(
                 (distances[node] for node in endpoints[room_b.instance_id] if node in distances),
@@ -382,7 +398,7 @@ def evaluate_distances(
                 )
 
             pair_key = f"{room_a.instance_id}|{room_b.instance_id}"
-            pair_weight = weight_a * MODULE_BY_KEY[room_b.module_key].visit_weight
+            pair_weight = weight_a * room_weight(room_b)
             contribution = pair_weight * distance
 
             pairwise[pair_key] = distance

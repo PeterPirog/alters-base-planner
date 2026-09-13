@@ -49,6 +49,41 @@
         "workshop": {"$ref": "#/$defs/count"}
       }
     },
+    "usage_weights": {
+      "type": "object",
+      "description": "Optional per-plan SYSTEM/PLAYER traffic-weight overrides.",
+      "additionalProperties": false,
+      "properties": {
+        "airlock": {"$ref": "#/$defs/usageWeight"},
+        "ark_sarcophagus": {"$ref": "#/$defs/usageWeight"},
+        "captains_cabin": {"$ref": "#/$defs/usageWeight"},
+        "command_center": {"$ref": "#/$defs/usageWeight"},
+        "communication_room": {"$ref": "#/$defs/usageWeight"},
+        "contemplation_room": {"$ref": "#/$defs/usageWeight"},
+        "dormitory": {"$ref": "#/$defs/usageWeight"},
+        "gamers_den": {"$ref": "#/$defs/usageWeight"},
+        "greenhouse": {"$ref": "#/$defs/usageWeight"},
+        "gym": {"$ref": "#/$defs/usageWeight"},
+        "infirmary": {"$ref": "#/$defs/usageWeight"},
+        "kitchen": {"$ref": "#/$defs/usageWeight"},
+        "large_storage": {"$ref": "#/$defs/usageWeight"},
+        "machinery": {"$ref": "#/$defs/usageWeight"},
+        "materializer": {"$ref": "#/$defs/usageWeight"},
+        "medium_storage": {"$ref": "#/$defs/usageWeight"},
+        "park_with_bench": {"$ref": "#/$defs/usageWeight"},
+        "personal_cabin": {"$ref": "#/$defs/usageWeight"},
+        "quantum_computer": {"$ref": "#/$defs/usageWeight"},
+        "radiation_repulsor": {"$ref": "#/$defs/usageWeight"},
+        "rapidium_ark": {"$ref": "#/$defs/usageWeight"},
+        "recycler": {"$ref": "#/$defs/usageWeight"},
+        "refinery": {"$ref": "#/$defs/usageWeight"},
+        "research_lab": {"$ref": "#/$defs/usageWeight"},
+        "small_storage": {"$ref": "#/$defs/usageWeight"},
+        "social_room": {"$ref": "#/$defs/usageWeight"},
+        "womb": {"$ref": "#/$defs/usageWeight"},
+        "workshop": {"$ref": "#/$defs/usageWeight"}
+      }
+    },
     "solver": {
       "type": "object",
       "description": "Optimization controls only. Utility counts are not configurable here either.",
@@ -79,6 +114,7 @@
   },
   "required": ["base_tier", "rooms"],
   "$defs": {
-    "count": {"type": "integer", "minimum": 0}
+    "count": {"type": "integer", "minimum": 0},
+    "usageWeight": {"type": "number", "minimum": 0.0, "maximum": 1.0}
   }
 }

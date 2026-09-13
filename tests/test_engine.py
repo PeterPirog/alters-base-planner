@@ -1,7 +1,7 @@
 import pytest
 
 from alters_base_planner.base import builtin_base
-from alters_base_planner.catalog import MODULE_BY_KEY, MODULES
+from alters_base_planner.catalog import MODULE_BY_KEY, MODULES, resolve_usage_weights
 from alters_base_planner.distance import room_access_rows
 from alters_base_planner.engine import (
     _candidate_positions,
@@ -19,6 +19,7 @@ from alters_base_planner.models import (
     PlanRequest,
     expand_instances,
 )
+from alters_base_planner.serialization import result_payload
 
 
 def _utility(module_key: str, x: int, y: int) -> ModulePlacement:
@@ -268,6 +269,48 @@ def test_fixed_subproblem_diagnostics_are_aggregated_by_exact_master() -> None:
     assert result.fixed_model_build_time_s >= 0
     assert result.fixed_cp_sat_solve_time_s >= 0
     assert result.fixed_subproblem_time_s >= result.fixed_model_build_time_s
+
+
+def test_effective_usage_weights_reach_search_result_and_serialization() -> None:
+    base = BaseGeometry(
+        tier=99,
+        width=10,
+        height=1,
+        allowed_cells=frozenset((x, 0) for x in range(10)),
+        blocked_cells=frozenset(),
+        organics_capacity=999,
+        source="custom-usage-weight-test",
+        verified=True,
+    )
+    instances = [
+        ModuleInstance("airlock-1", MODULE_BY_KEY["airlock"]),
+        ModuleInstance("workshop-1", MODULE_BY_KEY["workshop"]),
+    ]
+    usage_weights = resolve_usage_weights({"airlock": 0.75, "workshop": 0.2})
+
+    result = _solve_instances(
+        base,
+        instances,
+        time_limit_s=5.0,
+        max_layout_attempts=1,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == "FEASIBLE"
+    assert result.room_usage_weights == {"airlock-1": 0.75, "workshop-1": 0.2}
+    serialized_modules = result_payload(result)["modules"]
+    assert isinstance(serialized_modules, list)
+    serialized_weights = {
+        module["instance_id"]: module["usage_weight"]
+        for module in serialized_modules
+    }
+    assert serialized_weights["airlock-1"] == 0.75
+    assert serialized_weights["workshop-1"] == 0.2
+    assert all(
+        serialized_weights[module.instance_id] == 0.0
+        for module in result.modules
+        if module.module_key in {"corridor", "elevator"}
+    )
 
 
 def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> None:
