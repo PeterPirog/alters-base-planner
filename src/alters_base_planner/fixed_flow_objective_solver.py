@@ -26,11 +26,10 @@ Anchor = tuple[int, int]
 class FixedFlowObjectiveDiagnostics:
     """Performance and proof diagnostics for one fixed-packing exact objective subproblem.
 
-    Counts describe the single lexicographic-scalarized pair-flow model. The ``lexicographic_*``
-    fields record the exact mixed-radix dominance weights, the valid finite bounds they were
-    derived from, the resulting lexicographic incumbent value and the signed-64-bit safety check.
-    Timings are wall-clock measurements for performance analysis only; they never participate in
-    correctness or objective decisions.
+    Counts describe the single lexicographic-scalarized pair-flow model. The objective bounds and
+    mixed-radix weights make the signed-64-bit safety calculation auditable. The incumbent scalar
+    value is reported separately from those safety bounds. Timings are wall-clock measurements for
+    performance analysis only; they never participate in correctness or objective decisions.
     """
 
     graph_node_count: int = 0
@@ -40,15 +39,17 @@ class FixedFlowObjectiveDiagnostics:
     pair_flow_full_variable_count: int = 0
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
-    lexicographic_weight_f: int = 0
-    lexicographic_weight_mass: int = 0
-    lexicographic_weight_elevator: int = 0
-    lexicographic_weight_corridor: int = 0
-    lexicographic_corridor_bound: int = 0
-    lexicographic_elevator_bound: int = 0
-    lexicographic_mass_bound: int = 0
-    lexicographic_objective_value: int = 0
-    lexicographic_max_value: int = 0
+    lexicographic_scalarization_used: bool = False
+    primary_objective_upper_bound: int = 0
+    combined_objective_upper_bound: int = 0
+    weight_f: int = 0
+    weight_mass: int = 0
+    weight_elevator: int = 0
+    weight_corridor: int = 0
+    corridor_bound: int = 0
+    elevator_bound: int = 0
+    mass_bound: int = 0
+    incumbent_scalar_value: int | None = None
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
@@ -318,7 +319,7 @@ def _endpoint_choice(
     if len(nodes) == 1:
         return {nodes[0]: 1}
 
-    choices = {
+    choices: dict[NodeId, cp_model.IntVar | int] = {
         node: model.new_bool_var(f"pair_{role}__{pair_id}__{node}") for node in nodes
     }
     model.add_exactly_one(choices.values())
@@ -332,7 +333,7 @@ def _add_pair_flow_objective(
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
     pairs: tuple[ObjectivePair, ...],
-) -> tuple[object, int, int]:
+) -> tuple[cp_model.LinearExpr | int, int, int]:
     """Add exact pair flows after proof-safe pair-specific domain reduction.
 
     Returns the weighted objective expression, the number of arc-flow Boolean variables actually
@@ -440,7 +441,7 @@ def _solve_phase(
     *,
     deadline: float,
     phase: str,
-) -> tuple[int, float]:
+) -> tuple[cp_model.CpSolverStatus, float]:
     remaining = deadline - monotonic()
     if remaining <= 0:
         return cp_model.UNKNOWN, 0.0
@@ -516,15 +517,18 @@ def lexicographic_objective_upper_bound(
     )
 
 
-def _assert_lexicographic_objective_fits_int64(lexicographic_max: int) -> None:
+def _assert_lexicographic_objective_fits_int64(
+    combined_objective_upper_bound: int,
+) -> None:
     """Fail fast if the scalarized objective could exceed signed 64-bit CP-SAT arithmetic."""
 
-    if lexicographic_max < 0:
+    if combined_objective_upper_bound < 0:
         raise AssertionError("Lexicographic objective upper bound must be non-negative")
-    if lexicographic_max > _SIGNED_INT64_MAX:
+    if combined_objective_upper_bound > _SIGNED_INT64_MAX:
         raise ValueError(
             "Exact lexicographic scalarization exceeds signed 64-bit CP-SAT objective bounds: "
-            f"lexicographic_max={lexicographic_max}, limit={_SIGNED_INT64_MAX}. "
+            f"combined_objective_upper_bound={combined_objective_upper_bound}, "
+            f"limit={_SIGNED_INT64_MAX}. "
             "The fixed packing's utility-anchor domain or objective scale is too large for an "
             "overflow-safe dominance weighting."
         )
@@ -658,7 +662,7 @@ def solve_fixed_layout_flow_objective(
         elevator_count_max=elevator_count_max,
         utility_mass_max=utility_mass_max,
     )
-    lexicographic_max = lexicographic_objective_upper_bound(
+    combined_objective_upper_bound = lexicographic_objective_upper_bound(
         weight_f=weight_f,
         weight_mass=weight_mass,
         weight_elevator=weight_elevator,
@@ -668,7 +672,7 @@ def solve_fixed_layout_flow_objective(
         elevator_count_max=elevator_count_max,
         corridor_count_max=corridor_count_max,
     )
-    _assert_lexicographic_objective_fits_int64(lexicographic_max)
+    _assert_lexicographic_objective_fits_int64(combined_objective_upper_bound)
 
     if scaled_objective_upper_bound is not None:
         compiled.model.add(primary_expr <= scaled_objective_upper_bound)
@@ -685,7 +689,7 @@ def solve_fixed_layout_flow_objective(
     model_constraint_count = len(model_proto.constraints)
     model_build_time_s = max(0.0, monotonic() - started_at)
 
-    def diagnostics(lexicographic_objective_value: int) -> FixedFlowObjectiveDiagnostics:
+    def diagnostics(incumbent_scalar_value: int | None) -> FixedFlowObjectiveDiagnostics:
         return FixedFlowObjectiveDiagnostics(
             graph_node_count=len(nodes),
             graph_arc_count=len(arcs),
@@ -694,15 +698,17 @@ def solve_fixed_layout_flow_objective(
             pair_flow_full_variable_count=pair_flow_full_variable_count,
             cp_sat_variable_count=model_variable_count,
             cp_sat_constraint_count=model_constraint_count,
-            lexicographic_weight_f=weight_f,
-            lexicographic_weight_mass=weight_mass,
-            lexicographic_weight_elevator=weight_elevator,
-            lexicographic_weight_corridor=weight_corridor,
-            lexicographic_corridor_bound=corridor_count_max,
-            lexicographic_elevator_bound=elevator_count_max,
-            lexicographic_mass_bound=utility_mass_max,
-            lexicographic_objective_value=lexicographic_objective_value,
-            lexicographic_max_value=lexicographic_max,
+            lexicographic_scalarization_used=True,
+            primary_objective_upper_bound=scaled_f_max,
+            combined_objective_upper_bound=combined_objective_upper_bound,
+            weight_f=weight_f,
+            weight_mass=weight_mass,
+            weight_elevator=weight_elevator,
+            weight_corridor=weight_corridor,
+            corridor_bound=corridor_count_max,
+            elevator_bound=elevator_count_max,
+            mass_bound=utility_mass_max,
+            incumbent_scalar_value=incumbent_scalar_value,
             model_build_time_s=model_build_time_s,
             cp_sat_solve_time_s=cp_sat_solve_time_s,
             total_time_s=max(0.0, monotonic() - started_at),
@@ -729,34 +735,40 @@ def solve_fixed_layout_flow_objective(
         return FixedFlowObjectiveResult(
             status=result_status,
             objective_scale=objective.scale,
-            diagnostics=diagnostics(0),
+            diagnostics=diagnostics(None),
         )
     if status == cp_model.UNKNOWN:
         return FixedFlowObjectiveResult(
             status="TIME_LIMIT",
             objective_scale=objective.scale,
             time_limit_reached=True,
-            diagnostics=diagnostics(0),
+            diagnostics=diagnostics(None),
         )
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise AssertionError(f"Unexpected CP-SAT lexicographic objective status: {status}")
 
     utilities, metrics = _evaluate_solution(solver, compiled, rooms)
-    lexicographic_value = int(round(solver.objective_value))
-    exact_scaled_f = objective.scaled_score(metrics.pairwise_distances)
+    lexicographic_value = solver.value(lexicographic_expr)
+    model_scaled_f = solver.value(primary_expr)
+    dijkstra_scaled_f = objective.scaled_score(metrics.pairwise_distances)
+    if model_scaled_f != dijkstra_scaled_f:
+        raise AssertionError(
+            "Pair-flow primary objective disagrees with exact Dijkstra evaluation: "
+            f"model_F={model_scaled_f}, dijkstra_F={dijkstra_scaled_f}"
+        )
     if (
         scaled_objective_upper_bound is not None
-        and exact_scaled_f > scaled_objective_upper_bound
+        and model_scaled_f > scaled_objective_upper_bound
     ):
         raise AssertionError(
             "Lexicographic incumbent violates the exact incumbent objective cut: "
-            f"F={exact_scaled_f}, bound={scaled_objective_upper_bound}"
+            f"F={model_scaled_f}, bound={scaled_objective_upper_bound}"
         )
     utility_mass = sum(MODULE_BY_KEY[module.module_key].mass for module in utilities)
     elevator_count = sum(1 for module in utilities if module.module_key == "elevator")
     corridor_count = sum(1 for module in utilities if module.module_key == "corridor")
     expected_lexicographic = (
-        weight_f * exact_scaled_f
+        weight_f * dijkstra_scaled_f
         + weight_mass * utility_mass
         + weight_elevator * elevator_count
         + weight_corridor * corridor_count
@@ -765,7 +777,7 @@ def solve_fixed_layout_flow_objective(
         raise AssertionError(
             "Scalarized lexicographic objective disagrees with the exact incumbent evaluation: "
             f"model_lex={lexicographic_value}, evaluated_lex={expected_lexicographic} "
-            f"(F={exact_scaled_f}, mass={utility_mass}, "
+            f"(F={dijkstra_scaled_f}, mass={utility_mass}, "
             f"elevators={elevator_count}, corridors={corridor_count})"
         )
 
@@ -775,7 +787,7 @@ def solve_fixed_layout_flow_objective(
             utilities=utilities,
             metrics=metrics,
             scale=objective.scale,
-            scaled_objective_value=exact_scaled_f,
+            scaled_objective_value=model_scaled_f,
             primary_proven=False,
             lexicographic_proven=False,
             completed_phase="lexicographic scalarization",
@@ -789,7 +801,7 @@ def solve_fixed_layout_flow_objective(
         utilities=utilities,
         metrics=metrics,
         scale=objective.scale,
-        scaled_objective_value=exact_scaled_f,
+        scaled_objective_value=model_scaled_f,
         primary_proven=True,
         lexicographic_proven=True,
         completed_phase="lexicographic scalarization",

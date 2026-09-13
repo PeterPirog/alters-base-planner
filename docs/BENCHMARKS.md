@@ -127,16 +127,19 @@ max_fixed_pair_flow_variables
 max_fixed_pair_flow_full_variables
 total_fixed_pair_flow_variables
 total_fixed_pair_flow_full_variables
- max_fixed_cp_sat_variables
+max_fixed_cp_sat_variables
 max_fixed_cp_sat_constraints
-fixed_lexicographic_weight_f
-fixed_lexicographic_weight_mass
-fixed_lexicographic_weight_elevator
-fixed_lexicographic_weight_corridor
-fixed_lexicographic_corridor_bound
-fixed_lexicographic_elevator_bound
-fixed_lexicographic_mass_bound
-fixed_lexicographic_objective_value
+lexicographic_scalarization.used
+lexicographic_scalarization.max_primary_objective_upper_bound
+lexicographic_scalarization.max_combined_objective_upper_bound
+lexicographic_scalarization.max_weight_f
+lexicographic_scalarization.max_weight_mass
+lexicographic_scalarization.max_weight_elevator
+lexicographic_scalarization.max_weight_corridor
+lexicographic_scalarization.max_corridor_bound
+lexicographic_scalarization.max_elevator_bound
+lexicographic_scalarization.max_mass_bound
+lexicographic_scalarization.max_incumbent_scalar_value
 fixed_model_build_time_s
 fixed_cp_sat_solve_time_s
 fixed_subproblem_time_s
@@ -144,7 +147,7 @@ fixed_subproblem_time_s
 
 The `max_*` values are maxima across all exact fixed-packing subproblems attempted during one planning run. The three timing values are totals across those subproblems. CP-SAT variable/constraint counts describe the single lexicographic-scalarized model.
 
-The `fixed_lexicographic_*` fields record the exact mixed-radix dominance weights, the valid finite bounds they were derived from (Corridor/Elevator anchor counts and maximum utility mass), and the maximum scalarized objective value. Because these bounds differ per room packing, the reported values are conservative maxima across the subproblems.
+`lexicographic_scalarization.used` reports whether attempted fixed subproblems used the exact scalarized objective. The `max_weight_*` and `max_*_bound` fields are maxima across attempted fixed subproblems. `max_primary_objective_upper_bound` is the maximum conservative scaled-`F` bound used in the signed-integer safety calculation, and `max_combined_objective_upper_bound` is the maximum resulting combined-objective safety bound. `max_incumbent_scalar_value` is separately the largest scalar value among returned incumbents; it is not an objective upper bound and is `null` when no fixed subproblem returned an incumbent.
 
 `fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and pair-flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside the single CP-SAT lexicographic-scalarized solve call. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, the CP-SAT solve and exact evaluator work.
 

@@ -1,4 +1,5 @@
 import random
+from itertools import product
 
 import pytest
 
@@ -64,6 +65,33 @@ def test_scalarization_preserves_lexicographic_order_randomly() -> None:
             assert scalar_a < scalar_b
         else:
             assert scalar_a > scalar_b
+
+
+def test_scalarization_preserves_lexicographic_order_exhaustively() -> None:
+    bounds = (2, 3, 2, 2)
+    w_f, w_m, w_e, w_c = lexicographic_dominance_weights(
+        corridor_count_max=bounds[3],
+        elevator_count_max=bounds[2],
+        utility_mass_max=bounds[1],
+    )
+    weights = (w_f, w_m, w_e, w_c)
+    tuples = tuple(
+        (f, mass, elevator, corridor)
+        for f, mass, elevator, corridor in product(
+            range(bounds[0] + 1),
+            range(bounds[1] + 1),
+            range(bounds[2] + 1),
+            range(bounds[3] + 1),
+        )
+    )
+
+    def scalar(components: tuple[int, int, int, int]) -> int:
+        return sum(weight * component for weight, component in zip(weights, components, strict=True))
+
+    for a in tuples:
+        for b in tuples:
+            assert (a < b) == (scalar(a) < scalar(b))
+            assert (a == b) == (scalar(a) == scalar(b))
 
 
 def test_objective_upper_bound_is_sum_of_weighted_maxima() -> None:

@@ -44,14 +44,17 @@ PAIR_FLOW_FIELDS = (
     "max_full_domain_variables",
 )
 LEXICOGRAPHIC_FIELDS = (
-    "weight_f",
-    "weight_mass",
-    "weight_elevator",
-    "weight_corridor",
-    "corridor_bound",
-    "elevator_bound",
-    "mass_bound",
-    "max_objective_value",
+    "used",
+    "max_primary_objective_upper_bound",
+    "max_combined_objective_upper_bound",
+    "max_weight_f",
+    "max_weight_mass",
+    "max_weight_elevator",
+    "max_weight_corridor",
+    "max_corridor_bound",
+    "max_elevator_bound",
+    "max_mass_bound",
+    "max_incumbent_scalar_value",
 )
 
 

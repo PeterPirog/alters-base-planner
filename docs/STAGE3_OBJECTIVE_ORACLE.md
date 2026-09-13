@@ -125,7 +125,7 @@ The proof is set only when CP-SAT returns `OPTIMAL` for that single scalarized o
 
 Every returned infrastructure witness is evaluated independently by the existing Dijkstra graph evaluator.
 
-The solver reconstructs the exact scaled objective from `DistanceMetrics.pairwise_distances`. A disagreement between pair-flow CP-SAT and Dijkstra raises an internal assertion. The primary objective is checked again after tie-break phases so later phases cannot silently change the proven `F` optimum.
+The solver evaluates the primary pair-flow expression directly with exact integer `CpSolver.value()` and independently reconstructs scaled `F` from `DistanceMetrics.pairwise_distances`. A disagreement between pair-flow CP-SAT and Dijkstra raises an internal assertion. The complete scalarized expression is evaluated exactly and checked separately against the reconstructed `(F, mass, Elevator, Corridor)` tuple.
 
 Model/evaluator disagreement is an internal correctness defect, never ordinary infeasibility.
 

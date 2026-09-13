@@ -37,7 +37,16 @@ def example_files(tmp_path, monkeypatch):
         incumbent_bound_pruned_count=1, time_limit_reached=True, search_exhausted=False,
         fixed_subproblem_count=4, max_fixed_graph_nodes=61, max_fixed_graph_arcs=120,
         max_fixed_objective_pairs=28, max_fixed_cp_sat_variables=3500,
-        max_fixed_cp_sat_constraints=6100, fixed_model_build_time_s=0.12,
+        max_fixed_cp_sat_constraints=6100, fixed_lexicographic_scalarization_used=True,
+        max_fixed_primary_objective_upper_bound=12000,
+        max_fixed_combined_objective_upper_bound=987654321,
+        max_fixed_lexicographic_weight_f=7000, max_fixed_lexicographic_weight_mass=300,
+        max_fixed_lexicographic_weight_elevator=20,
+        max_fixed_lexicographic_weight_corridor=1,
+        max_fixed_lexicographic_corridor_bound=19,
+        max_fixed_lexicographic_elevator_bound=17,
+        max_fixed_lexicographic_mass_bound=72, max_fixed_incumbent_scalar_value=63042,
+        fixed_model_build_time_s=0.12,
         fixed_cp_sat_solve_time_s=0.51, fixed_subproblem_time_s=0.69,
         max_fixed_pair_flow_variables=2100, max_fixed_pair_flow_full_variables=3360,
         total_fixed_pair_flow_variables=7200, total_fixed_pair_flow_full_variables=12000,
@@ -126,6 +135,19 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
         "total_full_domain_variables": 12000,
         "max_actual_variables": 2100,
         "max_full_domain_variables": 3360,
+    }
+    assert metadata["fixed_subproblems"]["lexicographic_scalarization"] == {
+        "used": True,
+        "max_primary_objective_upper_bound": 12000,
+        "max_combined_objective_upper_bound": 987654321,
+        "max_weight_f": 7000,
+        "max_weight_mass": 300,
+        "max_weight_elevator": 20,
+        "max_weight_corridor": 1,
+        "max_corridor_bound": 19,
+        "max_elevator_bound": 17,
+        "max_mass_bound": 72,
+        "max_incumbent_scalar_value": 63042,
     }
 
 

@@ -416,7 +416,7 @@ Because the proof is a single objective, a `MODEL_INVALID` status is an internal
 
 ### 9.3 Independent exact evaluator
 
-Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. The exact scaled objective is reconstructed from evaluator pair distances and compared with the CP-SAT optimum. Any disagreement fails fast.
+Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. CP-SAT evaluates both the primary pair-flow expression and the complete scalarized expression directly as exact integer linear expressions. The model primary value is compared with the scaled value reconstructed independently from evaluator pair distances, and the complete scalar identity is checked separately. Any disagreement fails fast.
 
 The exact lower bound is also checked against the exact evaluated objective.
 

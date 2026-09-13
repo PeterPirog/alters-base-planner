@@ -51,14 +51,17 @@ class _FixedDiagnosticsAggregate:
     total_pair_flow_full_variables: int = 0
     max_cp_sat_variables: int = 0
     max_cp_sat_constraints: int = 0
-    max_lexicographic_weight_f: int = 0
-    max_lexicographic_weight_mass: int = 0
-    max_lexicographic_weight_elevator: int = 0
-    max_lexicographic_weight_corridor: int = 0
-    max_lexicographic_corridor_bound: int = 0
-    max_lexicographic_elevator_bound: int = 0
-    max_lexicographic_mass_bound: int = 0
-    max_lexicographic_objective_value: int = 0
+    lexicographic_scalarization_used: bool = False
+    max_primary_objective_upper_bound: int = 0
+    max_combined_objective_upper_bound: int = 0
+    max_weight_f: int = 0
+    max_weight_mass: int = 0
+    max_weight_elevator: int = 0
+    max_weight_corridor: int = 0
+    max_corridor_bound: int = 0
+    max_elevator_bound: int = 0
+    max_mass_bound: int = 0
+    max_incumbent_scalar_value: int | None = None
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
@@ -89,38 +92,45 @@ class _FixedDiagnosticsAggregate:
             self.max_cp_sat_constraints,
             diagnostics.cp_sat_constraint_count,
         )
-        self.max_lexicographic_weight_f = max(
-            self.max_lexicographic_weight_f,
-            diagnostics.lexicographic_weight_f,
+        self.lexicographic_scalarization_used |= diagnostics.lexicographic_scalarization_used
+        self.max_primary_objective_upper_bound = max(
+            self.max_primary_objective_upper_bound,
+            diagnostics.primary_objective_upper_bound,
         )
-        self.max_lexicographic_weight_mass = max(
-            self.max_lexicographic_weight_mass,
-            diagnostics.lexicographic_weight_mass,
+        self.max_combined_objective_upper_bound = max(
+            self.max_combined_objective_upper_bound,
+            diagnostics.combined_objective_upper_bound,
         )
-        self.max_lexicographic_weight_elevator = max(
-            self.max_lexicographic_weight_elevator,
-            diagnostics.lexicographic_weight_elevator,
+        self.max_weight_f = max(
+            self.max_weight_f,
+            diagnostics.weight_f,
         )
-        self.max_lexicographic_weight_corridor = max(
-            self.max_lexicographic_weight_corridor,
-            diagnostics.lexicographic_weight_corridor,
+        self.max_weight_mass = max(
+            self.max_weight_mass,
+            diagnostics.weight_mass,
         )
-        self.max_lexicographic_corridor_bound = max(
-            self.max_lexicographic_corridor_bound,
-            diagnostics.lexicographic_corridor_bound,
+        self.max_weight_elevator = max(
+            self.max_weight_elevator,
+            diagnostics.weight_elevator,
         )
-        self.max_lexicographic_elevator_bound = max(
-            self.max_lexicographic_elevator_bound,
-            diagnostics.lexicographic_elevator_bound,
+        self.max_weight_corridor = max(
+            self.max_weight_corridor,
+            diagnostics.weight_corridor,
         )
-        self.max_lexicographic_mass_bound = max(
-            self.max_lexicographic_mass_bound,
-            diagnostics.lexicographic_mass_bound,
+        self.max_corridor_bound = max(
+            self.max_corridor_bound,
+            diagnostics.corridor_bound,
         )
-        self.max_lexicographic_objective_value = max(
-            self.max_lexicographic_objective_value,
-            diagnostics.lexicographic_objective_value,
+        self.max_elevator_bound = max(
+            self.max_elevator_bound,
+            diagnostics.elevator_bound,
         )
+        self.max_mass_bound = max(self.max_mass_bound, diagnostics.mass_bound)
+        if diagnostics.incumbent_scalar_value is not None:
+            self.max_incumbent_scalar_value = max(
+                self.max_incumbent_scalar_value or 0,
+                diagnostics.incumbent_scalar_value,
+            )
         self.model_build_time_s += diagnostics.model_build_time_s
         self.cp_sat_solve_time_s += diagnostics.cp_sat_solve_time_s
         self.total_time_s += diagnostics.total_time_s
@@ -136,14 +146,17 @@ class _FixedDiagnosticsAggregate:
         result.total_fixed_pair_flow_full_variables = self.total_pair_flow_full_variables
         result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
         result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
-        result.fixed_lexicographic_weight_f = self.max_lexicographic_weight_f
-        result.fixed_lexicographic_weight_mass = self.max_lexicographic_weight_mass
-        result.fixed_lexicographic_weight_elevator = self.max_lexicographic_weight_elevator
-        result.fixed_lexicographic_weight_corridor = self.max_lexicographic_weight_corridor
-        result.fixed_lexicographic_corridor_bound = self.max_lexicographic_corridor_bound
-        result.fixed_lexicographic_elevator_bound = self.max_lexicographic_elevator_bound
-        result.fixed_lexicographic_mass_bound = self.max_lexicographic_mass_bound
-        result.fixed_lexicographic_objective_value = self.max_lexicographic_objective_value
+        result.fixed_lexicographic_scalarization_used = self.lexicographic_scalarization_used
+        result.max_fixed_primary_objective_upper_bound = self.max_primary_objective_upper_bound
+        result.max_fixed_combined_objective_upper_bound = self.max_combined_objective_upper_bound
+        result.max_fixed_lexicographic_weight_f = self.max_weight_f
+        result.max_fixed_lexicographic_weight_mass = self.max_weight_mass
+        result.max_fixed_lexicographic_weight_elevator = self.max_weight_elevator
+        result.max_fixed_lexicographic_weight_corridor = self.max_weight_corridor
+        result.max_fixed_lexicographic_corridor_bound = self.max_corridor_bound
+        result.max_fixed_lexicographic_elevator_bound = self.max_elevator_bound
+        result.max_fixed_lexicographic_mass_bound = self.max_mass_bound
+        result.max_fixed_incumbent_scalar_value = self.max_incumbent_scalar_value
         result.fixed_model_build_time_s = self.model_build_time_s
         result.fixed_cp_sat_solve_time_s = self.cp_sat_solve_time_s
         result.fixed_subproblem_time_s = self.total_time_s
