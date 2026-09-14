@@ -28,8 +28,9 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             source_commodity_count=4,
             source_flow_variable_count=400,
             source_flow_full_variable_count=800,
-            shared_activation_gate_count=11,
             endpoint_distribution_variable_count=0,
+            condition_capacity_bucket_count=11,
+            condition_capacity_literal_count=6,
             flow_capacity_constraint_count=700,
             flow_balance_constraint_count=800,
             cp_sat_variable_count=900,
@@ -52,8 +53,9 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             source_commodity_count=5,
             source_flow_variable_count=500,
             source_flow_full_variable_count=750,
-            shared_activation_gate_count=9,
             endpoint_distribution_variable_count=0,
+            condition_capacity_bucket_count=9,
+            condition_capacity_literal_count=5,
             flow_capacity_constraint_count=650,
             flow_balance_constraint_count=900,
             cp_sat_variable_count=1000,
@@ -82,7 +84,8 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
     assert result.max_fixed_source_flow_full_variables == 800
     assert result.total_fixed_source_flow_variables == 900
     assert result.total_fixed_source_flow_full_variables == 1550
-    assert result.max_fixed_shared_activation_gates == 11
+    assert result.max_fixed_condition_capacity_buckets == 11
+    assert result.max_fixed_condition_capacity_literals == 6
     assert result.max_fixed_endpoint_distribution_variables == 0
     assert result.max_fixed_flow_capacity_constraints == 700
     assert result.max_fixed_flow_balance_constraints == 900

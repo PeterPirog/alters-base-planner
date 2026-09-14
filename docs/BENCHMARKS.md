@@ -87,7 +87,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Benchmark schema version 5 records the end-to-end search/proof metrics:
+Benchmark schema version 6 records the end-to-end search/proof metrics:
 
 ```text
 status
@@ -129,7 +129,8 @@ max_fixed_source_flow_variables
 max_fixed_source_flow_full_variables
 total_fixed_source_flow_variables
 total_fixed_source_flow_full_variables
-max_fixed_shared_activation_gates
+max_fixed_condition_capacity_buckets
+max_fixed_condition_capacity_literals
 max_fixed_endpoint_distribution_variables
 max_fixed_flow_capacity_constraints
 max_fixed_flow_balance_constraints
@@ -170,7 +171,7 @@ The phase clocks are monotonic, sequential and non-overlapping. Their sum cannot
 
 `fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and source-aggregated flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside the single CP-SAT lexicographic-scalarized solve call. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, the CP-SAT solve and exact evaluator work.
 
-Result JSON schema version 3 keeps the existing total timing fields and adds the phase totals under:
+Result JSON schema version 4 keeps the existing total timing fields and adds the phase totals under:
 
 ```text
 fixed_subproblems.build_phases:
@@ -182,12 +183,15 @@ fixed_subproblems.build_phases:
     total_model_build_time_s
 ```
 
-These fields are additive diagnostics, so result schema version 3 and benchmark schema version 5 remain unchanged.
-
-The four source-flow construction counts are maxima across fixed subproblems. They expose exact
-shared activation gates, explicit endpoint-allocation variables, conditional capacity constraints
-and balance/endpoint constraints. The current direct endpoint formulation reports zero explicit
-endpoint-allocation variables.
+These fields are additive diagnostics apart from one incompatible rename: result schema version 4
+replaced `max_shared_activation_gates` with `max_condition_capacity_buckets` and added
+`max_condition_capacity_literals`, because exact condition-capacity buckets replaced shared
+activation gates. Benchmark schema version 6 records the same rename, replacing benchmark schema
+version 5. The four source-flow construction counts are maxima across fixed subproblems. They
+expose exact condition-capacity bucket constraints, distinct Boolean infrastructure conditions
+represented by those buckets, explicit endpoint-allocation variables, capacity constraints and
+balance/endpoint constraints. The direct endpoint formulation reports zero explicit
+endpoint-allocation variables, and every flow-capacity constraint is one emitted bucket chunk.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
 
@@ -341,6 +345,51 @@ The directly connected 15-room control has no conditional arcs. Its source-flow 
 406 and total constraints remain 505, while direct endpoint balances reduce total CP-SAT variables
 from 719 to 509. This isolates the endpoint-variable elimination from the shared-gate change.
 
+### Local condition-capacity bucket aggregation
+
+The next construction iteration replaced per-variable conditional capacity bounds and shared
+AND-gate variables with exact global condition-capacity buckets, measured on 2026-09-14 with
+Python 3.12.9, OR-Tools 9.15.6755 and Windows 10. Parent `656870c` and the candidate ran from the
+same checkout state on the same machine with the same TEMP-only Tier-IV request and harness; the
+three timed solves followed one untimed structure probe in each process.
+
+For one Boolean condition `c` with conditioned flow variables `v_i` and individual upper bounds
+`U_i`, the bucket constraint `sum_i v_i <= c * sum_i U_i` is exactly equivalent to the individual
+bounds `v_i <= U_i * c`: at `c = 0` every non-negative `v_i` is forced to zero, and at `c = 1` the
+bound is implied by the individual domains. A multi-condition arc joins the bucket of every
+required condition, so no AND-gate variables remain. Aggregated sums are split into deterministic
+int64-safe chunks; production quantities never approach that limit, so one chunk per condition is
+normal.
+
+| Structural metric | Parent | Candidate |
+|---|---:|---:|
+| Graph nodes / arcs | 442 / 1,496 | 442 / 1,496 |
+| Objective pairs / source commodities | 105 / 14 | 105 / 14 |
+| Source-flow variables | 19,370 | 19,370 |
+| Shared activation gates | 699 | 0 |
+| Condition-capacity buckets (emitted constraints) | 0 | 805 |
+| Distinct bucket condition literals | 0 | 805 |
+| Flow-capacity constraints | 18,904 | 805 |
+| Total CP-SAT variables | 22,837 | 22,138 |
+| Total CP-SAT constraints | 30,067 | 11,269 |
+
+| Timing | Parent min / median / max | Candidate min / median / max |
+|---|---:|---:|
+| Source-flow model build | 0.672 / 0.750 / 0.891 s | 0.531 / 0.578 / 0.594 s |
+| Total model build | 0.938 / 1.078 / 1.329 s | 0.844 / 0.891 / 1.031 s |
+| CP-SAT solve | 0.047 / 0.047 / 0.047 s | 0.031 / 0.031 / 0.047 s |
+
+Every bucket required exactly one chunk because the aggregated upper-bound sums stay far below
+the safe limit. The candidate removes all 699 gate variables, replaces 18,904 individual capacity
+constraints with 805 exact bucket constraints (62.5% fewer total CP-SAT constraints), reduces
+total CP-SAT variables by 699 (the removed gates; 3.1%), and improves source-flow construction
+median by 23.0% and total model-build median by 17.3%. The
+directly connected 15-room control has no conditional arcs; its structure is unchanged (406
+source-flow variables, 509 CP-SAT variables, 505 constraints, zero buckets). These local timings
+support the deterministic structural result but remain measurements rather than correctness
+thresholds. The formulation, objective, incumbent cut and proof semantics are unchanged; only the
+representation of conditional flow activation changed.
+
 ## Exact incumbent objective cut
 
 After the production decomposition has a feasible exact incumbent with scaled primary objective `B`, every later fixed-packing source-flow subproblem is solved with the additional exact constraint:
@@ -420,7 +469,7 @@ example-plan-result/
     run-metadata.json
 ```
 
-Metadata schema version 2 records the checked-out commit, Git ref, UTC timestamp,
+Metadata schema version 3 records the checked-out commit, Git ref, UTC timestamp,
 Python/OR-Tools/planner versions, source configuration path, optimizer process
 exit code, status, Base tier, exact/scaled objective and modified-Manhattan lower
 bound, feasibility/proof flags, mass, infrastructure counts, search diagnostics,

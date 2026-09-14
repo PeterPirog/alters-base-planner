@@ -58,7 +58,8 @@ def example_files(tmp_path, monkeypatch):
         max_fixed_source_flow_variables=2100, max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
-        max_fixed_shared_activation_gates=11,
+        max_fixed_condition_capacity_buckets=11,
+        max_fixed_condition_capacity_literals=6,
         max_fixed_endpoint_distribution_variables=0,
         max_fixed_flow_capacity_constraints=2800,
         max_fixed_flow_balance_constraints=1600,
@@ -86,7 +87,7 @@ def test_feasible_package_copies_outputs_metadata_and_exact_zip_members(example_
     run = run_helper(root, "--optimizer-exit-code", "0")
     assert run.returncode == 0, run.stderr
     metadata = read_metadata(root)
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=SCRIPT.parents[1], text=True
     ).strip()
@@ -151,7 +152,8 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
         "total_full_domain_variables": 12000,
         "max_actual_variables": 2100,
         "max_full_domain_variables": 3360,
-        "max_shared_activation_gates": 11,
+        "max_condition_capacity_buckets": 11,
+        "max_condition_capacity_literals": 6,
         "max_endpoint_distribution_variables": 0,
         "max_capacity_constraints": 2800,
         "max_balance_constraints": 1600,

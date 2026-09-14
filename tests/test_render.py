@@ -53,7 +53,8 @@ def _sample_result() -> PlanResult:
         max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
-        max_fixed_shared_activation_gates=11,
+        max_fixed_condition_capacity_buckets=11,
+        max_fixed_condition_capacity_literals=6,
         max_fixed_endpoint_distribution_variables=0,
         max_fixed_flow_capacity_constraints=2800,
         max_fixed_flow_balance_constraints=1600,
@@ -95,7 +96,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     payload = result_payload(_sample_result())
     modules = payload["modules"]
     assert isinstance(modules, list)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["feasibility"] == {
         "structural_feasible": True,
         "journey_feasible": True,
@@ -137,7 +138,8 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
             "max_full_domain_variables": 3360,
             "total_actual_variables": 7200,
             "total_full_domain_variables": 12000,
-            "max_shared_activation_gates": 11,
+            "max_condition_capacity_buckets": 11,
+            "max_condition_capacity_literals": 6,
             "max_endpoint_distribution_variables": 0,
             "max_capacity_constraints": 2800,
             "max_balance_constraints": 1600,

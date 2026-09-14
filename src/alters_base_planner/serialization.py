@@ -3,7 +3,7 @@ from __future__ import annotations
 from .catalog import MODULE_BY_KEY
 from .models import ModulePlacement, PlacementAuthority, PlanResult, resolve_ports
 
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 
 
 def average_pair_distance(result: PlanResult) -> float:
@@ -131,8 +131,11 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                         "total_full_domain_variables": (
                             result.total_fixed_source_flow_full_variables
                         ),
-                        "max_shared_activation_gates": (
-                            result.max_fixed_shared_activation_gates
+                        "max_condition_capacity_buckets": (
+                            result.max_fixed_condition_capacity_buckets
+                        ),
+                        "max_condition_capacity_literals": (
+                            result.max_fixed_condition_capacity_literals
                         ),
                         "max_endpoint_distribution_variables": (
                             result.max_fixed_endpoint_distribution_variables

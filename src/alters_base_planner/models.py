@@ -349,7 +349,8 @@ class PlanResult:
     max_fixed_source_flow_full_variables: int = 0
     total_fixed_source_flow_variables: int = 0
     total_fixed_source_flow_full_variables: int = 0
-    max_fixed_shared_activation_gates: int = 0
+    max_fixed_condition_capacity_buckets: int = 0
+    max_fixed_condition_capacity_literals: int = 0
     max_fixed_endpoint_distribution_variables: int = 0
     max_fixed_flow_capacity_constraints: int = 0
     max_fixed_flow_balance_constraints: int = 0

@@ -402,7 +402,20 @@ scaled_F = sum_s sum_a arc_cost[a] * flow[s,a]
 
 The coefficient is represented by flow quantity and is not multiplied onto the arc term again. For a fixed selected infrastructure, every integral feasible source flow decomposes into source-to-target paths plus cycles. Arc costs are non-negative, so cycles can be removed without increasing cost, and each unit ending at target `t` costs at least `shortest_distance(s,t)`. Conversely, routing exactly `c_st` units along a shortest legal path to each target is feasible. Thus the minimum commodity cost is exactly `sum_t c_st * shortest_distance(s,t)`, and summing commodities reproduces the accepted exact pairwise objective.
 
-All source commodities share one infrastructure selection. An arc with one infrastructure condition keeps the direct bound `flow[s,a] <= Q_s * condition[a]`. For two or more conditions, one exact Boolean activation gate is cached by the canonical condition-variable set and constrained to their conjunction; every commodity using an equivalent arc condition set uses `flow[s,a] <= Q_s * gate[a]`. This is the same feasible projection as one bound per condition while avoiding repeated constraints.
+All source commodities share one infrastructure selection through exact **condition-capacity buckets**. Every conditioned flow variable `flow[s,a]` with individual upper bound `U = Q_s` contributes `(flow[s,a], U)` to the bucket of each of its canonical, de-duplicated Boolean infrastructure conditions. For one condition `c` with contributions `(v_i, U_i)` the emitted constraint is:
+
+```text
+sum_i v_i <= c * sum_i U_i
+```
+
+This is exactly equivalent to the individual bounds `v_i <= U_i * c`:
+
+```text
+c = 0 -> sum_i v_i <= 0 with every v_i >= 0, therefore every v_i = 0;
+c = 1 -> sum_i v_i <= sum_i U_i, already implied by the individual domains.
+```
+
+A multi-condition arc contributes its variable to the bucket of every required condition, so any false condition still forces that variable to zero; explicit AND-gate variables are unnecessary. Buckets aggregate across all source commodities, are emitted after all flow variables exist, and are ordered by condition variable index with source-commodity and arc order preserved inside each bucket. When the aggregated upper-bound sum could exceed the supported signed-integer range, contributions are split into deterministic chunks whose sums stay within a conservative safe limit; the conjunction of the per-chunk constraints remains exact, and a single contribution exceeding the limit fails fast instead of weakening exactness.
 
 Before variables are created, relaxed forward reachability from all source ports and reverse reachability from the union of all target ports restrict each commodity to arcs that can lie on a source-to-some-target path. Infrastructure conditions are ignored only for this reachability calculation, making it a supergraph reduction that cannot remove a realizable path.
 

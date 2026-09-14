@@ -51,7 +51,8 @@ SOURCE_FLOW_FIELDS = (
     "total_full_domain_variables",
     "max_actual_variables",
     "max_full_domain_variables",
-    "max_shared_activation_gates",
+    "max_condition_capacity_buckets",
+    "max_condition_capacity_literals",
     "max_endpoint_distribution_variables",
     "max_capacity_constraints",
     "max_balance_constraints",
@@ -192,7 +193,7 @@ def create_evidence(optimizer_exit_code: int | None, destination: Path = Path(".
         except ValueError as exc:
             parse_error = str(exc)
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "git_commit": commit,
         "git_ref": os.getenv("GITHUB_REF") or git_value("symbolic-ref", "--quiet", "HEAD"),
         "timestamp_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

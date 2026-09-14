@@ -41,8 +41,9 @@ class FixedFlowObjectiveDiagnostics:
     source_commodity_count: int = 0
     source_flow_variable_count: int = 0
     source_flow_full_variable_count: int = 0
-    shared_activation_gate_count: int = 0
     endpoint_distribution_variable_count: int = 0
+    condition_capacity_bucket_count: int = 0
+    condition_capacity_literal_count: int = 0
     flow_capacity_constraint_count: int = 0
     flow_balance_constraint_count: int = 0
     cp_sat_variable_count: int = 0
@@ -129,8 +130,9 @@ class _SourceFlowBuildResult:
     primary_expr: cp_model.LinearExpr | int
     flow_variable_count: int
     full_flow_variable_count: int
-    shared_activation_gate_count: int
     endpoint_distribution_variable_count: int
+    condition_capacity_bucket_count: int
+    condition_capacity_literal_count: int
     capacity_constraint_count: int
     balance_constraint_count: int
 
@@ -350,26 +352,45 @@ def _canonical_conditions(
     return tuple(by_index[index] for index in sorted(by_index))
 
 
-def _shared_activation_gate(
-    model: cp_model.CpModel,
-    *,
-    conditions: tuple[cp_model.IntVar, ...],
-    cache: dict[tuple[int, ...], cp_model.IntVar],
-) -> cp_model.IntVar:
-    """Return one exact AND literal shared by every use of a condition set."""
+_SAFE_BUCKET_SUM_LIMIT = 1 << 62
 
-    canonical = _canonical_conditions(conditions)
-    if len(canonical) < 2:
-        raise AssertionError("Shared source-flow activation gates require multiple conditions")
-    key = tuple(condition.index for condition in canonical)
-    gate = cache.get(key)
-    if gate is None:
-        gate = model.new_bool_var(
-            "source_arc_gate__" + "_".join(str(index) for index in key)
-        )
-        model.add_min_equality(gate, canonical)
-        cache[key] = gate
-    return gate
+
+def _chunk_bucket_contributions(
+    contributions: tuple[tuple[cp_model.IntVar, int], ...],
+    *,
+    safe_limit: int,
+) -> tuple[tuple[tuple[cp_model.IntVar, int], ...], ...]:
+    """Split ordered condition-bucket contributions into exact int64-safe chunks.
+
+    One aggregated capacity constraint ``sum(v_i) <= c * sum(U_i)`` is exact only while the
+    aggregated upper-bound sum fits the supported signed-integer range. Individual bounds may
+    each fit while their sum overflows, so contributions are walked in the given stable order
+    and closed into chunks whose upper-bound sums never exceed ``safe_limit``. The conjunction
+    of the per-chunk constraints is exactly the aggregation: ``c = 0`` still forces every
+    non-negative flow in the chunk to zero, and ``c = 1`` only re-states the individual domains.
+    A single contribution whose bound exceeds ``safe_limit`` cannot be represented safely and
+    fails fast instead of silently weakening exactness.
+    """
+
+    if safe_limit <= 0:
+        raise ValueError("Condition-bucket safe limit must be positive")
+    chunks: list[tuple[tuple[cp_model.IntVar, int], ...]] = []
+    current: list[tuple[cp_model.IntVar, int]] = []
+    current_upper_sum = 0
+    for variable, upper_bound in contributions:
+        if upper_bound <= 0 or upper_bound > safe_limit:
+            raise AssertionError(
+                "Condition-bucket contribution bounds must be positive and within the safe limit"
+            )
+        if current and current_upper_sum + upper_bound > safe_limit:
+            chunks.append(tuple(current))
+            current = []
+            current_upper_sum = 0
+        current.append((variable, upper_bound))
+        current_upper_sum += upper_bound
+    if current:
+        chunks.append(tuple(current))
+    return tuple(chunks)
 
 
 def _add_direct_endpoint_balances(
@@ -504,17 +525,13 @@ def _add_source_aggregated_flow_objective(
         outgoing_arcs[arc.source].append(arc_index)
         incoming_arcs[arc.target].append(arc_index)
     conditions_by_arc = tuple(_canonical_conditions(arc.conditions) for arc in arcs)
-    condition_keys_by_arc = tuple(
-        tuple(condition.index for condition in conditions)
-        for conditions in conditions_by_arc
-    )
 
     flow_cost_variables: list[cp_model.IntVar] = []
     flow_cost_coefficients: list[int] = []
-    shared_activation_gates: dict[tuple[int, ...], cp_model.IntVar] = {}
+    condition_buckets: dict[int, list[tuple[cp_model.IntVar, int]]] = {}
+    bucket_conditions: dict[int, cp_model.IntVar] = {}
     source_flow_variable_count = 0
     source_flow_full_variable_count = len(arcs) * len(commodities)
-    capacity_constraint_count = 0
     balance_constraint_count = 0
     for commodity in commodities:
         target_nodes = tuple(
@@ -557,19 +574,10 @@ def _add_source_aggregated_flow_objective(
             incoming_flow_vars[arc.target].append(variable)
 
             conditions = conditions_by_arc[arc_index]
-            if len(conditions) == 1:
-                model.add(variable <= commodity.total_supply * conditions[0])
-                capacity_constraint_count += 1
-            elif len(conditions) > 1:
-                gate = shared_activation_gates.get(condition_keys_by_arc[arc_index])
-                if gate is None:
-                    gate = _shared_activation_gate(
-                        model,
-                        conditions=conditions,
-                        cache=shared_activation_gates,
-                    )
-                model.add(variable <= commodity.total_supply * gate)
-                capacity_constraint_count += 1
+            for condition in conditions:
+                bucket_contributions = condition_buckets.setdefault(condition.index, [])
+                bucket_contributions.append((variable, commodity.total_supply))
+                bucket_conditions[condition.index] = condition
 
             if arc.cost:
                 flow_cost_variables.append(variable)
@@ -585,6 +593,38 @@ def _add_source_aggregated_flow_objective(
             outgoing_flow_vars=outgoing_flow_vars,
         )
 
+    # Exact condition-capacity buckets. Every conditioned flow variable contributes its own
+    # individual upper bound to the bucket of each of its (canonical, de-duplicated) Boolean
+    # infrastructure conditions. For one condition c with contributions (v_i, U_i):
+    #
+    #     sum_i v_i <= c * sum_i U_i
+    #
+    # is exactly equivalent to the per-variable bounds v_i <= U_i * c:
+    #   c = 0  ->  sum_i v_i <= 0 with every v_i >= 0, therefore every v_i = 0;
+    #   c = 1  ->  sum_i v_i <= sum_i U_i, already implied by the individual domains.
+    # A multi-condition arc contributes its variable to the bucket of EVERY required condition,
+    # so any false condition still forces that variable to zero; explicit AND-gate variables are
+    # unnecessary. Buckets aggregate across all source commodities and are emitted in stable
+    # condition-index order with int64-safe chunking.
+    condition_capacity_bucket_count = 0
+    for condition_index in sorted(condition_buckets):
+        contributions = tuple(condition_buckets[condition_index])
+        if len({variable.index for variable, _ in contributions}) != len(contributions):
+            raise AssertionError("Condition bucket received duplicate flow contributions")
+        chunks = _chunk_bucket_contributions(
+            contributions,
+            safe_limit=_SAFE_BUCKET_SUM_LIMIT,
+        )
+        condition = bucket_conditions[condition_index]
+        for chunk in chunks:
+            chunk_variables = [variable for variable, _ in chunk]
+            chunk_upper_bound = sum(upper_bound for _, upper_bound in chunk)
+            model.add(
+                cp_model.LinearExpr.sum(chunk_variables)
+                <= chunk_upper_bound * condition
+            )
+            condition_capacity_bucket_count += 1
+
     primary_expr = (
         cp_model.LinearExpr.weighted_sum(flow_cost_variables, flow_cost_coefficients)
         if flow_cost_variables
@@ -594,9 +634,10 @@ def _add_source_aggregated_flow_objective(
         primary_expr=primary_expr,
         flow_variable_count=source_flow_variable_count,
         full_flow_variable_count=source_flow_full_variable_count,
-        shared_activation_gate_count=len(shared_activation_gates),
         endpoint_distribution_variable_count=0,
-        capacity_constraint_count=capacity_constraint_count,
+        condition_capacity_bucket_count=condition_capacity_bucket_count,
+        condition_capacity_literal_count=len(condition_buckets),
+        capacity_constraint_count=condition_capacity_bucket_count,
         balance_constraint_count=balance_constraint_count,
     )
 
@@ -921,10 +962,11 @@ def solve_fixed_layout_flow_objective(
             source_commodity_count=len(source_commodities),
             source_flow_variable_count=flow_build.flow_variable_count,
             source_flow_full_variable_count=flow_build.full_flow_variable_count,
-            shared_activation_gate_count=flow_build.shared_activation_gate_count,
             endpoint_distribution_variable_count=(
                 flow_build.endpoint_distribution_variable_count
             ),
+            condition_capacity_bucket_count=flow_build.condition_capacity_bucket_count,
+            condition_capacity_literal_count=flow_build.condition_capacity_literal_count,
             flow_capacity_constraint_count=flow_build.capacity_constraint_count,
             flow_balance_constraint_count=flow_build.balance_constraint_count,
             cp_sat_variable_count=model_variable_count,

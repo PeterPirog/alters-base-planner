@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 5
+BENCHMARK_SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +72,8 @@ class BenchmarkRecord:
     max_fixed_source_flow_full_variables: int
     total_fixed_source_flow_variables: int
     total_fixed_source_flow_full_variables: int
-    max_fixed_shared_activation_gates: int
+    max_fixed_condition_capacity_buckets: int
+    max_fixed_condition_capacity_literals: int
     max_fixed_endpoint_distribution_variables: int
     max_fixed_flow_capacity_constraints: int
     max_fixed_flow_balance_constraints: int
@@ -212,7 +213,10 @@ def record_from_result(
         max_fixed_source_flow_full_variables=result.max_fixed_source_flow_full_variables,
         total_fixed_source_flow_variables=result.total_fixed_source_flow_variables,
         total_fixed_source_flow_full_variables=result.total_fixed_source_flow_full_variables,
-        max_fixed_shared_activation_gates=result.max_fixed_shared_activation_gates,
+        max_fixed_condition_capacity_buckets=result.max_fixed_condition_capacity_buckets,
+        max_fixed_condition_capacity_literals=(
+            result.max_fixed_condition_capacity_literals
+        ),
         max_fixed_endpoint_distribution_variables=(
             result.max_fixed_endpoint_distribution_variables
         ),
@@ -311,17 +315,18 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
             "",
             "Counts are maxima over fixed-packing subproblems in the run.",
             "",
-            "| Case | Shared gates | Endpoint auxiliary vars | Capacity constraints | Balance constraints |",
-            "|---|---:|---:|---:|---:|",
+            "| Case | Capacity buckets | Capacity literals | Endpoint auxiliary vars | Capacity constraints | Balance constraints |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
     )
     for raw in results:
         if not isinstance(raw, dict):
             raise ValueError("Invalid benchmark result row")
         lines.append(
-            "| {name} | {gates} | {endpoint} | {capacity} | {balance} |".format(
+            "| {name} | {buckets} | {literals} | {endpoint} | {capacity} | {balance} |".format(
                 name=raw["name"],
-                gates=raw["max_fixed_shared_activation_gates"],
+                buckets=raw["max_fixed_condition_capacity_buckets"],
+                literals=raw["max_fixed_condition_capacity_literals"],
                 endpoint=raw["max_fixed_endpoint_distribution_variables"],
                 capacity=raw["max_fixed_flow_capacity_constraints"],
                 balance=raw["max_fixed_flow_balance_constraints"],

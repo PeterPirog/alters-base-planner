@@ -101,7 +101,8 @@ def test_source_flow_matches_reference_for_direct_zero_cost_adjacency() -> None:
     assert result.utilities == ()
     assert result.scaled_objective_value == 0
     assert result.objective_scale == 10
-    assert result.diagnostics.shared_activation_gate_count == 0
+    assert result.diagnostics.condition_capacity_bucket_count == 0
+    assert result.diagnostics.condition_capacity_literal_count == 0
     assert result.diagnostics.endpoint_distribution_variable_count == 0
 
 
@@ -420,7 +421,9 @@ def test_source_flow_matches_reference_for_vertical_elevator_chain() -> None:
     result = solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
     assert _signature(result) == (("elevator", 4, 0), ("elevator", 4, 1))
     assert result.scaled_objective_value == 18
-    assert result.diagnostics.shared_activation_gate_count == 1
+    # Two Elevator-selection conditions plus one utility-anchor condition per stacked level.
+    assert result.diagnostics.condition_capacity_literal_count == 4
+    assert result.diagnostics.condition_capacity_bucket_count == 4
 
 
 def test_source_flow_target_can_transit_flow_to_another_target_at_exact_width() -> None:

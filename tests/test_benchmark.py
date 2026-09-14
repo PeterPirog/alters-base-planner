@@ -53,7 +53,8 @@ def _result() -> PlanResult:
         max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
-        max_fixed_shared_activation_gates=11,
+        max_fixed_condition_capacity_buckets=11,
+        max_fixed_condition_capacity_literals=6,
         max_fixed_endpoint_distribution_variables=0,
         max_fixed_flow_capacity_constraints=2800,
         max_fixed_flow_balance_constraints=1600,
@@ -103,7 +104,8 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.max_fixed_source_flow_full_variables == 3360
     assert record.total_fixed_source_flow_variables == 7200
     assert record.total_fixed_source_flow_full_variables == 12000
-    assert record.max_fixed_shared_activation_gates == 11
+    assert record.max_fixed_condition_capacity_buckets == 11
+    assert record.max_fixed_condition_capacity_literals == 6
     assert record.max_fixed_endpoint_distribution_variables == 0
     assert record.max_fixed_flow_capacity_constraints == 2800
     assert record.max_fixed_flow_balance_constraints == 1600
@@ -127,7 +129,7 @@ def test_payload_and_markdown_are_auditable() -> None:
     markdown = benchmark_markdown(payload)
 
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
-    assert BENCHMARK_SCHEMA_VERSION == 5
+    assert BENCHMARK_SCHEMA_VERSION == 6
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
     assert payload["cases"][0]["room_counts"] == {"workshop": 1}
@@ -148,7 +150,7 @@ def test_payload_and_markdown_are_auditable() -> None:
         "4800 | 40.0% |"
     ) in markdown
     assert "## Source-flow construction diagnostics" in markdown
-    assert "| sample | 11 | 0 | 2800 | 1600 |" in markdown
+    assert "| sample | 11 | 6 | 0 | 2800 | 1600 |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
 
 

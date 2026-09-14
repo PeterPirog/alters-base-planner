@@ -52,7 +52,8 @@ class _FixedDiagnosticsAggregate:
     max_source_flow_full_variables: int = 0
     total_source_flow_variables: int = 0
     total_source_flow_full_variables: int = 0
-    max_shared_activation_gates: int = 0
+    max_condition_capacity_buckets: int = 0
+    max_condition_capacity_literals: int = 0
     max_endpoint_distribution_variables: int = 0
     max_flow_capacity_constraints: int = 0
     max_flow_balance_constraints: int = 0
@@ -102,9 +103,13 @@ class _FixedDiagnosticsAggregate:
         )
         self.total_source_flow_variables += diagnostics.source_flow_variable_count
         self.total_source_flow_full_variables += diagnostics.source_flow_full_variable_count
-        self.max_shared_activation_gates = max(
-            self.max_shared_activation_gates,
-            diagnostics.shared_activation_gate_count,
+        self.max_condition_capacity_buckets = max(
+            self.max_condition_capacity_buckets,
+            diagnostics.condition_capacity_bucket_count,
+        )
+        self.max_condition_capacity_literals = max(
+            self.max_condition_capacity_literals,
+            diagnostics.condition_capacity_literal_count,
         )
         self.max_endpoint_distribution_variables = max(
             self.max_endpoint_distribution_variables,
@@ -185,7 +190,8 @@ class _FixedDiagnosticsAggregate:
         result.max_fixed_source_flow_full_variables = self.max_source_flow_full_variables
         result.total_fixed_source_flow_variables = self.total_source_flow_variables
         result.total_fixed_source_flow_full_variables = self.total_source_flow_full_variables
-        result.max_fixed_shared_activation_gates = self.max_shared_activation_gates
+        result.max_fixed_condition_capacity_buckets = self.max_condition_capacity_buckets
+        result.max_fixed_condition_capacity_literals = self.max_condition_capacity_literals
         result.max_fixed_endpoint_distribution_variables = (
             self.max_endpoint_distribution_variables
         )
