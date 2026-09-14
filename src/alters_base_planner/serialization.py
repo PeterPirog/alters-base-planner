@@ -156,6 +156,18 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     "model_build_time_s": result.fixed_model_build_time_s,
                     "cp_sat_solve_time_s": result.fixed_cp_sat_solve_time_s,
                     "total_time_s": result.fixed_subproblem_time_s,
+                    "build_phases": {
+                        "hard_model_time_s": result.fixed_hard_model_build_time_s,
+                        "path_graph_time_s": result.fixed_path_graph_build_time_s,
+                        "objective_definition_time_s": (
+                            result.fixed_objective_definition_time_s
+                        ),
+                        "source_flow_time_s": result.fixed_source_flow_model_build_time_s,
+                        "lexicographic_finalize_time_s": (
+                            result.fixed_lexicographic_finalize_time_s
+                        ),
+                        "total_model_build_time_s": result.fixed_model_build_time_s,
+                    },
                 },
             },
             "infrastructure": {

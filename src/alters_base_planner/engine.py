@@ -68,6 +68,11 @@ class _FixedDiagnosticsAggregate:
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
+    hard_model_build_time_s: float = 0.0
+    path_graph_build_time_s: float = 0.0
+    objective_definition_time_s: float = 0.0
+    flow_model_build_time_s: float = 0.0
+    lexicographic_finalize_time_s: float = 0.0
 
     def observe(self, diagnostics: FixedFlowObjectiveDiagnostics) -> None:
         self.subproblem_count += 1
@@ -143,6 +148,11 @@ class _FixedDiagnosticsAggregate:
         self.model_build_time_s += diagnostics.model_build_time_s
         self.cp_sat_solve_time_s += diagnostics.cp_sat_solve_time_s
         self.total_time_s += diagnostics.total_time_s
+        self.hard_model_build_time_s += diagnostics.hard_model_build_time_s
+        self.path_graph_build_time_s += diagnostics.path_graph_build_time_s
+        self.objective_definition_time_s += diagnostics.objective_definition_time_s
+        self.flow_model_build_time_s += diagnostics.flow_model_build_time_s
+        self.lexicographic_finalize_time_s += diagnostics.lexicographic_finalize_time_s
 
     def apply(self, result: PlanResult) -> None:
         result.fixed_subproblem_count = self.subproblem_count
@@ -171,6 +181,11 @@ class _FixedDiagnosticsAggregate:
         result.fixed_model_build_time_s = self.model_build_time_s
         result.fixed_cp_sat_solve_time_s = self.cp_sat_solve_time_s
         result.fixed_subproblem_time_s = self.total_time_s
+        result.fixed_hard_model_build_time_s = self.hard_model_build_time_s
+        result.fixed_path_graph_build_time_s = self.path_graph_build_time_s
+        result.fixed_objective_definition_time_s = self.objective_definition_time_s
+        result.fixed_source_flow_model_build_time_s = self.flow_model_build_time_s
+        result.fixed_lexicographic_finalize_time_s = self.lexicographic_finalize_time_s
 
 
 def _candidate_positions(

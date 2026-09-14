@@ -37,6 +37,14 @@ FIXED_FIELDS = (
     "cp_sat_solve_time_s",
     "total_time_s",
 )
+BUILD_PHASE_FIELDS = (
+    "hard_model_time_s",
+    "path_graph_time_s",
+    "objective_definition_time_s",
+    "source_flow_time_s",
+    "lexicographic_finalize_time_s",
+    "total_model_build_time_s",
+)
 SOURCE_FLOW_FIELDS = (
     "max_commodities",
     "total_actual_variables",
@@ -130,6 +138,10 @@ def layout_metadata(layout: dict) -> dict:
         **{key: field(layout, *search, key) for key in SEARCH_FIELDS},
         "fixed_subproblems": {
             **{key: field(layout, *fixed, key) for key in FIXED_FIELDS},
+            "build_phases": {
+                key: field(layout, *fixed, "build_phases", key)
+                for key in BUILD_PHASE_FIELDS
+            },
             "flow_formulation": field(layout, *fixed, "flow_formulation"),
             "source_flow_domain": {
                 key: field(layout, *fixed, "source_flow_domain", key)

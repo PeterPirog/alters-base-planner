@@ -322,6 +322,56 @@ def test_custom_weights_match_complete_oracle_tuple_with_multiple_targets() -> N
     assert result.diagnostics.source_commodity_count == 2
 
 
+def test_multi_port_source_with_unequal_target_demands_matches_complete_oracle_tuple() -> None:
+    base = _base(14, 1)
+    rooms = (
+        _room("personal-cabin-1", "personal_cabin", 0, 0),
+        _room("airlock-1", "airlock", 3, 0),
+        _room("workshop-1", "workshop", 9, 0),
+    )
+    usage_weights = resolve_usage_weights(
+        {"airlock": 0.75, "personal_cabin": 0.2, "workshop": 0.4}
+    )
+
+    result = solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+    reference = solve_fixed_layout_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == reference.status == "OPTIMAL"
+    assert result.distance_metrics is not None
+    assert reference.distance_metrics is not None
+    objective = build_scaled_objective(rooms, usage_weights)
+    result_rank = (
+        result.scaled_objective_value,
+        sum(MODULE_BY_KEY[module.module_key].mass for module in result.utilities),
+        result.distance_metrics.elevator_module_count,
+        result.distance_metrics.corridor_count,
+    )
+    reference_rank = (
+        objective.scaled_score(reference.distance_metrics.pairwise_distances),
+        sum(MODULE_BY_KEY[module.module_key].mass for module in reference.utilities),
+        reference.distance_metrics.elevator_module_count,
+        reference.distance_metrics.corridor_count,
+    )
+    assert result_rank == reference_rank == (70, 2, 0, 1)
+    assert _signature(result) == (("corridor", 7, 0),)
+    airlock_targets = next(
+        commodity.targets
+        for commodity in flow_solver_module._build_source_commodities(objective.pairs)
+        if commodity.source_instance_id == "airlock-1"
+    )
+    assert airlock_targets == (("personal-cabin-1", 15), ("workshop-1", 30))
+
+
 def test_custom_zero_weight_keeps_room_hard_connectivity_in_fixed_solver() -> None:
     base = _base(10, 1)
     rooms = (
@@ -370,7 +420,7 @@ def test_source_flow_matches_reference_for_vertical_elevator_chain() -> None:
     assert result.scaled_objective_value == 18
 
 
-def test_source_flow_charges_intermediate_transit_room_width_exactly() -> None:
+def test_source_flow_target_can_transit_flow_to_another_target_at_exact_width() -> None:
     base = _base(12, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -383,6 +433,8 @@ def test_source_flow_charges_intermediate_transit_room_width_exactly() -> None:
     result = solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
     assert result.distance_metrics is not None
     assert result.utilities == ()
+    # Workshop is itself an Airlock target and legally carries the remaining source flow onward
+    # to Command Center. Its exact width is charged only for that through-flow.
     assert result.distance_metrics.pairwise_distances["airlock-1|workshop-1"] == 0
     assert result.distance_metrics.pairwise_distances["workshop-1|command-center-1"] == 0
     assert result.distance_metrics.pairwise_distances["airlock-1|command-center-1"] == 4
@@ -474,7 +526,16 @@ def test_source_flow_reports_primary_model_size_and_timings() -> None:
         + diagnostics.weight_corridor * diagnostics.corridor_bound
     )
     assert diagnostics.incumbent_scalar_value == result.lexicographic_objective_value
-    assert diagnostics.model_build_time_s >= 0
+    build_phases = (
+        diagnostics.hard_model_build_time_s,
+        diagnostics.path_graph_build_time_s,
+        diagnostics.objective_definition_time_s,
+        diagnostics.flow_model_build_time_s,
+        diagnostics.lexicographic_finalize_time_s,
+    )
+    assert all(phase >= 0 for phase in build_phases)
+    assert all(diagnostics.model_build_time_s >= phase for phase in build_phases)
+    assert sum(build_phases) <= diagnostics.model_build_time_s + 1e-6
     assert diagnostics.cp_sat_solve_time_s >= 0
     assert diagnostics.total_time_s >= diagnostics.model_build_time_s
 

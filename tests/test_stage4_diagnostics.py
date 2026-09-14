@@ -33,6 +33,11 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             model_build_time_s=0.1,
             cp_sat_solve_time_s=0.4,
             total_time_s=0.6,
+            hard_model_build_time_s=0.04,
+            path_graph_build_time_s=0.01,
+            objective_definition_time_s=0.01,
+            flow_model_build_time_s=0.03,
+            lexicographic_finalize_time_s=0.01,
         )
     )
     aggregate.observe(
@@ -48,6 +53,11 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             model_build_time_s=0.2,
             cp_sat_solve_time_s=0.5,
             total_time_s=0.8,
+            hard_model_build_time_s=0.07,
+            path_graph_build_time_s=0.02,
+            objective_definition_time_s=0.01,
+            flow_model_build_time_s=0.08,
+            lexicographic_finalize_time_s=0.02,
         )
     )
 
@@ -69,3 +79,8 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
     assert result.fixed_model_build_time_s == pytest.approx(0.3)
     assert result.fixed_cp_sat_solve_time_s == pytest.approx(0.9)
     assert result.fixed_subproblem_time_s == pytest.approx(1.4)
+    assert result.fixed_hard_model_build_time_s == pytest.approx(0.11)
+    assert result.fixed_path_graph_build_time_s == pytest.approx(0.03)
+    assert result.fixed_objective_definition_time_s == pytest.approx(0.02)
+    assert result.fixed_source_flow_model_build_time_s == pytest.approx(0.11)
+    assert result.fixed_lexicographic_finalize_time_s == pytest.approx(0.03)

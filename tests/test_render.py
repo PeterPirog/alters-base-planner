@@ -69,6 +69,11 @@ def _sample_result() -> PlanResult:
         fixed_model_build_time_s=0.12,
         fixed_cp_sat_solve_time_s=0.51,
         fixed_subproblem_time_s=0.69,
+        fixed_hard_model_build_time_s=0.04,
+        fixed_path_graph_build_time_s=0.01,
+        fixed_objective_definition_time_s=0.01,
+        fixed_source_flow_model_build_time_s=0.05,
+        fixed_lexicographic_finalize_time_s=0.01,
     )
 
 
@@ -147,6 +152,14 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
         "model_build_time_s": 0.12,
         "cp_sat_solve_time_s": 0.51,
         "total_time_s": 0.69,
+        "build_phases": {
+            "hard_model_time_s": 0.04,
+            "path_graph_time_s": 0.01,
+            "objective_definition_time_s": 0.01,
+            "source_flow_time_s": 0.05,
+            "lexicographic_finalize_time_s": 0.01,
+            "total_model_build_time_s": 0.12,
+        },
     }
 
 

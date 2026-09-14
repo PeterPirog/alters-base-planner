@@ -49,6 +49,11 @@ def example_files(tmp_path, monkeypatch):
         max_fixed_lexicographic_mass_bound=72, max_fixed_incumbent_scalar_value=63042,
         fixed_model_build_time_s=0.12,
         fixed_cp_sat_solve_time_s=0.51, fixed_subproblem_time_s=0.69,
+        fixed_hard_model_build_time_s=0.04,
+        fixed_path_graph_build_time_s=0.01,
+        fixed_objective_definition_time_s=0.01,
+        fixed_source_flow_model_build_time_s=0.05,
+        fixed_lexicographic_finalize_time_s=0.01,
         max_fixed_source_commodities=7,
         max_fixed_source_flow_variables=2100, max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
@@ -142,6 +147,14 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
         "total_full_domain_variables": 12000,
         "max_actual_variables": 2100,
         "max_full_domain_variables": 3360,
+    }
+    assert metadata["fixed_subproblems"]["build_phases"] == {
+        "hard_model_time_s": 0.04,
+        "path_graph_time_s": 0.01,
+        "objective_definition_time_s": 0.01,
+        "source_flow_time_s": 0.05,
+        "lexicographic_finalize_time_s": 0.01,
+        "total_model_build_time_s": 0.12,
     }
     assert metadata["fixed_subproblems"]["lexicographic_scalarization"] == {
         "used": True,

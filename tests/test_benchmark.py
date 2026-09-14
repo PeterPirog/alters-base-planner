@@ -58,6 +58,11 @@ def _result() -> PlanResult:
         fixed_model_build_time_s=0.12,
         fixed_cp_sat_solve_time_s=0.51,
         fixed_subproblem_time_s=0.69,
+        fixed_hard_model_build_time_s=0.04,
+        fixed_path_graph_build_time_s=0.01,
+        fixed_objective_definition_time_s=0.01,
+        fixed_source_flow_model_build_time_s=0.05,
+        fixed_lexicographic_finalize_time_s=0.01,
     )
 
 
@@ -99,6 +104,11 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.fixed_model_build_time_s == 0.12
     assert record.fixed_cp_sat_solve_time_s == 0.51
     assert record.fixed_subproblem_time_s == 0.69
+    assert record.fixed_hard_model_build_time_s == 0.04
+    assert record.fixed_path_graph_build_time_s == 0.01
+    assert record.fixed_objective_definition_time_s == 0.01
+    assert record.fixed_source_flow_model_build_time_s == 0.05
+    assert record.fixed_lexicographic_finalize_time_s == 0.01
 
 
 def test_payload_and_markdown_are_auditable() -> None:
@@ -122,6 +132,8 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert "| 2 | 5 | 1.2500 |" in markdown
     assert "## Fixed-packing model diagnostics" in markdown
     assert "| sample | 4 | 61 | 120 | 28 | 3500 | 6100 |" in markdown
+    assert "## Fixed-model build phases" in markdown
+    assert "| sample | 0.040 | 0.010 | 0.010 | 0.050 | 0.010 | 0.120 |" in markdown
     assert "## Source-aggregated flow domain reduction" in markdown
     assert (
         "| sample | source_aggregated_weighted_flow | 7 | 2100 | 3360 | 7200 | 12000 | "

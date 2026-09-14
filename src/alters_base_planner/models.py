@@ -365,6 +365,11 @@ class PlanResult:
     max_fixed_lexicographic_elevator_bound: int = 0
     max_fixed_lexicographic_mass_bound: int = 0
     max_fixed_incumbent_scalar_value: int | None = None
+    fixed_hard_model_build_time_s: float = 0.0
+    fixed_path_graph_build_time_s: float = 0.0
+    fixed_objective_definition_time_s: float = 0.0
+    fixed_source_flow_model_build_time_s: float = 0.0
+    fixed_lexicographic_finalize_time_s: float = 0.0
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:

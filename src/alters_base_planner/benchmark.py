@@ -77,6 +77,11 @@ class BenchmarkRecord:
     fixed_model_build_time_s: float
     fixed_cp_sat_solve_time_s: float
     fixed_subproblem_time_s: float
+    fixed_hard_model_build_time_s: float
+    fixed_path_graph_build_time_s: float
+    fixed_objective_definition_time_s: float
+    fixed_source_flow_model_build_time_s: float
+    fixed_lexicographic_finalize_time_s: float
 
 
 SMOKE_CASES: tuple[BenchmarkCase, ...] = (
@@ -208,6 +213,11 @@ def record_from_result(
         fixed_model_build_time_s=result.fixed_model_build_time_s,
         fixed_cp_sat_solve_time_s=result.fixed_cp_sat_solve_time_s,
         fixed_subproblem_time_s=result.fixed_subproblem_time_s,
+        fixed_hard_model_build_time_s=result.fixed_hard_model_build_time_s,
+        fixed_path_graph_build_time_s=result.fixed_path_graph_build_time_s,
+        fixed_objective_definition_time_s=result.fixed_objective_definition_time_s,
+        fixed_source_flow_model_build_time_s=result.fixed_source_flow_model_build_time_s,
+        fixed_lexicographic_finalize_time_s=result.fixed_lexicographic_finalize_time_s,
     )
 
 
@@ -281,6 +291,33 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 elevators=raw["elevator_module_count"],
                 corridors=raw["corridor_count"],
                 proof="yes" if raw["global_objective_optimum_proven"] else "no",
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Fixed-model build phases",
+            "",
+            "All timing columns are totals across fixed-packing subproblems in the run.",
+            "",
+            "| Case | Hard model s | Path graph s | Objective s | Source flow s | Lex finalize s | Total build s |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        lines.append(
+            "| {name} | {hard:.3f} | {graph:.3f} | {objective:.3f} | {flow:.3f} | "
+            "{finalize:.3f} | {total:.3f} |".format(
+                name=raw["name"],
+                hard=raw["fixed_hard_model_build_time_s"],
+                graph=raw["fixed_path_graph_build_time_s"],
+                objective=raw["fixed_objective_definition_time_s"],
+                flow=raw["fixed_source_flow_model_build_time_s"],
+                finalize=raw["fixed_lexicographic_finalize_time_s"],
+                total=raw["fixed_model_build_time_s"],
             )
         )
 

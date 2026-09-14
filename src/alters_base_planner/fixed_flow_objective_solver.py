@@ -57,6 +57,11 @@ class FixedFlowObjectiveDiagnostics:
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
+    hard_model_build_time_s: float = 0.0
+    path_graph_build_time_s: float = 0.0
+    objective_definition_time_s: float = 0.0
+    flow_model_build_time_s: float = 0.0
+    lexicographic_finalize_time_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,18 +712,28 @@ def solve_fixed_layout_flow_objective(
     deadline = started_at + float(time_limit_s)
     cp_sat_solve_time_s = 0.0
 
+    phase_started_at = monotonic()
     compiled = compile_fixed_layout_hard_model(
         base,
         rooms,
         root_instance_id=root_instance_id,
     )
+    hard_model_build_time_s = max(0.0, monotonic() - phase_started_at)
+
+    phase_started_at = monotonic()
     nodes, room_nodes, arcs = _build_path_graph(rooms, compiled)
+    path_graph_build_time_s = max(0.0, monotonic() - phase_started_at)
+
+    phase_started_at = monotonic()
     objective = (
         build_scaled_objective(rooms)
         if usage_weights is None
         else build_scaled_objective(rooms, usage_weights)
     )
     source_commodities = _build_source_commodities(objective.pairs)
+    objective_definition_time_s = max(0.0, monotonic() - phase_started_at)
+
+    phase_started_at = monotonic()
     (
         primary_expr,
         source_flow_variable_count,
@@ -730,7 +745,9 @@ def solve_fixed_layout_flow_objective(
         arcs=arcs,
         commodities=source_commodities,
     )
+    flow_model_build_time_s = max(0.0, monotonic() - phase_started_at)
 
+    phase_started_at = monotonic()
     corridor_spec = MODULE_BY_KEY["corridor"]
     elevator_spec = MODULE_BY_KEY["elevator"]
     corridor_count_expr = sum(compiled.variables.corridor.values())
@@ -781,6 +798,7 @@ def solve_fixed_layout_flow_objective(
     model_proto = compiled.model.Proto()
     model_variable_count = len(model_proto.variables)
     model_constraint_count = len(model_proto.constraints)
+    lexicographic_finalize_time_s = max(0.0, monotonic() - phase_started_at)
     model_build_time_s = max(0.0, monotonic() - started_at)
 
     def diagnostics(incumbent_scalar_value: int | None) -> FixedFlowObjectiveDiagnostics:
@@ -807,6 +825,11 @@ def solve_fixed_layout_flow_objective(
             model_build_time_s=model_build_time_s,
             cp_sat_solve_time_s=cp_sat_solve_time_s,
             total_time_s=max(0.0, monotonic() - started_at),
+            hard_model_build_time_s=hard_model_build_time_s,
+            path_graph_build_time_s=path_graph_build_time_s,
+            objective_definition_time_s=objective_definition_time_s,
+            flow_model_build_time_s=flow_model_build_time_s,
+            lexicographic_finalize_time_s=lexicographic_finalize_time_s,
         )
 
     solver = cp_model.CpSolver()
