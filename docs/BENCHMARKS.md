@@ -448,6 +448,40 @@ This is a proof-safe solver/domain reduction, not a game rule. Correctness evide
 exhaustive cap-algebra test, bounded/unbounded projection tests, target-as-transit and custom
 weight regressions, and the full production-versus-oracle suite all pass with the mechanism live.
 
+### Master lower-bound integration blocker (measured, not accepted)
+
+A Stage-4 iteration attempted to make the room-packing master bound-driven: the exact scaled
+modified-Manhattan lower bound was encoded directly in the master CP-SAT model
+(`src/alters_base_planner/master_manhattan_lower_bound.py`, verified exhaustively against
+`modified_manhattan_room_lower_bound` / `scaled_modified_manhattan_lower_bound` for concrete,
+tall-floor, top-access and every exhaustive small packing; no candidate-pair conjunction
+variables are created — the auxiliary size grows with rooms, objective pairs and port pairs).
+The production integration was measured on 2026-09-14 with Python 3.12.9, OR-Tools 9.15.6755 and
+Windows 10 and **not accepted**, because the exact bound objective makes the master solve itself
+the next bottleneck:
+
+| Measurement (Tier-I, ten rooms, 30 s budget) | Legacy centrality objective | Exact master LB objective |
+|---|---:|---:|
+| Master model build (LB encoding) | n/a | 0.06-0.09 s |
+| Master LB auxiliary variables / constraints | 0 | ~1.5k / ~2.1k |
+| First master solve | milliseconds | >30 s without an optimality proof (FEASIBLE) |
+| Packings examined in a 30 s run | 27-32 | 5-6 with 3 s time slices; 0 with 0.5 s slices |
+| First incumbent within 30 s | ~4-6 s (exact F 18,717) | none |
+
+Tier-IV master build cost (18 instances, 105 objective pairs, 8,190 placement Booleans): the LB
+encoding adds 4,342 auxiliary variables and 6,022 constraints in 0.235 s with a master bound
+upper limit of 381,082 — model construction is not the blocker and no candidate-pair product
+variables exist. The blocker is the master **solve**: minimizing the exact bound is
+combinatorially hard for CP-SAT — even pure satisfiability inside the LB-augmented master costs
+~1.6-1.9 s per solve (versus milliseconds for the legacy master), proving the LB minimum exceeds
+30 s on the simplest realistic instance, and lower-bound-ordered enumeration front-loads packings
+that the fixed exact solver then proves infrastructure-infeasible. The incumbent-quality
+regression on realistic budgets violates the accepted optimization hierarchy, so production
+master behavior is unchanged on this branch and the verified encoding is kept only as inspected,
+tested evidence for a future iteration (for example with a bounded master-solve budget policy,
+which this iteration deliberately did not introduce). The master lower bound remains an admissible
+bound only and was never wired into any correctness field.
+
 ## Exact incumbent objective cut
 
 After the production decomposition has a feasible exact incumbent with scaled primary objective `B`, every later fixed-packing source-flow subproblem is solved with the additional exact constraint:
