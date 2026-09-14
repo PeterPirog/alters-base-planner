@@ -131,6 +131,18 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                         "total_full_domain_variables": (
                             result.total_fixed_source_flow_full_variables
                         ),
+                        "max_shared_activation_gates": (
+                            result.max_fixed_shared_activation_gates
+                        ),
+                        "max_endpoint_distribution_variables": (
+                            result.max_fixed_endpoint_distribution_variables
+                        ),
+                        "max_capacity_constraints": (
+                            result.max_fixed_flow_capacity_constraints
+                        ),
+                        "max_balance_constraints": (
+                            result.max_fixed_flow_balance_constraints
+                        ),
                     },
                     "max_cp_sat_variables": result.max_fixed_cp_sat_variables,
                     "max_cp_sat_constraints": result.max_fixed_cp_sat_constraints,

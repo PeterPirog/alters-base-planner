@@ -51,6 +51,10 @@ SOURCE_FLOW_FIELDS = (
     "total_full_domain_variables",
     "max_actual_variables",
     "max_full_domain_variables",
+    "max_shared_activation_gates",
+    "max_endpoint_distribution_variables",
+    "max_capacity_constraints",
+    "max_balance_constraints",
 )
 LEXICOGRAPHIC_FIELDS = (
     "used",

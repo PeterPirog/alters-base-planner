@@ -72,6 +72,10 @@ class BenchmarkRecord:
     max_fixed_source_flow_full_variables: int
     total_fixed_source_flow_variables: int
     total_fixed_source_flow_full_variables: int
+    max_fixed_shared_activation_gates: int
+    max_fixed_endpoint_distribution_variables: int
+    max_fixed_flow_capacity_constraints: int
+    max_fixed_flow_balance_constraints: int
     max_fixed_cp_sat_variables: int
     max_fixed_cp_sat_constraints: int
     fixed_model_build_time_s: float
@@ -208,6 +212,12 @@ def record_from_result(
         max_fixed_source_flow_full_variables=result.max_fixed_source_flow_full_variables,
         total_fixed_source_flow_variables=result.total_fixed_source_flow_variables,
         total_fixed_source_flow_full_variables=result.total_fixed_source_flow_full_variables,
+        max_fixed_shared_activation_gates=result.max_fixed_shared_activation_gates,
+        max_fixed_endpoint_distribution_variables=(
+            result.max_fixed_endpoint_distribution_variables
+        ),
+        max_fixed_flow_capacity_constraints=result.max_fixed_flow_capacity_constraints,
+        max_fixed_flow_balance_constraints=result.max_fixed_flow_balance_constraints,
         max_fixed_cp_sat_variables=result.max_fixed_cp_sat_variables,
         max_fixed_cp_sat_constraints=result.max_fixed_cp_sat_constraints,
         fixed_model_build_time_s=result.fixed_model_build_time_s,
@@ -291,6 +301,30 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 elevators=raw["elevator_module_count"],
                 corridors=raw["corridor_count"],
                 proof="yes" if raw["global_objective_optimum_proven"] else "no",
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Source-flow construction diagnostics",
+            "",
+            "Counts are maxima over fixed-packing subproblems in the run.",
+            "",
+            "| Case | Shared gates | Endpoint auxiliary vars | Capacity constraints | Balance constraints |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        lines.append(
+            "| {name} | {gates} | {endpoint} | {capacity} | {balance} |".format(
+                name=raw["name"],
+                gates=raw["max_fixed_shared_activation_gates"],
+                endpoint=raw["max_fixed_endpoint_distribution_variables"],
+                capacity=raw["max_fixed_flow_capacity_constraints"],
+                balance=raw["max_fixed_flow_balance_constraints"],
             )
         )
 

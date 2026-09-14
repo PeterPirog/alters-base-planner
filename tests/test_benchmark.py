@@ -53,6 +53,10 @@ def _result() -> PlanResult:
         max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
+        max_fixed_shared_activation_gates=11,
+        max_fixed_endpoint_distribution_variables=0,
+        max_fixed_flow_capacity_constraints=2800,
+        max_fixed_flow_balance_constraints=1600,
         max_fixed_cp_sat_variables=3500,
         max_fixed_cp_sat_constraints=6100,
         fixed_model_build_time_s=0.12,
@@ -99,6 +103,10 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.max_fixed_source_flow_full_variables == 3360
     assert record.total_fixed_source_flow_variables == 7200
     assert record.total_fixed_source_flow_full_variables == 12000
+    assert record.max_fixed_shared_activation_gates == 11
+    assert record.max_fixed_endpoint_distribution_variables == 0
+    assert record.max_fixed_flow_capacity_constraints == 2800
+    assert record.max_fixed_flow_balance_constraints == 1600
     assert record.max_fixed_cp_sat_variables == 3500
     assert record.max_fixed_cp_sat_constraints == 6100
     assert record.fixed_model_build_time_s == 0.12
@@ -139,6 +147,8 @@ def test_payload_and_markdown_are_auditable() -> None:
         "| sample | source_aggregated_weighted_flow | 7 | 2100 | 3360 | 7200 | 12000 | "
         "4800 | 40.0% |"
     ) in markdown
+    assert "## Source-flow construction diagnostics" in markdown
+    assert "| sample | 11 | 0 | 2800 | 1600 |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
 
 

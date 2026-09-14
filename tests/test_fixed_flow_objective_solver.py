@@ -101,6 +101,8 @@ def test_source_flow_matches_reference_for_direct_zero_cost_adjacency() -> None:
     assert result.utilities == ()
     assert result.scaled_objective_value == 0
     assert result.objective_scale == 10
+    assert result.diagnostics.shared_activation_gate_count == 0
+    assert result.diagnostics.endpoint_distribution_variable_count == 0
 
 
 def test_source_flow_matches_reference_for_one_corridor_tie_break() -> None:
@@ -418,6 +420,7 @@ def test_source_flow_matches_reference_for_vertical_elevator_chain() -> None:
     result = solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
     assert _signature(result) == (("elevator", 4, 0), ("elevator", 4, 1))
     assert result.scaled_objective_value == 18
+    assert result.diagnostics.shared_activation_gate_count == 1
 
 
 def test_source_flow_target_can_transit_flow_to_another_target_at_exact_width() -> None:
@@ -514,6 +517,9 @@ def test_source_flow_reports_primary_model_size_and_timings() -> None:
     assert diagnostics.graph_arc_count > 0
     assert diagnostics.objective_pair_count == 1
     assert diagnostics.source_commodity_count == 1
+    assert diagnostics.endpoint_distribution_variable_count == 0
+    assert diagnostics.flow_capacity_constraint_count > 0
+    assert diagnostics.flow_balance_constraint_count > 0
     assert diagnostics.cp_sat_variable_count > 0
     assert diagnostics.cp_sat_constraint_count > 0
     assert diagnostics.lexicographic_scalarization_used is True

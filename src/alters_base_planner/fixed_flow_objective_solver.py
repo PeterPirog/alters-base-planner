@@ -41,6 +41,10 @@ class FixedFlowObjectiveDiagnostics:
     source_commodity_count: int = 0
     source_flow_variable_count: int = 0
     source_flow_full_variable_count: int = 0
+    shared_activation_gate_count: int = 0
+    endpoint_distribution_variable_count: int = 0
+    flow_capacity_constraint_count: int = 0
+    flow_balance_constraint_count: int = 0
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
     lexicographic_scalarization_used: bool = False
@@ -118,6 +122,17 @@ class _SourceCommodity:
     source_instance_id: str
     targets: tuple[tuple[str, int], ...]
     total_supply: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceFlowBuildResult:
+    primary_expr: cp_model.LinearExpr | int
+    flow_variable_count: int
+    full_flow_variable_count: int
+    shared_activation_gate_count: int
+    endpoint_distribution_variable_count: int
+    capacity_constraint_count: int
+    balance_constraint_count: int
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
@@ -322,29 +337,112 @@ def _source_flow_domain(
     )
 
 
-def _integer_distribution(
+def _canonical_conditions(
+    conditions: tuple[cp_model.IntVar, ...],
+) -> tuple[cp_model.IntVar, ...]:
+    """Return positive Boolean conditions in stable model-variable order."""
+
+    by_index: dict[int, cp_model.IntVar] = {}
+    for condition in conditions:
+        if condition.index < 0 or not condition.is_boolean:
+            raise AssertionError("Source-flow arc conditions must be positive Boolean variables")
+        by_index[condition.index] = condition
+    return tuple(by_index[index] for index in sorted(by_index))
+
+
+def _shared_activation_gate(
     model: cp_model.CpModel,
     *,
-    commodity_id: str,
-    role: str,
-    nodes: tuple[NodeId, ...],
-    total: int,
-) -> dict[NodeId, cp_model.IntVar | int]:
-    """Distribute an exact integer supply or demand over legal endpoint ports."""
+    conditions: tuple[cp_model.IntVar, ...],
+    cache: dict[tuple[int, ...], cp_model.IntVar],
+) -> cp_model.IntVar:
+    """Return one exact AND literal shared by every use of a condition set."""
 
-    if not nodes:
-        raise ValueError("Endpoint distribution requires at least one candidate node")
-    if total <= 0:
-        raise ValueError("Endpoint distribution total must be positive")
-    if len(nodes) == 1:
-        return {nodes[0]: total}
+    canonical = _canonical_conditions(conditions)
+    if len(canonical) < 2:
+        raise AssertionError("Shared source-flow activation gates require multiple conditions")
+    key = tuple(condition.index for condition in canonical)
+    gate = cache.get(key)
+    if gate is None:
+        gate = model.new_bool_var(
+            "source_arc_gate__" + "_".join(str(index) for index in key)
+        )
+        model.add_min_equality(gate, canonical)
+        cache[key] = gate
+    return gate
 
-    choices: dict[NodeId, cp_model.IntVar | int] = {
-        node: model.new_int_var(0, total, f"source_{role}__{commodity_id}__{node}")
-        for node in nodes
-    }
-    model.add(sum(choices.values()) == total)
-    return choices
+
+def _add_direct_endpoint_balances(
+    model: cp_model.CpModel,
+    *,
+    commodity: _SourceCommodity,
+    domain: _SourceFlowDomain,
+    room_nodes: dict[str, tuple[NodeId, ...]],
+    incoming_flow_vars: dict[NodeId, list[cp_model.IntVar]],
+    outgoing_flow_vars: dict[NodeId, list[cp_model.IntVar]],
+) -> int:
+    """Add the exact source, target-absorption and ordinary conservation equations."""
+
+    if commodity.total_supply <= 0 or any(
+        coefficient <= 0 for _, coefficient in commodity.targets
+    ):
+        raise AssertionError("Source-flow supplies and target demands must be positive")
+    if commodity.total_supply != sum(coefficient for _, coefficient in commodity.targets):
+        raise AssertionError("Source-flow supply must equal the sum of target demands")
+
+    source_nodes = set(domain.source_nodes)
+    if any(incoming_flow_vars[node] for node in source_nodes):
+        raise AssertionError("Source-flow domain must not retain arcs entering source endpoints")
+
+    target_groups: list[tuple[int, tuple[NodeId, ...]]] = []
+    target_nodes: set[NodeId] = set()
+    domain_nodes = set(domain.nodes)
+    constraint_count = 0
+    for target_instance_id, coefficient in commodity.targets:
+        legal_nodes = tuple(
+            node for node in room_nodes[target_instance_id] if node in domain_nodes
+        )
+        if not legal_nodes:
+            model.add_bool_or([])
+            constraint_count += 1
+            continue
+        if source_nodes & set(legal_nodes) or target_nodes & set(legal_nodes):
+            raise AssertionError("Source and target endpoint sets must be disjoint")
+        target_nodes.update(legal_nodes)
+        target_groups.append((coefficient, legal_nodes))
+
+    source_outgoing = [
+        variable for node in domain.source_nodes for variable in outgoing_flow_vars[node]
+    ]
+    model.add(cp_model.LinearExpr.sum(source_outgoing) == commodity.total_supply)
+    constraint_count += 1
+
+    for coefficient, legal_nodes in target_groups:
+        target_net_inflows = [
+            cp_model.LinearExpr.sum(incoming_flow_vars[node])
+            - cp_model.LinearExpr.sum(outgoing_flow_vars[node])
+            for node in legal_nodes
+        ]
+        if len(target_net_inflows) == 1:
+            model.add(target_net_inflows[0] == coefficient)
+            constraint_count += 1
+            continue
+        for net_inflow in target_net_inflows:
+            model.add(net_inflow >= 0)
+            constraint_count += 1
+        model.add(cp_model.LinearExpr.sum(target_net_inflows) == coefficient)
+        constraint_count += 1
+
+    endpoint_nodes = source_nodes | target_nodes
+    for node in domain.nodes:
+        if node in endpoint_nodes:
+            continue
+        model.add(
+            cp_model.LinearExpr.sum(incoming_flow_vars[node])
+            == cp_model.LinearExpr.sum(outgoing_flow_vars[node])
+        )
+        constraint_count += 1
+    return constraint_count
 
 
 def _build_source_commodities(
@@ -387,7 +485,7 @@ def _add_source_aggregated_flow_objective(
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
     commodities: tuple[_SourceCommodity, ...],
-) -> tuple[cp_model.LinearExpr | int, int, int]:
+) -> _SourceFlowBuildResult:
     """Add exact weighted multi-sink flows after proof-safe source-domain reduction.
 
     For one source ``s``, total supply is ``Q_s = sum_t c_st`` and target ``t`` absorbs exactly
@@ -396,8 +494,8 @@ def _add_source_aggregated_flow_objective(
     exactly ``sum_t c_st * shortest_distance(s, t)``. Summing the commodity costs reproduces the
     accepted exact scaled objective without multiplying arc costs by pair coefficients again.
 
-    Returns the primary expression, the actual integer arc-flow count, and the corresponding full
-    ``source commodities x arcs`` count before source-specific domain reduction.
+    Returns the primary expression and auditable structural counts after source-specific domain
+    reduction.
     """
 
     incoming_arcs: dict[NodeId, list[int]] = {node: [] for node in nodes}
@@ -405,10 +503,19 @@ def _add_source_aggregated_flow_objective(
     for arc_index, arc in enumerate(arcs):
         outgoing_arcs[arc.source].append(arc_index)
         incoming_arcs[arc.target].append(arc_index)
+    conditions_by_arc = tuple(_canonical_conditions(arc.conditions) for arc in arcs)
+    condition_keys_by_arc = tuple(
+        tuple(condition.index for condition in conditions)
+        for conditions in conditions_by_arc
+    )
 
-    flow_cost_terms = []
+    flow_cost_variables: list[cp_model.IntVar] = []
+    flow_cost_coefficients: list[int] = []
+    shared_activation_gates: dict[tuple[int, ...], cp_model.IntVar] = {}
     source_flow_variable_count = 0
     source_flow_full_variable_count = len(arcs) * len(commodities)
+    capacity_constraint_count = 0
+    balance_constraint_count = 0
     for commodity in commodities:
         target_nodes = tuple(
             node
@@ -427,62 +534,70 @@ def _add_source_aggregated_flow_objective(
             model.add_bool_or([])
             continue
 
-        source_supply = _integer_distribution(
-            model,
-            commodity_id=commodity.source_instance_id,
-            role="supply",
-            nodes=domain.source_nodes,
-            total=commodity.total_supply,
-        )
-        target_demand: dict[NodeId, cp_model.IntVar | int] = {}
-        domain_node_set = set(domain.nodes)
-        for target_instance_id, coefficient in commodity.targets:
-            legal_target_nodes = tuple(
-                node for node in room_nodes[target_instance_id] if node in domain_node_set
-            )
-            if not legal_target_nodes:
-                model.add_bool_or([])
-                continue
-            target_demand.update(
-                _integer_distribution(
-                    model,
-                    commodity_id=commodity.source_instance_id,
-                    role=f"demand_{target_instance_id}",
-                    nodes=legal_target_nodes,
-                    total=coefficient,
-                )
-            )
+        source_node_set = set(domain.source_nodes)
+        if any(arcs[arc_index].target in source_node_set for arc_index in domain.arc_indices):
+            raise AssertionError("Source-flow domain retained an arc entering a source endpoint")
 
-        flow = {
-            arc_index: model.new_int_var(
+        incoming_flow_vars: dict[NodeId, list[cp_model.IntVar]] = {
+            node: [] for node in domain.nodes
+        }
+        outgoing_flow_vars: dict[NodeId, list[cp_model.IntVar]] = {
+            node: [] for node in domain.nodes
+        }
+        flow: dict[int, cp_model.IntVar] = {}
+        for arc_index in domain.arc_indices:
+            arc = arcs[arc_index]
+            variable = model.new_int_var(
                 0,
                 commodity.total_supply,
-                f"source_flow__{commodity.source_instance_id}__{arcs[arc_index].arc_id}",
+                f"source_flow__{commodity.source_instance_id}__{arc.arc_id}",
             )
-            for arc_index in domain.arc_indices
-        }
+            flow[arc_index] = variable
+            outgoing_flow_vars[arc.source].append(variable)
+            incoming_flow_vars[arc.target].append(variable)
+
+            conditions = conditions_by_arc[arc_index]
+            if len(conditions) == 1:
+                model.add(variable <= commodity.total_supply * conditions[0])
+                capacity_constraint_count += 1
+            elif len(conditions) > 1:
+                gate = shared_activation_gates.get(condition_keys_by_arc[arc_index])
+                if gate is None:
+                    gate = _shared_activation_gate(
+                        model,
+                        conditions=conditions,
+                        cache=shared_activation_gates,
+                    )
+                model.add(variable <= commodity.total_supply * gate)
+                capacity_constraint_count += 1
+
+            if arc.cost:
+                flow_cost_variables.append(variable)
+                flow_cost_coefficients.append(arc.cost)
+
         source_flow_variable_count += len(flow)
-        for arc_index, variable in flow.items():
-            for condition in arcs[arc_index].conditions:
-                model.add(variable <= commodity.total_supply * condition)
+        balance_constraint_count += _add_direct_endpoint_balances(
+            model,
+            commodity=commodity,
+            domain=domain,
+            room_nodes=room_nodes,
+            incoming_flow_vars=incoming_flow_vars,
+            outgoing_flow_vars=outgoing_flow_vars,
+        )
 
-        for node in domain.nodes:
-            incoming = sum(
-                flow[index] for index in incoming_arcs[node] if index in flow
-            )
-            outgoing = sum(
-                flow[index] for index in outgoing_arcs[node] if index in flow
-            )
-            source = source_supply.get(node, 0)
-            target = target_demand.get(node, 0)
-            model.add(incoming + source == outgoing + target)
-
-        flow_cost_terms.extend(arcs[index].cost * variable for index, variable in flow.items())
-
-    return (
-        sum(flow_cost_terms),
-        source_flow_variable_count,
-        source_flow_full_variable_count,
+    primary_expr = (
+        cp_model.LinearExpr.weighted_sum(flow_cost_variables, flow_cost_coefficients)
+        if flow_cost_variables
+        else 0
+    )
+    return _SourceFlowBuildResult(
+        primary_expr=primary_expr,
+        flow_variable_count=source_flow_variable_count,
+        full_flow_variable_count=source_flow_full_variable_count,
+        shared_activation_gate_count=len(shared_activation_gates),
+        endpoint_distribution_variable_count=0,
+        capacity_constraint_count=capacity_constraint_count,
+        balance_constraint_count=balance_constraint_count,
     )
 
 
@@ -734,17 +849,14 @@ def solve_fixed_layout_flow_objective(
     objective_definition_time_s = max(0.0, monotonic() - phase_started_at)
 
     phase_started_at = monotonic()
-    (
-        primary_expr,
-        source_flow_variable_count,
-        source_flow_full_variable_count,
-    ) = _add_source_aggregated_flow_objective(
+    flow_build = _add_source_aggregated_flow_objective(
         compiled.model,
         nodes=nodes,
         room_nodes=room_nodes,
         arcs=arcs,
         commodities=source_commodities,
     )
+    primary_expr = flow_build.primary_expr
     flow_model_build_time_s = max(0.0, monotonic() - phase_started_at)
 
     phase_started_at = monotonic()
@@ -807,8 +919,14 @@ def solve_fixed_layout_flow_objective(
             graph_arc_count=len(arcs),
             objective_pair_count=len(objective.pairs),
             source_commodity_count=len(source_commodities),
-            source_flow_variable_count=source_flow_variable_count,
-            source_flow_full_variable_count=source_flow_full_variable_count,
+            source_flow_variable_count=flow_build.flow_variable_count,
+            source_flow_full_variable_count=flow_build.full_flow_variable_count,
+            shared_activation_gate_count=flow_build.shared_activation_gate_count,
+            endpoint_distribution_variable_count=(
+                flow_build.endpoint_distribution_variable_count
+            ),
+            flow_capacity_constraint_count=flow_build.capacity_constraint_count,
+            flow_balance_constraint_count=flow_build.balance_constraint_count,
             cp_sat_variable_count=model_variable_count,
             cp_sat_constraint_count=model_constraint_count,
             lexicographic_scalarization_used=True,

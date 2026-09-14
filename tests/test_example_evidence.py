@@ -58,6 +58,10 @@ def example_files(tmp_path, monkeypatch):
         max_fixed_source_flow_variables=2100, max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
+        max_fixed_shared_activation_gates=11,
+        max_fixed_endpoint_distribution_variables=0,
+        max_fixed_flow_capacity_constraints=2800,
+        max_fixed_flow_balance_constraints=1600,
     )
     payload = result_payload(result)
     (tmp_path / "layout.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -147,6 +151,10 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
         "total_full_domain_variables": 12000,
         "max_actual_variables": 2100,
         "max_full_domain_variables": 3360,
+        "max_shared_activation_gates": 11,
+        "max_endpoint_distribution_variables": 0,
+        "max_capacity_constraints": 2800,
+        "max_balance_constraints": 1600,
     }
     assert metadata["fixed_subproblems"]["build_phases"] == {
         "hard_model_time_s": 0.04,

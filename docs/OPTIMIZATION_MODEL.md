@@ -392,7 +392,7 @@ target demand(s,t) = c_st
 0 <= flow[s,a] <= Q_s
 ```
 
-Supply `Q_s` may split across all legal source ports, and each target demand may split across that target's legal ports. Different units therefore retain the same independent endpoint choice as the former pair-specific paths. Flow balance holds at every graph node. Target rooms may carry through-flow to other targets when their module transit rule permits it; only arcs entering the source endpoint set are removed as unnecessary.
+Supply `Q_s` may split across all legal source ports, and each target demand may split across that target's legal ports. Different units therefore retain the same independent endpoint choice as the former pair-specific paths. The source ports use one aggregate `sum(outgoing) = Q_s` equation because the reduced domain retains no arc entering a source port. Every target port has non-negative net inflow, and the net inflows for target `t` sum to exactly `c_st`; this represents the same endpoint-allocation projection without explicit supply/demand variables. Ordinary nodes retain exact flow conservation. Target rooms may carry through-flow to other targets when their module transit rule permits it.
 
 The primary expression is:
 
@@ -402,7 +402,7 @@ scaled_F = sum_s sum_a arc_cost[a] * flow[s,a]
 
 The coefficient is represented by flow quantity and is not multiplied onto the arc term again. For a fixed selected infrastructure, every integral feasible source flow decomposes into source-to-target paths plus cycles. Arc costs are non-negative, so cycles can be removed without increasing cost, and each unit ending at target `t` costs at least `shortest_distance(s,t)`. Conversely, routing exactly `c_st` units along a shortest legal path to each target is feasible. Thus the minimum commodity cost is exactly `sum_t c_st * shortest_distance(s,t)`, and summing commodities reproduces the accepted exact pairwise objective.
 
-All source commodities share one infrastructure selection. A conditional arc flow is bounded by `Q_s` times each corresponding Corridor/Elevator selection variable, preserving the original infrastructure semantics.
+All source commodities share one infrastructure selection. An arc with one infrastructure condition keeps the direct bound `flow[s,a] <= Q_s * condition[a]`. For two or more conditions, one exact Boolean activation gate is cached by the canonical condition-variable set and constrained to their conjunction; every commodity using an equivalent arc condition set uses `flow[s,a] <= Q_s * gate[a]`. This is the same feasible projection as one bound per condition while avoiding repeated constraints.
 
 Before variables are created, relaxed forward reachability from all source ports and reverse reachability from the union of all target ports restrict each commodity to arcs that can lie on a source-to-some-target path. Infrastructure conditions are ignored only for this reachability calculation, making it a supergraph reduction that cannot remove a realizable path.
 

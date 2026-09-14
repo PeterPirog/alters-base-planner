@@ -129,6 +129,10 @@ max_fixed_source_flow_variables
 max_fixed_source_flow_full_variables
 total_fixed_source_flow_variables
 total_fixed_source_flow_full_variables
+max_fixed_shared_activation_gates
+max_fixed_endpoint_distribution_variables
+max_fixed_flow_capacity_constraints
+max_fixed_flow_balance_constraints
 max_fixed_cp_sat_variables
 max_fixed_cp_sat_constraints
 lexicographic_scalarization.used
@@ -179,6 +183,11 @@ fixed_subproblems.build_phases:
 ```
 
 These fields are additive diagnostics, so result schema version 3 and benchmark schema version 5 remain unchanged.
+
+The four source-flow construction counts are maxima across fixed subproblems. They expose exact
+shared activation gates, explicit endpoint-allocation variables, conditional capacity constraints
+and balance/endpoint constraints. The current direct endpoint formulation reports zero explicit
+endpoint-allocation variables.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
 
@@ -297,6 +306,40 @@ is comparatively small. The next optimization iteration should first micro-profi
 `_add_source_aggregated_flow_objective()` and reduce Python/protobuf construction overhead in its
 sparse variable, conditional-bound and node-balance creation without changing the exact flow
 formulation, objective, domains or proof semantics.
+
+### Local source-flow construction optimization
+
+The next construction iteration was measured on 2026-09-14 with Python 3.12.9, OR-Tools
+9.15.6755 and Windows 10. The exact parent `58cfaaa` ran from a detached worktree; the candidate
+ran from the feature checkout. Both used the same TEMP-only Tier-IV request and harness described
+above. The three timed solves followed one untimed structure probe in each process.
+
+| Structural metric | Parent | Candidate |
+|---|---:|---:|
+| Graph nodes / arcs | 442 / 1,496 | 442 / 1,496 |
+| Objective pairs / source commodities | 105 / 14 | 105 / 14 |
+| Source-flow variables | 19,370 | 19,370 |
+| Explicit endpoint-allocation variables | 208 | 0 |
+| Shared multi-condition activation gates | 0 | 699 |
+| Conditional capacity constraints | 37,078 | 18,904 |
+| Total CP-SAT variables | 22,346 | 22,837 |
+| Total CP-SAT constraints | 47,568 | 30,067 |
+
+| Timing | Parent min / median / max | Candidate min / median / max |
+|---|---:|---:|
+| Source-flow model build | 0.860 / 0.891 / 0.891 s | 0.610 / 0.719 / 0.797 s |
+| Total model build | 1.125 / 1.219 / 1.235 s | 0.985 / 1.141 / 1.156 s |
+| CP-SAT solve | 0.047 / 0.047 / 0.062 s | 0.031 / 0.047 / 0.063 s |
+
+The candidate leaves the proof-safe flow domain unchanged, removes every endpoint-allocation
+variable, and reduces total constraints by 36.8%. Exact shared gates add 491 net CP-SAT variables
+(2.2%), while source-flow construction median falls by 19.3% and total model-build median by 6.4%.
+These local timings support the deterministic structural result but remain measurements rather
+than correctness thresholds.
+
+The directly connected 15-room control has no conditional arcs. Its source-flow variables remain
+406 and total constraints remain 505, while direct endpoint balances reduce total CP-SAT variables
+from 719 to 509. This isolates the endpoint-variable elimination from the shared-gate change.
 
 ## Exact incumbent objective cut
 

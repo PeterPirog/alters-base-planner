@@ -52,6 +52,10 @@ class _FixedDiagnosticsAggregate:
     max_source_flow_full_variables: int = 0
     total_source_flow_variables: int = 0
     total_source_flow_full_variables: int = 0
+    max_shared_activation_gates: int = 0
+    max_endpoint_distribution_variables: int = 0
+    max_flow_capacity_constraints: int = 0
+    max_flow_balance_constraints: int = 0
     max_cp_sat_variables: int = 0
     max_cp_sat_constraints: int = 0
     lexicographic_scalarization_used: bool = False
@@ -98,6 +102,22 @@ class _FixedDiagnosticsAggregate:
         )
         self.total_source_flow_variables += diagnostics.source_flow_variable_count
         self.total_source_flow_full_variables += diagnostics.source_flow_full_variable_count
+        self.max_shared_activation_gates = max(
+            self.max_shared_activation_gates,
+            diagnostics.shared_activation_gate_count,
+        )
+        self.max_endpoint_distribution_variables = max(
+            self.max_endpoint_distribution_variables,
+            diagnostics.endpoint_distribution_variable_count,
+        )
+        self.max_flow_capacity_constraints = max(
+            self.max_flow_capacity_constraints,
+            diagnostics.flow_capacity_constraint_count,
+        )
+        self.max_flow_balance_constraints = max(
+            self.max_flow_balance_constraints,
+            diagnostics.flow_balance_constraint_count,
+        )
         self.max_cp_sat_variables = max(
             self.max_cp_sat_variables,
             diagnostics.cp_sat_variable_count,
@@ -165,6 +185,12 @@ class _FixedDiagnosticsAggregate:
         result.max_fixed_source_flow_full_variables = self.max_source_flow_full_variables
         result.total_fixed_source_flow_variables = self.total_source_flow_variables
         result.total_fixed_source_flow_full_variables = self.total_source_flow_full_variables
+        result.max_fixed_shared_activation_gates = self.max_shared_activation_gates
+        result.max_fixed_endpoint_distribution_variables = (
+            self.max_endpoint_distribution_variables
+        )
+        result.max_fixed_flow_capacity_constraints = self.max_flow_capacity_constraints
+        result.max_fixed_flow_balance_constraints = self.max_flow_balance_constraints
         result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
         result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
         result.fixed_lexicographic_scalarization_used = self.lexicographic_scalarization_used
