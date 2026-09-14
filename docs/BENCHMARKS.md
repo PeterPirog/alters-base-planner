@@ -145,13 +145,40 @@ lexicographic_scalarization.max_incumbent_scalar_value
 fixed_model_build_time_s
 fixed_cp_sat_solve_time_s
 fixed_subproblem_time_s
+fixed_hard_model_build_time_s
+fixed_path_graph_build_time_s
+fixed_objective_definition_time_s
+fixed_source_flow_model_build_time_s
+fixed_lexicographic_finalize_time_s
 ```
 
-The `max_*` values are maxima across all exact fixed-packing subproblems attempted during one planning run. The three timing values are totals across those subproblems. CP-SAT variable/constraint counts describe the single lexicographic-scalarized model.
+The `max_*` values are maxima across all exact fixed-packing subproblems attempted during one planning run. Every timing value above is a total across those subproblems. The five sequential build-phase totals partition the instrumented model-construction work:
+
+- `fixed_hard_model_build_time_s`: `compile_fixed_layout_hard_model(...)`;
+- `fixed_path_graph_build_time_s`: `_build_path_graph(...)`;
+- `fixed_objective_definition_time_s`: exact scaled-objective and source-commodity definitions;
+- `fixed_source_flow_model_build_time_s`: source-flow variables, balances and conditional-arc constraints;
+- `fixed_lexicographic_finalize_time_s`: secondary expressions, finite bounds, incumbent cut, scalarized objective and model-size snapshot.
+
+The phase clocks are monotonic, sequential and non-overlapping. Their sum cannot exceed `fixed_model_build_time_s` except for negligible clock/accounting tolerance. CP-SAT search remains outside these build phases and is reported separately by `fixed_cp_sat_solve_time_s`. Model validation and exact evaluator work are also outside the build phases and are included only in `fixed_subproblem_time_s`; phase timing never affects correctness decisions. CP-SAT variable/constraint counts describe the single lexicographic-scalarized model.
 
 `lexicographic_scalarization.used` reports whether attempted fixed subproblems used the exact scalarized objective. The `max_weight_*` and `max_*_bound` fields are maxima across attempted fixed subproblems. `max_primary_objective_upper_bound` is the maximum conservative scaled-`F` bound used in the signed-integer safety calculation, and `max_combined_objective_upper_bound` is the maximum resulting combined-objective safety bound. `max_incumbent_scalar_value` is separately the largest scalar value among returned incumbents; it is not an objective upper bound and is `null` when no fixed subproblem returned an incumbent.
 
 `fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and source-aggregated flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside the single CP-SAT lexicographic-scalarized solve call. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, the CP-SAT solve and exact evaluator work.
+
+Result JSON schema version 3 keeps the existing total timing fields and adds the phase totals under:
+
+```text
+fixed_subproblems.build_phases:
+    hard_model_time_s
+    path_graph_time_s
+    objective_definition_time_s
+    source_flow_time_s
+    lexicographic_finalize_time_s
+    total_model_build_time_s
+```
+
+These fields are additive diagnostics, so result schema version 3 and benchmark schema version 5 remain unchanged.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
 
@@ -203,6 +230,73 @@ end-to-end runtime claim.
 On this packing, source aggregation removes 77.9% of the actual arc-flow variables, 62.9% of all
 CP-SAT variables and 61.0% of constraints. The deterministic size reduction is the primary result;
 the small solve-time difference should not be generalized beyond this sample.
+
+### Local Tier-IV first-subproblem profile
+
+The following diagnostic profile was collected on 2026-09-14 with Python 3.12.9, OR-Tools
+9.15.6755 and Windows 10. The TEMP-only request uses Tier IV, the interactive default PLAYER
+counts, a 30-second global budget and `max_layout_attempts = 1`. Each formulation was run three
+times sequentially. Every run selected a first packing whose fixed graph had exactly 442 nodes,
+1,496 arcs and 105 objective pairs, so the structural comparison is directly comparable. All runs
+reported `NO_CONNECTED_LAYOUT`, one room packing, zero connected candidates and one fixed
+subproblem; the purpose was construction profiling rather than finding or proving an optimal Base.
+
+The pair-specific baseline was executed from a detached worktree at parent commit `8985b5e`.
+`PYTHONPATH` pointed explicitly to that worktree's `src`, and the imported package path was checked
+before measurement. The source-aggregated runs used the current branch checkout.
+
+| Structural metric | Parent pair-flow | Source-aggregated |
+|---|---:|---:|
+| Runs | 3 | 3 |
+| Graph nodes | 442 | 442 |
+| Graph arcs | 1,496 | 1,496 |
+| Objective pairs | 105 | 105 |
+| Flow commodities | 105 | 14 |
+| Actual arc-flow variables | 135,226 | 19,370 |
+| Full-domain arc-flow variables | 157,080 | 20,944 |
+| Total CP-SAT variables | 138,358 | 22,346 |
+| Total CP-SAT constraints | 304,264 | 47,568 |
+
+Source-aggregated build phases:
+
+| Run | Hard | Graph | Objective | Source flow | Lex finalize | Total build | CP-SAT solve | Fixed total |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.172 | 0.016 | 0.000 | 1.140 | 0.188 | 1.516 | 0.062 | 1.625 |
+| 2 | 0.203 | 0.000 | 0.016 | 0.984 | 0.187 | 1.390 | 0.063 | 1.500 |
+| 3 | 0.203 | 0.015 | 0.000 | 1.141 | 0.281 | 1.640 | 0.062 | 1.765 |
+
+| Phase | Min / median / max |
+|---|---:|
+| Hard model | 0.172 / 0.203 / 0.203 s |
+| Path graph | 0.000 / 0.015 / 0.016 s |
+| Objective definition | 0.000 / 0.000 / 0.016 s |
+| Source-flow model | 0.984 / 1.140 / 1.141 s |
+| Lexicographic finalization | 0.187 / 0.188 / 0.281 s |
+| Total model build | 1.390 / 1.516 / 1.640 s |
+| CP-SAT solve | 0.062 / 0.062 / 0.063 s |
+| Total fixed subproblem | 1.500 / 1.625 / 1.765 s |
+
+The min/median/max values summarize each timing column independently. Consequently, the phase
+medians need not add up to the median total; the raw per-run rows above show the timing partition
+invariant for each fixed solve.
+
+Parent aggregate timings, for which phase-level instrumentation was not present:
+
+| Timing | Min / median / max |
+|---|---:|
+| Total model build | 6.234 / 7.125 / 7.329 s |
+| CP-SAT solve | 0.313 / 0.343 / 0.344 s |
+| Total fixed subproblem | 6.797 / 7.703 / 7.922 s |
+
+These are local development-machine measurements, not correctness thresholds or universal
+performance claims. Runtime ratios must not be extrapolated to arbitrary Tier-IV requests. The
+deterministic model-size counts and matching graph shape are stronger evidence than the noisy wall
+times. Using the diagnostic classification labels, the next bottleneck is
+`SOURCE_FLOW_MODEL_BUILD` (the `fixed_source_flow_model_build_time_s` phase), while CP-SAT search
+is comparatively small. The next optimization iteration should first micro-profile
+`_add_source_aggregated_flow_objective()` and reduce Python/protobuf construction overhead in its
+sparse variable, conditional-bound and node-balance creation without changing the exact flow
+formulation, objective, domains or proof semantics.
 
 ## Exact incumbent objective cut
 
