@@ -134,6 +134,14 @@ max_fixed_condition_capacity_literals
 max_fixed_endpoint_distribution_variables
 max_fixed_flow_capacity_constraints
 max_fixed_flow_balance_constraints
+fixed_incumbent_distance_cap_pruning_used
+fixed_objective_bound_relaxation_pruned
+max_fixed_relaxed_graph_primary_lower_bound
+min_fixed_incumbent_primary_bound
+max_fixed_incumbent_distance_cap_pairs
+max_fixed_source_flow_variables_before_incumbent_cap
+max_fixed_source_flow_variables_after_incumbent_cap
+max_fixed_incumbent_cap_pruned_flow_variables
 max_fixed_cp_sat_variables
 max_fixed_cp_sat_constraints
 lexicographic_scalarization.used
@@ -187,7 +195,9 @@ These fields are additive diagnostics apart from one incompatible rename: result
 replaced `max_shared_activation_gates` with `max_condition_capacity_buckets` and added
 `max_condition_capacity_literals`, because exact condition-capacity buckets replaced shared
 activation gates. Benchmark schema version 6 records the same rename, replacing benchmark schema
-version 5. The four source-flow construction counts are maxima across fixed subproblems. They
+version 5. The condition-bucket and incumbent distance-cap fields introduced afterwards are purely
+additive, so result schema version 4, benchmark schema version 6 and evidence metadata schema
+version 3 all remain unchanged for them. The four source-flow construction counts are maxima across fixed subproblems. They
 expose exact condition-capacity bucket constraints, distinct Boolean infrastructure conditions
 represented by those buckets, explicit endpoint-allocation variables, capacity constraints and
 balance/endpoint constraints. The direct endpoint formulation reports zero explicit
@@ -389,6 +399,54 @@ source-flow variables, 509 CP-SAT variables, 505 constraints, zero buckets). The
 support the deterministic structural result but remain measurements rather than correctness
 thresholds. The formulation, objective, incumbent cut and proof semantics are unchanged; only the
 representation of conditional flow activation changed.
+
+### Local incumbent distance-cap pruning
+
+The next iteration derives exact per-pair distance caps from the incumbent bound and prunes
+source-flow arcs before variables are created, measured on 2026-09-14 with Python 3.12.9,
+OR-Tools 9.15.6755 and Windows 10. The proof boundary is documented in `docs/OPTIMIZATION_MODEL.md`:
+integer Dijkstra lower bounds `l_st` on the unconditional relaxed graph give `LB = sum c_st*l_st`;
+`LB > B` proves bound domination before CP-SAT, otherwise `cap_st = l_st + (B-LB)//c_st` and an
+arc is retained for a source commodity iff it is cap-admissible for at least one of that
+commodity's targets.
+
+Unbounded first-subproblem control (same TEMP-only Tier-IV request and harness as the sections
+above; parent `43ffc93` numbers from its own session):
+
+| Metric | Parent | Candidate |
+|---|---:|---:|
+| Source-flow variables / buckets | 19,370 / 805 | 19,370 / 805 |
+| Total CP-SAT variables / constraints | 22,138 / 11,269 | 22,138 / 11,269 |
+| Source-flow build min / median / max | 0.531 / 0.578 / 0.594 s | 0.531 / 0.593 / 0.641 s |
+
+The unbounded model is structurally identical, as required; the first fixed subproblem performs
+no incumbent-cap computation at all.
+
+Bounded experiments (three timed repetitions after one warm-up each):
+
+- **Controlled trio** (airlock, workshop, command center in one row; exact optimum `F* = 280`,
+  three objective pairs, 14 source-flow variables unbounded). With the tight bound `B = F*` the
+  relaxed lower bound equals `F*`, all three pairs are capped, and pruning removes 9 of 14 flow
+  variables: total CP-SAT variables fall 33 -> 24 and constraints 45 -> 44 while the solver still
+  returns `OPTIMAL 280` — equality is preserved. With `B = F* - 1` the relaxation alone proves
+  `OBJECTIVE_BOUND_INFEASIBLE` before CP-SAT (zero CP-SAT variables created). A loose bound
+  `B = F* + 10^6` prunes zero arcs and keeps the exact result.
+
+- **Tier-IV synthetic-bound diagnostic.** The captured first packing (442 nodes, 1,496 arcs, 105
+  pairs, 14 commodities, 19,370 unbounded source-flow variables) is hard-infeasible
+  (`NO_CONNECTED_LAYOUT`), so it has no credible real incumbent. SYNTHETIC bounds were used purely
+  for structural measurement and are not planner incumbents: the relaxed lower bound measured
+  `LB = 105,221`. With the synthetic tight bound `B = LB`, 91 of 105 pairs received finite caps,
+  source-flow variables fell 19,370 -> 787 (95.9% pruned), total CP-SAT variables fell
+  22,138 -> 3,555 and total constraints fell 11,269 -> 5,671, with source-flow build
+  0.281 / 0.296 / 0.343 s versus the unbounded 0.718 / 0.750 / 0.765 s in the same script. With
+  the synthetic loose bound `B = 2 * LB`, zero arcs were pruned and construction additionally paid
+  the Dijkstra overhead (0.828 / 0.876 / 0.937 s) — loose bounds are valid but can prune nothing,
+  exactly as the theory predicts.
+
+This is a proof-safe solver/domain reduction, not a game rule. Correctness evidence: the
+exhaustive cap-algebra test, bounded/unbounded projection tests, target-as-transit and custom
+weight regressions, and the full production-versus-oracle suite all pass with the mechanism live.
 
 ## Exact incumbent objective cut
 

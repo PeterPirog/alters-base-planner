@@ -30,6 +30,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# TEMP/ holds untracked local profiling scratch (see .gitignore) and is never committed.
+extend-exclude = ["TEMP"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -63,6 +63,14 @@ def example_files(tmp_path, monkeypatch):
         max_fixed_endpoint_distribution_variables=0,
         max_fixed_flow_capacity_constraints=2800,
         max_fixed_flow_balance_constraints=1600,
+        fixed_incumbent_distance_cap_pruning_used=True,
+        fixed_objective_bound_relaxation_pruned=False,
+        max_fixed_relaxed_graph_primary_lower_bound=4600,
+        min_fixed_incumbent_primary_bound=4600,
+        max_fixed_incumbent_distance_cap_pairs=28,
+        max_fixed_source_flow_variables_before_incumbent_cap=4200,
+        max_fixed_source_flow_variables_after_incumbent_cap=3900,
+        max_fixed_incumbent_cap_pruned_flow_variables=300,
     )
     payload = result_payload(result)
     (tmp_path / "layout.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -178,6 +186,16 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
         "max_elevator_bound": 17,
         "max_mass_bound": 72,
         "max_incumbent_scalar_value": 63042,
+    }
+    assert metadata["fixed_subproblems"]["incumbent_distance_cap"] == {
+        "used": True,
+        "relaxation_proved_infeasible": False,
+        "max_relaxed_primary_lower_bound": 4600,
+        "min_incumbent_primary_bound": 4600,
+        "max_capped_pairs": 28,
+        "max_flow_variables_before_cap": 4200,
+        "max_flow_variables_after_cap": 3900,
+        "max_pruned_flow_variables": 300,
     }
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from heapq import heapify, heappop, heappush
 from time import monotonic
 
 from ortools.sat.python import cp_model
@@ -46,6 +47,14 @@ class FixedFlowObjectiveDiagnostics:
     condition_capacity_literal_count: int = 0
     flow_capacity_constraint_count: int = 0
     flow_balance_constraint_count: int = 0
+    incumbent_distance_cap_pruning_used: bool = False
+    relaxed_graph_primary_lower_bound: int | None = None
+    incumbent_primary_bound: int | None = None
+    incumbent_distance_cap_pair_count: int = 0
+    source_flow_variables_before_incumbent_cap: int = 0
+    source_flow_variables_after_incumbent_cap: int = 0
+    incumbent_cap_pruned_flow_variables: int = 0
+    objective_bound_relaxation_pruned: bool = False
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
     lexicographic_scalarization_used: bool = False
@@ -135,6 +144,12 @@ class _SourceFlowBuildResult:
     condition_capacity_literal_count: int
     capacity_constraint_count: int
     balance_constraint_count: int
+    incumbent_distance_cap_pruning_used: bool = False
+    relaxed_primary_lower_bound: int | None = None
+    capped_pair_count: int = 0
+    flow_variables_before_cap: int = 0
+    incumbent_cap_pruned_flow_variables: int = 0
+    relaxation_proved_bound_infeasible: bool = False
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
@@ -339,6 +354,39 @@ def _source_flow_domain(
     )
 
 
+def _relaxed_dijkstra_distances(
+    starts: tuple[NodeId, ...],
+    *,
+    arcs: tuple[_Arc, ...],
+    adjacency: dict[NodeId, list[int]],
+    allowed_arc_indices: frozenset[int] | set[int],
+    reverse: bool,
+) -> dict[NodeId, int]:
+    """Exact integer multi-source Dijkstra over the unconditional relaxed arc domain.
+
+    The relaxed graph ignores infrastructure-selection conditions, so every distance is a valid
+    lower bound on the corresponding distance in any realizable selected network. Missing keys
+    mean "unreachable" and never participate in cap arithmetic.
+    """
+
+    distances: dict[NodeId, int] = {}
+    heap: list[tuple[int, NodeId]] = [(0, node) for node in starts]
+    heapify(heap)
+    while heap:
+        distance, node = heappop(heap)
+        if node in distances:
+            continue
+        distances[node] = distance
+        for arc_index in adjacency[node]:
+            if arc_index not in allowed_arc_indices:
+                continue
+            arc = arcs[arc_index]
+            next_node = arc.source if reverse else arc.target
+            if next_node not in distances:
+                heappush(heap, (distance + arc.cost, next_node))
+    return distances
+
+
 def _canonical_conditions(
     conditions: tuple[cp_model.IntVar, ...],
 ) -> tuple[cp_model.IntVar, ...]:
@@ -458,6 +506,11 @@ def _add_direct_endpoint_balances(
     for node in domain.nodes:
         if node in endpoint_nodes:
             continue
+        if not incoming_flow_vars[node] and not outgoing_flow_vars[node]:
+            # Every node in the domain lies on some relaxed source-to-target path, so this can
+            # only happen after exact distance-cap pruning removed all incident arcs; the
+            # conservation equation would be the tautology 0 == 0.
+            continue
         model.add(
             cp_model.LinearExpr.sum(incoming_flow_vars[node])
             == cp_model.LinearExpr.sum(outgoing_flow_vars[node])
@@ -506,6 +559,7 @@ def _add_source_aggregated_flow_objective(
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
     commodities: tuple[_SourceCommodity, ...],
+    scaled_objective_upper_bound: int | None = None,
 ) -> _SourceFlowBuildResult:
     """Add exact weighted multi-sink flows after proof-safe source-domain reduction.
 
@@ -514,6 +568,17 @@ def _add_source_aggregated_flow_objective(
     decomposes into source-to-target paths plus removable cycles. Its minimum cost is therefore
     exactly ``sum_t c_st * shortest_distance(s, t)``. Summing the commodity costs reproduces the
     accepted exact scaled objective without multiplying arc costs by pair coefficients again.
+
+    With an exact incumbent primary bound ``B``, every pair first receives the mathematically
+    necessary distance cap ``cap_st = l_st + (B - LB) // c_st`` from the relaxed-graph lower bound
+    ``LB = sum c_st * l_st``: any solution with ``sum c*d <= B`` and ``d >= l`` satisfies
+    ``c_p*d_p <= B - sum_{q != p} c_q*l_q``, hence ``d_p <= cap_p``. Arc ``(u, v)`` is retained for
+    source ``s`` iff it is cap-admissible for at least one target ``t`` of that commodity,
+    ``dist_s[u] + cost(a) + dist_t[v] <= cap_st`` on the same relaxed domain; a realizable
+    solution with ``F <= B`` keeps every arc of each per-pair shortest path, so the union of
+    per-target admissible sets removes no such solution. If ``LB > B``, the relaxation alone
+    proves that no selected infrastructure can satisfy the bound. Without a bound, none of this
+    computation runs and the domain is unchanged.
 
     Returns the primary expression and auditable structural counts after source-specific domain
     reduction.
@@ -526,13 +591,11 @@ def _add_source_aggregated_flow_objective(
         incoming_arcs[arc.target].append(arc_index)
     conditions_by_arc = tuple(_canonical_conditions(arc.conditions) for arc in arcs)
 
-    flow_cost_variables: list[cp_model.IntVar] = []
-    flow_cost_coefficients: list[int] = []
-    condition_buckets: dict[int, list[tuple[cp_model.IntVar, int]]] = {}
-    bucket_conditions: dict[int, cp_model.IntVar] = {}
-    source_flow_variable_count = 0
-    source_flow_full_variable_count = len(arcs) * len(commodities)
-    balance_constraint_count = 0
+    # Stage A: proof-safe domains per source commodity, optionally narrowed by exact
+    # incumbent distance caps before any CP-SAT flow variable exists.
+    commodity_domains: list[_SourceFlowDomain | None] = []
+    retained_by_commodity: list[tuple[int, ...]] = []
+    flow_variables_before_cap = 0
     for commodity in commodities:
         target_nodes = tuple(
             node
@@ -549,7 +612,142 @@ def _add_source_aggregated_flow_objective(
         )
         if not domain.source_nodes or not domain.target_nodes:
             model.add_bool_or([])
+            commodity_domains.append(None)
+            retained_by_commodity.append(())
             continue
+        commodity_domains.append(domain)
+        retained_by_commodity.append(domain.arc_indices)
+        flow_variables_before_cap += len(domain.arc_indices)
+
+    cap_pruning_used = scaled_objective_upper_bound is not None
+    relaxed_lower_bound: int | None = None
+    capped_pair_count = 0
+    pruned_flow_variables = 0
+    relaxation_proved_bound_infeasible = False
+
+    if cap_pruning_used:
+        bound = scaled_objective_upper_bound
+        assert bound is not None
+        forward_by_commodity: list[dict[NodeId, int] | None] = []
+        lower_by_commodity: list[list[int | None] | None] = []
+        relaxed_lower_bound = 0
+        for commodity, domain in zip(commodities, commodity_domains, strict=True):
+            if domain is None:
+                forward_by_commodity.append(None)
+                lower_by_commodity.append(None)
+                continue
+            allowed = frozenset(domain.arc_indices)
+            forward = _relaxed_dijkstra_distances(
+                domain.source_nodes,
+                arcs=arcs,
+                adjacency=outgoing_arcs,
+                allowed_arc_indices=allowed,
+                reverse=False,
+            )
+            forward_by_commodity.append(forward)
+            domain_node_set = set(domain.nodes)
+            lower_row: list[int | None] = []
+            for target_instance_id, coefficient in commodity.targets:
+                legal_nodes = tuple(
+                    node
+                    for node in room_nodes[target_instance_id]
+                    if node in domain_node_set
+                )
+                reachable = [forward[node] for node in legal_nodes if node in forward]
+                lower = min(reachable) if reachable else None
+                lower_row.append(lower)
+                if lower is not None:
+                    relaxed_lower_bound += coefficient * lower
+            lower_by_commodity.append(lower_row)
+
+        if relaxed_lower_bound > bound:
+            # The relaxation alone proves that every realizable network has
+            # scaled_F >= LB > B: the bounded model can never admit a solution.
+            pruned_flow_variables = flow_variables_before_cap
+            relaxation_proved_bound_infeasible = True
+            return _SourceFlowBuildResult(
+                primary_expr=0,
+                flow_variable_count=0,
+                full_flow_variable_count=len(arcs) * len(commodities),
+                endpoint_distribution_variable_count=0,
+                condition_capacity_bucket_count=0,
+                condition_capacity_literal_count=0,
+                capacity_constraint_count=0,
+                balance_constraint_count=0,
+                incumbent_distance_cap_pruning_used=False,
+                relaxed_primary_lower_bound=relaxed_lower_bound,
+                capped_pair_count=0,
+                flow_variables_before_cap=flow_variables_before_cap,
+                incumbent_cap_pruned_flow_variables=pruned_flow_variables,
+                relaxation_proved_bound_infeasible=True,
+            )
+
+        slack = bound - relaxed_lower_bound
+        for commodity_index, (commodity, domain) in enumerate(
+            zip(commodities, commodity_domains, strict=True)
+        ):
+            if domain is None:
+                continue
+            forward = forward_by_commodity[commodity_index]
+            assert forward is not None
+            pair_lower_row = lower_by_commodity[commodity_index]
+            assert pair_lower_row is not None
+            domain_node_set = set(domain.nodes)
+            # Per-target (cap, reverse-distance) candidates; a target whose relaxed lower bound
+            # is unreachable contributes no cap and is proven infeasible by its balance row.
+            cap_candidates: list[tuple[int, dict[NodeId, int]]] = []
+            for target_index, (target_instance_id, coefficient) in enumerate(
+                commodity.targets
+            ):
+                lower = pair_lower_row[target_index]
+                if lower is None:
+                    continue
+                cap = lower + slack // coefficient
+                legal_nodes = tuple(
+                    node
+                    for node in room_nodes[target_instance_id]
+                    if node in domain_node_set
+                )
+                reverse_distances = _relaxed_dijkstra_distances(
+                    legal_nodes,
+                    arcs=arcs,
+                    adjacency=incoming_arcs,
+                    allowed_arc_indices=frozenset(domain.arc_indices),
+                    reverse=True,
+                )
+                cap_candidates.append((cap, reverse_distances))
+            capped_pair_count += len(cap_candidates)
+            retained: list[int] = []
+            for arc_index in domain.arc_indices:
+                arc = arcs[arc_index]
+                source_distance = forward.get(arc.source)
+                if source_distance is None:
+                    continue
+                for cap, reverse_distances in cap_candidates:
+                    target_distance = reverse_distances.get(arc.target)
+                    if target_distance is None:
+                        continue
+                    if source_distance + arc.cost + target_distance <= cap:
+                        retained.append(arc_index)
+                        break
+            retained_by_commodity[commodity_index] = tuple(retained)
+        pruned_flow_variables = flow_variables_before_cap - sum(
+            len(retained) for retained in retained_by_commodity
+        )
+
+    # Stage B: create CP-SAT flow variables only for retained arcs.
+    flow_cost_variables: list[cp_model.IntVar] = []
+    flow_cost_coefficients: list[int] = []
+    condition_buckets: dict[int, list[tuple[cp_model.IntVar, int]]] = {}
+    bucket_conditions: dict[int, cp_model.IntVar] = {}
+    source_flow_variable_count = 0
+    source_flow_full_variable_count = len(arcs) * len(commodities)
+    balance_constraint_count = 0
+    for commodity_index, commodity in enumerate(commodities):
+        domain = commodity_domains[commodity_index]
+        if domain is None:
+            continue
+        retained_arcs = retained_by_commodity[commodity_index]
 
         source_node_set = set(domain.source_nodes)
         if any(arcs[arc_index].target in source_node_set for arc_index in domain.arc_indices):
@@ -562,7 +760,7 @@ def _add_source_aggregated_flow_objective(
             node: [] for node in domain.nodes
         }
         flow: dict[int, cp_model.IntVar] = {}
-        for arc_index in domain.arc_indices:
+        for arc_index in retained_arcs:
             arc = arcs[arc_index]
             variable = model.new_int_var(
                 0,
@@ -639,6 +837,12 @@ def _add_source_aggregated_flow_objective(
         condition_capacity_literal_count=len(condition_buckets),
         capacity_constraint_count=condition_capacity_bucket_count,
         balance_constraint_count=balance_constraint_count,
+        incumbent_distance_cap_pruning_used=cap_pruning_used,
+        relaxed_primary_lower_bound=relaxed_lower_bound,
+        capped_pair_count=capped_pair_count,
+        flow_variables_before_cap=flow_variables_before_cap if cap_pruning_used else 0,
+        incumbent_cap_pruned_flow_variables=pruned_flow_variables,
+        relaxation_proved_bound_infeasible=relaxation_proved_bound_infeasible,
     )
 
 
@@ -841,6 +1045,16 @@ def solve_fixed_layout_flow_objective(
     cannot match or improve the incumbent primary objective, even though it does not distinguish
     hard infrastructure infeasibility from strict objective domination.
 
+    The bound also activates an exact proof-safe domain reduction before flow variables exist.
+    Relaxed integer Dijkstra distances on the unconditional supergraph give per-pair lower bounds
+    ``l_st <= d_st`` and the global lower bound ``LB = sum c_st * l_st``. If ``LB > bound``, the
+    relaxation alone proves scaled-F domination and the solver returns
+    ``OBJECTIVE_BOUND_INFEASIBLE`` without entering CP-SAT. Otherwise each pair receives the
+    necessary cap ``cap_st = l_st + (bound - LB) // c_st`` and an arc is retained for a source
+    commodity iff it is cap-admissible for at least one of that commodity's targets; every
+    per-pair shortest path of any ``F <= bound`` solution survives this union rule. Without a
+    bound, none of this computation runs and the model is unchanged.
+
     The accepted lexicographic order (exact scaled ``F`` then utility mass then Elevator count
     then Corridor count) is enforced by a single exact mixed-radix scalarized objective. The
     dominance weights are derived from valid finite bounds on the lower-order objectives taken
@@ -896,9 +1110,55 @@ def solve_fixed_layout_flow_objective(
         room_nodes=room_nodes,
         arcs=arcs,
         commodities=source_commodities,
+        scaled_objective_upper_bound=scaled_objective_upper_bound,
     )
     primary_expr = flow_build.primary_expr
     flow_model_build_time_s = max(0.0, monotonic() - phase_started_at)
+
+    if flow_build.relaxation_proved_bound_infeasible:
+        # The relaxed-graph lower bound alone exceeds the incumbent bound, so no selected
+        # infrastructure can satisfy scaled_F <= bound. This is an exact domination proof
+        # computed before CP-SAT search; the packing is excluded by the master's no-good.
+        finished_at = monotonic()
+        return FixedFlowObjectiveResult(
+            status="OBJECTIVE_BOUND_INFEASIBLE",
+            objective_scale=objective.scale,
+            diagnostics=FixedFlowObjectiveDiagnostics(
+                graph_node_count=len(nodes),
+                graph_arc_count=len(arcs),
+                objective_pair_count=len(objective.pairs),
+                source_commodity_count=len(source_commodities),
+                source_flow_variable_count=flow_build.flow_variable_count,
+                source_flow_full_variable_count=flow_build.full_flow_variable_count,
+                endpoint_distribution_variable_count=(
+                    flow_build.endpoint_distribution_variable_count
+                ),
+                flow_capacity_constraint_count=flow_build.capacity_constraint_count,
+                flow_balance_constraint_count=flow_build.balance_constraint_count,
+                incumbent_primary_bound=scaled_objective_upper_bound,
+                relaxed_graph_primary_lower_bound=flow_build.relaxed_primary_lower_bound,
+                incumbent_distance_cap_pruning_used=(
+                    flow_build.incumbent_distance_cap_pruning_used
+                ),
+                source_flow_variables_before_incumbent_cap=(
+                    flow_build.flow_variables_before_cap
+                ),
+                source_flow_variables_after_incumbent_cap=flow_build.flow_variable_count,
+                incumbent_cap_pruned_flow_variables=(
+                    flow_build.incumbent_cap_pruned_flow_variables
+                ),
+                objective_bound_relaxation_pruned=(
+                    flow_build.relaxation_proved_bound_infeasible
+                ),
+                lexicographic_scalarization_used=True,
+                model_build_time_s=max(0.0, finished_at - started_at),
+                total_time_s=max(0.0, finished_at - started_at),
+                hard_model_build_time_s=hard_model_build_time_s,
+                path_graph_build_time_s=path_graph_build_time_s,
+                objective_definition_time_s=objective_definition_time_s,
+                flow_model_build_time_s=flow_model_build_time_s,
+            ),
+        )
 
     phase_started_at = monotonic()
     corridor_spec = MODULE_BY_KEY["corridor"]
@@ -969,6 +1229,26 @@ def solve_fixed_layout_flow_objective(
             condition_capacity_literal_count=flow_build.condition_capacity_literal_count,
             flow_capacity_constraint_count=flow_build.capacity_constraint_count,
             flow_balance_constraint_count=flow_build.balance_constraint_count,
+            incumbent_distance_cap_pruning_used=(
+                flow_build.incumbent_distance_cap_pruning_used
+            ),
+            relaxed_graph_primary_lower_bound=flow_build.relaxed_primary_lower_bound,
+            incumbent_primary_bound=scaled_objective_upper_bound,
+            incumbent_distance_cap_pair_count=flow_build.capped_pair_count,
+            source_flow_variables_before_incumbent_cap=(
+                flow_build.flow_variables_before_cap
+            ),
+            source_flow_variables_after_incumbent_cap=(
+                flow_build.flow_variable_count
+                if flow_build.incumbent_distance_cap_pruning_used
+                else 0
+            ),
+            incumbent_cap_pruned_flow_variables=(
+                flow_build.incumbent_cap_pruned_flow_variables
+            ),
+            objective_bound_relaxation_pruned=(
+                flow_build.relaxation_proved_bound_infeasible
+            ),
             cp_sat_variable_count=model_variable_count,
             cp_sat_constraint_count=model_constraint_count,
             lexicographic_scalarization_used=True,

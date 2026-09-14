@@ -149,6 +149,28 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     },
                     "max_cp_sat_variables": result.max_fixed_cp_sat_variables,
                     "max_cp_sat_constraints": result.max_fixed_cp_sat_constraints,
+                    "incumbent_distance_cap": {
+                        "used": result.fixed_incumbent_distance_cap_pruning_used,
+                        "relaxation_proved_infeasible": (
+                            result.fixed_objective_bound_relaxation_pruned
+                        ),
+                        "max_relaxed_primary_lower_bound": (
+                            result.max_fixed_relaxed_graph_primary_lower_bound
+                        ),
+                        "min_incumbent_primary_bound": (
+                            result.min_fixed_incumbent_primary_bound
+                        ),
+                        "max_capped_pairs": result.max_fixed_incumbent_distance_cap_pairs,
+                        "max_flow_variables_before_cap": (
+                            result.max_fixed_source_flow_variables_before_incumbent_cap
+                        ),
+                        "max_flow_variables_after_cap": (
+                            result.max_fixed_source_flow_variables_after_incumbent_cap
+                        ),
+                        "max_pruned_flow_variables": (
+                            result.max_fixed_incumbent_cap_pruned_flow_variables
+                        ),
+                    },
                     "lexicographic_scalarization": {
                         "used": result.fixed_lexicographic_scalarization_used,
                         "max_primary_objective_upper_bound": (

@@ -57,6 +57,14 @@ class _FixedDiagnosticsAggregate:
     max_endpoint_distribution_variables: int = 0
     max_flow_capacity_constraints: int = 0
     max_flow_balance_constraints: int = 0
+    incumbent_distance_cap_pruning_used: bool = False
+    objective_bound_relaxation_pruned: bool = False
+    max_relaxed_graph_primary_lower_bound: int | None = None
+    min_incumbent_primary_bound: int | None = None
+    max_incumbent_distance_cap_pairs: int = 0
+    max_source_flow_variables_before_cap: int = 0
+    max_source_flow_variables_after_cap: int = 0
+    max_incumbent_cap_pruned_flow_variables: int = 0
     max_cp_sat_variables: int = 0
     max_cp_sat_constraints: int = 0
     lexicographic_scalarization_used: bool = False
@@ -122,6 +130,48 @@ class _FixedDiagnosticsAggregate:
         self.max_flow_balance_constraints = max(
             self.max_flow_balance_constraints,
             diagnostics.flow_balance_constraint_count,
+        )
+        self.incumbent_distance_cap_pruning_used = (
+            self.incumbent_distance_cap_pruning_used
+            or diagnostics.incumbent_distance_cap_pruning_used
+        )
+        self.objective_bound_relaxation_pruned = (
+            self.objective_bound_relaxation_pruned
+            or diagnostics.objective_bound_relaxation_pruned
+        )
+        if diagnostics.relaxed_graph_primary_lower_bound is not None:
+            self.max_relaxed_graph_primary_lower_bound = (
+                diagnostics.relaxed_graph_primary_lower_bound
+                if self.max_relaxed_graph_primary_lower_bound is None
+                else max(
+                    self.max_relaxed_graph_primary_lower_bound,
+                    diagnostics.relaxed_graph_primary_lower_bound,
+                )
+            )
+        if diagnostics.incumbent_primary_bound is not None:
+            self.min_incumbent_primary_bound = (
+                diagnostics.incumbent_primary_bound
+                if self.min_incumbent_primary_bound is None
+                else min(
+                    self.min_incumbent_primary_bound,
+                    diagnostics.incumbent_primary_bound,
+                )
+            )
+        self.max_incumbent_distance_cap_pairs = max(
+            self.max_incumbent_distance_cap_pairs,
+            diagnostics.incumbent_distance_cap_pair_count,
+        )
+        self.max_source_flow_variables_before_cap = max(
+            self.max_source_flow_variables_before_cap,
+            diagnostics.source_flow_variables_before_incumbent_cap,
+        )
+        self.max_source_flow_variables_after_cap = max(
+            self.max_source_flow_variables_after_cap,
+            diagnostics.source_flow_variables_after_incumbent_cap,
+        )
+        self.max_incumbent_cap_pruned_flow_variables = max(
+            self.max_incumbent_cap_pruned_flow_variables,
+            diagnostics.incumbent_cap_pruned_flow_variables,
         )
         self.max_cp_sat_variables = max(
             self.max_cp_sat_variables,
@@ -197,6 +247,26 @@ class _FixedDiagnosticsAggregate:
         )
         result.max_fixed_flow_capacity_constraints = self.max_flow_capacity_constraints
         result.max_fixed_flow_balance_constraints = self.max_flow_balance_constraints
+        result.fixed_incumbent_distance_cap_pruning_used = (
+            self.incumbent_distance_cap_pruning_used
+        )
+        result.fixed_objective_bound_relaxation_pruned = (
+            self.objective_bound_relaxation_pruned
+        )
+        result.max_fixed_relaxed_graph_primary_lower_bound = (
+            self.max_relaxed_graph_primary_lower_bound
+        )
+        result.min_fixed_incumbent_primary_bound = self.min_incumbent_primary_bound
+        result.max_fixed_incumbent_distance_cap_pairs = self.max_incumbent_distance_cap_pairs
+        result.max_fixed_source_flow_variables_before_incumbent_cap = (
+            self.max_source_flow_variables_before_cap
+        )
+        result.max_fixed_source_flow_variables_after_incumbent_cap = (
+            self.max_source_flow_variables_after_cap
+        )
+        result.max_fixed_incumbent_cap_pruned_flow_variables = (
+            self.max_incumbent_cap_pruned_flow_variables
+        )
         result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
         result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
         result.fixed_lexicographic_scalarization_used = self.lexicographic_scalarization_used

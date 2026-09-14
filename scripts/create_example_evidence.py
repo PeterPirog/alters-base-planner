@@ -70,6 +70,16 @@ LEXICOGRAPHIC_FIELDS = (
     "max_mass_bound",
     "max_incumbent_scalar_value",
 )
+INCUMBENT_DISTANCE_CAP_FIELDS = (
+    "used",
+    "relaxation_proved_infeasible",
+    "max_relaxed_primary_lower_bound",
+    "min_incumbent_primary_bound",
+    "max_capped_pairs",
+    "max_flow_variables_before_cap",
+    "max_flow_variables_after_cap",
+    "max_pruned_flow_variables",
+)
 
 
 def git_value(*args: str) -> str | None:
@@ -155,6 +165,10 @@ def layout_metadata(layout: dict) -> dict:
             "lexicographic_scalarization": {
                 key: field(layout, *fixed, "lexicographic_scalarization", key)
                 for key in LEXICOGRAPHIC_FIELDS
+            },
+            "incumbent_distance_cap": {
+                key: field(layout, *fixed, "incumbent_distance_cap", key)
+                for key in INCUMBENT_DISTANCE_CAP_FIELDS
             },
         },
     }

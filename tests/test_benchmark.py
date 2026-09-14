@@ -58,6 +58,14 @@ def _result() -> PlanResult:
         max_fixed_endpoint_distribution_variables=0,
         max_fixed_flow_capacity_constraints=2800,
         max_fixed_flow_balance_constraints=1600,
+        fixed_incumbent_distance_cap_pruning_used=True,
+        fixed_objective_bound_relaxation_pruned=False,
+        max_fixed_relaxed_graph_primary_lower_bound=4600,
+        min_fixed_incumbent_primary_bound=4600,
+        max_fixed_incumbent_distance_cap_pairs=28,
+        max_fixed_source_flow_variables_before_incumbent_cap=4200,
+        max_fixed_source_flow_variables_after_incumbent_cap=3900,
+        max_fixed_incumbent_cap_pruned_flow_variables=300,
         max_fixed_cp_sat_variables=3500,
         max_fixed_cp_sat_constraints=6100,
         fixed_model_build_time_s=0.12,
@@ -109,6 +117,14 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.max_fixed_endpoint_distribution_variables == 0
     assert record.max_fixed_flow_capacity_constraints == 2800
     assert record.max_fixed_flow_balance_constraints == 1600
+    assert record.fixed_incumbent_distance_cap_pruning_used is True
+    assert record.fixed_objective_bound_relaxation_pruned is False
+    assert record.max_fixed_relaxed_graph_primary_lower_bound == 4600
+    assert record.min_fixed_incumbent_primary_bound == 4600
+    assert record.max_fixed_incumbent_distance_cap_pairs == 28
+    assert record.max_fixed_source_flow_variables_before_incumbent_cap == 4200
+    assert record.max_fixed_source_flow_variables_after_incumbent_cap == 3900
+    assert record.max_fixed_incumbent_cap_pruned_flow_variables == 300
     assert record.max_fixed_cp_sat_variables == 3500
     assert record.max_fixed_cp_sat_constraints == 6100
     assert record.fixed_model_build_time_s == 0.12

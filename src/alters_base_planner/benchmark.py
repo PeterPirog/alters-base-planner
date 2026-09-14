@@ -77,6 +77,14 @@ class BenchmarkRecord:
     max_fixed_endpoint_distribution_variables: int
     max_fixed_flow_capacity_constraints: int
     max_fixed_flow_balance_constraints: int
+    fixed_incumbent_distance_cap_pruning_used: bool
+    fixed_objective_bound_relaxation_pruned: bool
+    max_fixed_relaxed_graph_primary_lower_bound: int | None
+    min_fixed_incumbent_primary_bound: int | None
+    max_fixed_incumbent_distance_cap_pairs: int
+    max_fixed_source_flow_variables_before_incumbent_cap: int
+    max_fixed_source_flow_variables_after_incumbent_cap: int
+    max_fixed_incumbent_cap_pruned_flow_variables: int
     max_fixed_cp_sat_variables: int
     max_fixed_cp_sat_constraints: int
     fixed_model_build_time_s: float
@@ -222,6 +230,26 @@ def record_from_result(
         ),
         max_fixed_flow_capacity_constraints=result.max_fixed_flow_capacity_constraints,
         max_fixed_flow_balance_constraints=result.max_fixed_flow_balance_constraints,
+        fixed_incumbent_distance_cap_pruning_used=(
+            result.fixed_incumbent_distance_cap_pruning_used
+        ),
+        fixed_objective_bound_relaxation_pruned=(
+            result.fixed_objective_bound_relaxation_pruned
+        ),
+        max_fixed_relaxed_graph_primary_lower_bound=(
+            result.max_fixed_relaxed_graph_primary_lower_bound
+        ),
+        min_fixed_incumbent_primary_bound=result.min_fixed_incumbent_primary_bound,
+        max_fixed_incumbent_distance_cap_pairs=result.max_fixed_incumbent_distance_cap_pairs,
+        max_fixed_source_flow_variables_before_incumbent_cap=(
+            result.max_fixed_source_flow_variables_before_incumbent_cap
+        ),
+        max_fixed_source_flow_variables_after_incumbent_cap=(
+            result.max_fixed_source_flow_variables_after_incumbent_cap
+        ),
+        max_fixed_incumbent_cap_pruned_flow_variables=(
+            result.max_fixed_incumbent_cap_pruned_flow_variables
+        ),
         max_fixed_cp_sat_variables=result.max_fixed_cp_sat_variables,
         max_fixed_cp_sat_constraints=result.max_fixed_cp_sat_constraints,
         fixed_model_build_time_s=result.fixed_model_build_time_s,
