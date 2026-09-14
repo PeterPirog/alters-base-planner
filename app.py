@@ -21,7 +21,7 @@ from alters_base_planner.config import (
     plan_config_json,
 )
 from alters_base_planner.engine import solve_plan
-from alters_base_planner.models import PlacementAuthority, PlanResult
+from alters_base_planner.models import PlacementAuthority, PlanRequest, PlanResult
 from alters_base_planner.render import render_png, render_svg
 from alters_base_planner.serialization import average_pair_distance, result_payload
 
@@ -54,15 +54,44 @@ def _editor_records(edited: object) -> list[dict[str, object]]:
     return list(edited)  # type: ignore[arg-type]
 
 
-def _render_room_controls() -> dict[str, int]:
-    st.subheader("Rooms")
-    st.selectbox(
-        "Base Tier",
-        options=(1, 2, 3, 4),
-        format_func=lambda tier: f"Base Tier {TIER_LABELS[tier]}",
-        key="form_base_tier",
+def _request_signature(request: PlanRequest) -> tuple[object, ...]:
+    """Identify the semantic planning inputs associated with a rendered result."""
+
+    return (
+        request.tier,
+        tuple(sorted(request.room_counts.items())),
+        tuple(sorted(resolve_usage_weights(request.usage_weights).items())),
+        request.time_limit_s,
+        request.max_layout_attempts,
+        request.objective,
     )
 
+
+def _render_plan_settings() -> tuple[int, float]:
+    st.subheader("Plan settings")
+    tier = int(
+        st.radio(
+            "Base Tier",
+            options=(1, 2, 3, 4),
+            horizontal=True,
+            format_func=lambda value: f"Base Tier {TIER_LABELS[value]}",
+            key="form_base_tier",
+        )
+    )
+    time_limit_s = float(
+        st.number_input(
+            "Optimization time limit (seconds)",
+            min_value=1.0,
+            step=15.0,
+            format="%.0f",
+            key="form_time_limit_s",
+        )
+    )
+    return tier, time_limit_s
+
+
+def _render_room_controls() -> dict[str, int]:
+    st.subheader("Rooms")
     st.markdown("**Mandatory rooms (SYSTEM)**")
     st.caption("The planner always includes exactly one of each module.")
     system_columns = st.columns(2)
@@ -166,17 +195,8 @@ def _render_usage_weight_editor(room_counts: dict[str, int]) -> dict[str, float]
     return effective
 
 
-def _render_solver_controls() -> tuple[float, int]:
+def _render_solver_controls() -> int:
     with st.expander("Advanced solver settings"):
-        time_limit_s = float(
-            st.number_input(
-                "Time limit (seconds)",
-                min_value=0.1,
-                step=1.0,
-                format="%.1f",
-                key="form_time_limit_s",
-            )
-        )
         max_layout_attempts = int(
             st.number_input(
                 "Maximum layout attempts",
@@ -186,23 +206,22 @@ def _render_solver_controls() -> tuple[float, int]:
             )
         )
         st.text_input("Objective", value="weighted_pair_distance", disabled=True)
-    return time_limit_s, max_layout_attempts
+    return max_layout_attempts
 
 
 def _render_form_input() -> LoadedPlanConfig:
     _initialize_form_state()
+    tier, time_limit_s = _render_plan_settings()
     room_counts = _render_room_controls()
     usage_weights = _render_usage_weight_editor(room_counts)
-    time_limit_s, max_layout_attempts = _render_solver_controls()
+    max_layout_attempts = _render_solver_controls()
     defaults = resolve_usage_weights()
     custom_weight_count = sum(
         usage_weights[key] != defaults[key] for key in usage_weights
     )
     st.markdown("**Plan summary**")
     summary_columns = st.columns(4)
-    summary_columns[0].metric(
-        "Selected Base Tier", TIER_LABELS[int(st.session_state.form_base_tier)]
-    )
+    summary_columns[0].metric("Selected Base Tier", TIER_LABELS[tier])
     summary_columns[1].metric("SYSTEM rooms", len(SYSTEM_MODULES))
     summary_columns[2].metric("PLAYER rooms", sum(room_counts.values()))
     summary_columns[3].metric(
@@ -210,7 +229,7 @@ def _render_form_input() -> LoadedPlanConfig:
         f"YES ({custom_weight_count})" if custom_weight_count else "NO",
     )
     payload = build_plan_config_data(
-        base_tier=int(st.session_state.form_base_tier),
+        base_tier=tier,
         room_counts=room_counts,
         usage_weights=usage_weights,
         time_limit_s=time_limit_s,
@@ -256,7 +275,7 @@ def _render_json_input() -> tuple[LoadedPlanConfig | None, bool]:
     return loaded, custom_weights
 
 
-def _write_and_render_result(result: PlanResult, loaded: LoadedPlanConfig) -> None:
+def _write_and_render_result(result: PlanResult) -> None:
     st.subheader("Optimization result")
     metric_columns = st.columns(5)
     metric_columns[0].metric("Status", result.status)
@@ -275,6 +294,7 @@ def _write_and_render_result(result: PlanResult, loaded: LoadedPlanConfig) -> No
     st.write(result.message)
     if result.status != "FEASIBLE":
         st.error(result.message)
+        st.info("No feasible layout image is available for this run.")
         st.subheader("Auditable result JSON")
         st.json(result_payload(result))
         return
@@ -323,6 +343,7 @@ def _write_and_render_result(result: PlanResult, loaded: LoadedPlanConfig) -> No
     svg = render_svg(result)
     serialized = json.dumps(result_payload(result), indent=2) + "\n"
 
+    st.subheader("Optimized Base layout")
     st.image(png_bytes, caption="Color-coded optimized base layout", width="stretch")
     st.markdown("**Effective room usage weights**")
     st.dataframe(
@@ -370,14 +391,28 @@ if input_method == "Form":
 else:
     loaded_config, _custom_weights = _render_json_input()
 
+current_signature = (
+    _request_signature(loaded_config.request) if loaded_config is not None else None
+)
 if st.button("Optimize layout", type="primary", disabled=loaded_config is None):
     if loaded_config is None:
         st.error("Provide a valid plan configuration before optimizing.")
     else:
+        st.session_state.pop("last_plan_result", None)
+        st.session_state.pop("last_plan_signature", None)
         with st.spinner("Running exact layout optimization..."):
             try:
                 plan_result = solve_plan(loaded_config.request)
             except (ValueError, RuntimeError, AssertionError) as exc:
                 st.error(f"Planner failed: {exc}")
             else:
-                _write_and_render_result(plan_result, loaded_config)
+                st.session_state["last_plan_result"] = plan_result
+                st.session_state["last_plan_signature"] = current_signature
+
+stored_result = st.session_state.get("last_plan_result")
+stored_signature = st.session_state.get("last_plan_signature")
+if stored_result is not None:
+    if current_signature != stored_signature:
+        st.info("Configuration changed. Run Optimize layout again.")
+    else:
+        _write_and_render_result(cast(PlanResult, stored_result))

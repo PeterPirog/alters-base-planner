@@ -189,15 +189,16 @@ def test_partial_usage_weight_override_merges_with_catalogue_defaults() -> None:
 def test_ui_generated_full_weight_map_round_trips_exactly() -> None:
     effective = resolve_usage_weights({"workshop": 0.42, "airlock": 0.73})
     payload = build_plan_config_data(
-        base_tier=3,
+        base_tier=4,
         room_counts={"workshop": 2, "recycler": 1, "rapidium_ark": 5},
         usage_weights=effective,
-        time_limit_s=12.5,
+        time_limit_s=120.0,
         max_layout_attempts=9,
     )
     loaded = parse_plan_config(json.loads(plan_config_json(payload)))
 
-    assert loaded.request.tier == 3
+    assert loaded.request.tier == 4
+    assert loaded.request.time_limit_s == 120.0
     assert loaded.request.room_counts["workshop"] == 2
     assert loaded.request.room_counts["recycler"] == 1
     assert loaded.request.room_counts["rapidium_ark"] == 5
@@ -208,6 +209,26 @@ def test_ui_generated_full_weight_map_round_trips_exactly() -> None:
     assert isinstance(usage_weights_payload, dict)
     assert "corridor" not in usage_weights_payload
     assert "elevator" not in usage_weights_payload
+
+
+def test_interactive_and_example_configs_keep_separate_time_budgets() -> None:
+    config_root = Path(__file__).parents[1] / "config"
+    interactive = load_plan_config(config_root / "plan.json")
+    example = load_plan_config(config_root / "example-plan.json")
+    payload = build_plan_config_data(
+        base_tier=interactive.request.tier,
+        room_counts=interactive.request.room_counts,
+        usage_weights=resolve_usage_weights(interactive.request.usage_weights),
+        time_limit_s=interactive.request.time_limit_s,
+        max_layout_attempts=interactive.request.max_layout_attempts,
+        output=interactive.output,
+    )
+
+    assert payload["base_tier"] == 2
+    solver = payload["solver"]
+    assert isinstance(solver, dict)
+    assert solver["time_limit_s"] == 60.0
+    assert example.request.time_limit_s == 20.0
 
 
 @pytest.mark.parametrize(

@@ -25,7 +25,7 @@
   },
   "solver": {
     "objective": "weighted_pair_distance",
-    "time_limit_s": 15,
+    "time_limit_s": 60,
     "max_layout_attempts": 30
   },
   "output": {

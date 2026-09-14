@@ -665,10 +665,14 @@ No performance claim without reproducible benchmark evidence.
 ### Stage 5 — User-facing planning quality
 
 The Streamlit entry point supports a default Form mode and an alternative JSON-file mode through
-one canonical parser and solve path. Form mode exposes Base tier, locked mandatory SYSTEM counts,
-bounded PLAYER counts, solver-generated infrastructure labels, editable/resettable per-plan usage
-weights, advanced solver budgets and reproducible pre-solve plan JSON download. Continue improving
-journey warnings and best-known-vs-proven explanations without weakening solver semantics.
+one canonical parser and solve path. Form mode exposes a prominent Plan settings section with Base
+tier and optimization time, locked mandatory SYSTEM counts, bounded PLAYER counts, solver-generated
+infrastructure labels, editable/resettable per-plan usage weights, advanced layout-attempt controls
+and reproducible pre-solve plan JSON download. The interactive default time is 60 seconds. A stored
+result and optimized Base image survive ordinary reruns only while a deterministic signature of the
+semantic planning inputs remains unchanged; changed settings hide the stale result and request a new
+solve. Continue improving journey warnings and best-known-vs-proven explanations without weakening
+solver semantics.
 
 ### Stage 6 — Progression-aware mobile Base
 

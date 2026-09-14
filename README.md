@@ -357,14 +357,19 @@ python -m streamlit run app.py
 
 Open `http://localhost:8501/`. The default **Form** mode provides:
 
-- Base Tier I-IV selection;
+- a prominent **Plan settings** section with immediately visible Base Tier I-IV selection and an
+  editable optimization time limit, initialized to `60` seconds by `config/plan.json`;
 - visible, locked count `1` controls for all mandatory SYSTEM modules;
 - exact PLAYER room-count controls with catalogue limits such as Recycler `<= 1` and Rapidium
   Ark `<= 5`;
 - Corridor and Elevator shown as solver-generated `AUTO` infrastructure;
 - a fixed-row SYSTEM/PLAYER usage-weight editor and **Reset weights to defaults** action;
-- advanced time-limit and layout-attempt controls;
+- advanced layout-attempt and read-only objective controls;
 - **Download plan JSON** before solving.
+
+The latest optimization result and its **Optimized Base layout** image remain visible across normal
+reruns and download interactions. Editing any semantic plan input hides the old result and asks for
+a new optimization, so a stale layout is never presented as belonging to changed settings.
 
 The **JSON file** mode remains a fully supported alternative. Uploaded and form-generated data
 use the same canonical parser and the same exact `solve_plan` call. Generated `alters-plan.json`
