@@ -68,13 +68,27 @@ def _assert_matches_reference(base: BaseGeometry, rooms: tuple[ModulePlacement, 
     assert flow.time_limit_reached is False
     assert flow.distance_metrics is not None
     assert reference.distance_metrics is not None
+    objective = build_scaled_objective(rooms)
+    flow_rank = (
+        flow.scaled_objective_value,
+        sum(MODULE_BY_KEY[module.module_key].mass for module in flow.utilities),
+        flow.distance_metrics.elevator_module_count,
+        flow.distance_metrics.corridor_count,
+    )
+    reference_rank = (
+        objective.scaled_score(reference.distance_metrics.pairwise_distances),
+        sum(MODULE_BY_KEY[module.module_key].mass for module in reference.utilities),
+        reference.distance_metrics.elevator_module_count,
+        reference.distance_metrics.corridor_count,
+    )
+    assert flow_rank == reference_rank
     assert flow.distance_metrics.weighted_score == pytest.approx(
         reference.distance_metrics.weighted_score
     )
     assert _signature(flow) == _signature(reference)
 
 
-def test_pair_flow_matches_reference_for_direct_zero_cost_adjacency() -> None:
+def test_source_flow_matches_reference_for_direct_zero_cost_adjacency() -> None:
     base = _base(8, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -89,7 +103,7 @@ def test_pair_flow_matches_reference_for_direct_zero_cost_adjacency() -> None:
     assert result.objective_scale == 10
 
 
-def test_pair_flow_matches_reference_for_one_corridor_tie_break() -> None:
+def test_source_flow_matches_reference_for_one_corridor_tie_break() -> None:
     base = _base(10, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -205,7 +219,7 @@ def test_production_path_rejects_combined_objective_overflow_before_solve(monkey
     assert solve_called is False
 
 
-def test_primary_pair_flow_expression_is_cross_checked_against_dijkstra(monkeypatch) -> None:
+def test_primary_source_flow_expression_is_cross_checked_against_dijkstra(monkeypatch) -> None:
     base = _base(10, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -231,7 +245,7 @@ def test_primary_pair_flow_expression_is_cross_checked_against_dijkstra(monkeypa
         solve_fixed_layout_flow_objective(base, rooms, time_limit_s=5.0)
 
 
-def test_custom_weights_match_pair_flow_and_independent_dijkstra_objectives() -> None:
+def test_custom_weights_match_source_flow_and_independent_dijkstra_objectives() -> None:
     base = _base(10, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -263,6 +277,51 @@ def test_custom_weights_match_pair_flow_and_independent_dijkstra_objectives() ->
     assert result.distance_metrics.weighted_score == reference.distance_metrics.weighted_score
 
 
+def test_custom_weights_match_complete_oracle_tuple_with_multiple_targets() -> None:
+    base = _base(12, 1)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("workshop-1", "workshop", 4, 0),
+        _room("command-center-1", "command_center", 8, 0),
+    )
+    usage_weights = resolve_usage_weights(
+        {"airlock": 0.75, "workshop": 0.2, "command_center": 0.4}
+    )
+
+    result = solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+    reference = solve_fixed_layout_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == reference.status == "OPTIMAL"
+    assert result.distance_metrics is not None
+    assert reference.distance_metrics is not None
+    objective = build_scaled_objective(rooms, usage_weights)
+    result_rank = (
+        result.scaled_objective_value,
+        sum(MODULE_BY_KEY[module.module_key].mass for module in result.utilities),
+        result.distance_metrics.elevator_module_count,
+        result.distance_metrics.corridor_count,
+    )
+    reference_rank = (
+        objective.scaled_score(reference.distance_metrics.pairwise_distances),
+        sum(MODULE_BY_KEY[module.module_key].mass for module in reference.utilities),
+        reference.distance_metrics.elevator_module_count,
+        reference.distance_metrics.corridor_count,
+    )
+    assert result_rank == reference_rank
+    assert result.diagnostics.objective_pair_count == 3
+    assert result.diagnostics.source_commodity_count == 2
+
+
 def test_custom_zero_weight_keeps_room_hard_connectivity_in_fixed_solver() -> None:
     base = _base(10, 1)
     rooms = (
@@ -283,7 +342,7 @@ def test_custom_zero_weight_keeps_room_hard_connectivity_in_fixed_solver() -> No
     assert _signature(result) == (("corridor", 4, 0),)
 
 
-def test_pair_flow_matches_reference_for_two_corridor_route() -> None:
+def test_source_flow_matches_reference_for_two_corridor_route() -> None:
     base = _base(12, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -297,7 +356,7 @@ def test_pair_flow_matches_reference_for_two_corridor_route() -> None:
     assert result.scaled_objective_value == 18
 
 
-def test_pair_flow_matches_reference_for_vertical_elevator_chain() -> None:
+def test_source_flow_matches_reference_for_vertical_elevator_chain() -> None:
     base = _base(6, 2)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -311,7 +370,7 @@ def test_pair_flow_matches_reference_for_vertical_elevator_chain() -> None:
     assert result.scaled_objective_value == 18
 
 
-def test_pair_flow_charges_intermediate_transit_room_width_exactly() -> None:
+def test_source_flow_charges_intermediate_transit_room_width_exactly() -> None:
     base = _base(12, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -328,9 +387,11 @@ def test_pair_flow_charges_intermediate_transit_room_width_exactly() -> None:
     assert result.distance_metrics.pairwise_distances["workshop-1|command-center-1"] == 0
     assert result.distance_metrics.pairwise_distances["airlock-1|command-center-1"] == 4
     assert result.distance_metrics.weighted_score == pytest.approx(1.4)
+    assert result.diagnostics.objective_pair_count == 3
+    assert result.diagnostics.source_commodity_count == 2
 
 
-def test_pair_flow_does_not_bridge_through_non_transit_rapidium_ark() -> None:
+def test_source_flow_does_not_bridge_through_non_transit_rapidium_ark() -> None:
     base = _base(12, 2)
     rooms = (
         _room("airlock-1", "airlock", 0, 1),
@@ -343,7 +404,7 @@ def test_pair_flow_does_not_bridge_through_non_transit_rapidium_ark() -> None:
     _assert_matches_reference(base, rooms)
 
 
-def test_pair_flow_keeps_zero_weight_terminal_in_hard_network() -> None:
+def test_source_flow_keeps_zero_weight_terminal_in_hard_network() -> None:
     base = _base(6, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -362,7 +423,7 @@ def test_pair_flow_keeps_zero_weight_terminal_in_hard_network() -> None:
     assert result.utilities == ()
 
 
-def test_pair_flow_matches_reference_infeasibility_without_vertical_space() -> None:
+def test_source_flow_matches_reference_infeasibility_without_vertical_space() -> None:
     base = _base(4, 2)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -372,7 +433,7 @@ def test_pair_flow_matches_reference_infeasibility_without_vertical_space() -> N
     _assert_matches_reference(base, rooms)
 
 
-def test_pair_flow_zero_budget_reports_time_limit_without_false_proof() -> None:
+def test_source_flow_zero_budget_reports_time_limit_without_false_proof() -> None:
     base = _base(8, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -387,7 +448,7 @@ def test_pair_flow_zero_budget_reports_time_limit_without_false_proof() -> None:
     assert result.lexicographic_optimum_proven is False
 
 
-def test_pair_flow_reports_primary_model_size_and_timings() -> None:
+def test_source_flow_reports_primary_model_size_and_timings() -> None:
     base = _base(10, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),
@@ -400,6 +461,7 @@ def test_pair_flow_reports_primary_model_size_and_timings() -> None:
     assert diagnostics.graph_node_count > 0
     assert diagnostics.graph_arc_count > 0
     assert diagnostics.objective_pair_count == 1
+    assert diagnostics.source_commodity_count == 1
     assert diagnostics.cp_sat_variable_count > 0
     assert diagnostics.cp_sat_constraint_count > 0
     assert diagnostics.lexicographic_scalarization_used is True
@@ -417,7 +479,7 @@ def test_pair_flow_reports_primary_model_size_and_timings() -> None:
     assert diagnostics.total_time_s >= diagnostics.model_build_time_s
 
 
-def test_pair_flow_budget_includes_model_construction(monkeypatch) -> None:
+def test_source_flow_budget_includes_model_construction(monkeypatch) -> None:
     base = _base(8, 1)
     rooms = (
         _room("airlock-1", "airlock", 0, 0),

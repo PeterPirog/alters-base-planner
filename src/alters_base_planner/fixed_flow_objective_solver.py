@@ -27,17 +27,20 @@ Anchor = tuple[int, int]
 class FixedFlowObjectiveDiagnostics:
     """Performance and proof diagnostics for one fixed-packing exact objective subproblem.
 
-    Counts describe the single lexicographic-scalarized pair-flow model. The objective bounds and
-    mixed-radix weights make the signed-64-bit safety calculation auditable. The incumbent scalar
-    value is reported separately from those safety bounds. Timings are wall-clock measurements for
-    performance analysis only; they never participate in correctness or objective decisions.
+    Counts describe the single lexicographic-scalarized source-aggregated flow model. The objective
+    bounds and mixed-radix weights make the signed-64-bit safety calculation auditable. The
+    incumbent scalar value is reported separately from those safety bounds. Timings are wall-clock
+    measurements for performance analysis only; they never participate in correctness or objective
+    decisions.
     """
 
+    flow_formulation: str = "source_aggregated_weighted_flow"
     graph_node_count: int = 0
     graph_arc_count: int = 0
     objective_pair_count: int = 0
-    pair_flow_variable_count: int = 0
-    pair_flow_full_variable_count: int = 0
+    source_commodity_count: int = 0
+    source_flow_variable_count: int = 0
+    source_flow_full_variable_count: int = 0
     cp_sat_variable_count: int = 0
     cp_sat_constraint_count: int = 0
     lexicographic_scalarization_used: bool = False
@@ -58,11 +61,12 @@ class FixedFlowObjectiveDiagnostics:
 
 @dataclass(frozen=True, slots=True)
 class FixedFlowObjectiveResult:
-    """Exact fixed-packing objective result from the scalable pair-flow formulation.
+    """Exact fixed-packing objective result from the source-aggregated flow formulation.
 
-    The formulation jointly selects Corridor/Elevator infrastructure and one legal path for
-    every positive-weight endpoint pair. Its primary integer objective is exactly the accepted
-    weighted distance ``F`` after rational scaling. The accepted lexicographic order
+    The formulation jointly selects Corridor/Elevator infrastructure and routes the exact scaled
+    pair weights from each deterministically oriented source to its targets. Its primary integer
+    objective is exactly the accepted weighted distance ``F`` after rational scaling. The accepted
+    lexicographic order
     (``F`` then utility mass then Elevator count then Corridor count) is enforced by a single
     exact mixed-radix scalarized objective with dominance weights proven from valid finite bounds,
     so one CP-SAT solve replaces the previous sequential tie-breaker phases.
@@ -95,13 +99,20 @@ class _Arc:
 
 
 @dataclass(frozen=True, slots=True)
-class _PairFlowDomain:
-    """Exact pair-specific subgraph that can participate in a source-to-target path."""
+class _SourceFlowDomain:
+    """Exact subgraph that can carry one source commodity to at least one of its targets."""
 
     source_nodes: tuple[NodeId, ...]
     target_nodes: tuple[NodeId, ...]
     nodes: tuple[NodeId, ...]
     arc_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceCommodity:
+    source_instance_id: str
+    targets: tuple[tuple[str, int], ...]
+    total_supply: int
 
 
 def _ports_directly_meet(a: ResolvedPort, b: ResolvedPort) -> bool:
@@ -116,7 +127,7 @@ def _build_path_graph(
     dict[str, tuple[NodeId, ...]],
     tuple[_Arc, ...],
 ]:
-    """Build the exact directed travel graph used by the pair-flow objective model."""
+    """Build the exact directed travel graph used by the weighted flow objective model."""
 
     nodes: list[NodeId] = []
     room_nodes: dict[str, tuple[NodeId, ...]] = {}
@@ -250,7 +261,7 @@ def _reachable_nodes(
     return reached
 
 
-def _pair_flow_domain(
+def _source_flow_domain(
     *,
     nodes: tuple[NodeId, ...],
     arcs: tuple[_Arc, ...],
@@ -258,22 +269,22 @@ def _pair_flow_domain(
     target_nodes: tuple[NodeId, ...],
     incoming_arcs: dict[NodeId, list[int]],
     outgoing_arcs: dict[NodeId, list[int]],
-) -> _PairFlowDomain:
-    """Remove arcs that cannot belong to any legal endpoint-to-endpoint path.
+) -> _SourceFlowDomain:
+    """Remove arcs that cannot carry flow from the source to any target.
 
     The graph used here ignores arc-selection conditions, so it is a supergraph of every
     realizable infrastructure graph. Removing an arc that is not on any source-to-target path in
-    this relaxation therefore cannot remove a realizable path. Endpoint ports are also terminals:
-    entering the source or leaving the destination is unnecessary because every non-negative-cost
-    walk contains an equal-or-better simple source-to-target path without such endpoint revisits.
+    this relaxation therefore cannot remove a realizable path. Arcs entering the source are
+    unnecessary because every non-negative-cost flow decomposes into source-to-target paths and
+    removable cycles. Target ports remain available for transit to other targets in the same
+    commodity.
     """
 
     source_set = set(source_nodes)
-    target_set = set(target_nodes)
     allowed_arc_indices = {
         arc_index
         for arc_index, arc in enumerate(arcs)
-        if arc.target not in source_set and arc.source not in target_set
+        if arc.target not in source_set
     }
 
     forward = _reachable_nodes(
@@ -298,7 +309,7 @@ def _pair_flow_domain(
         for arc_index in sorted(allowed_arc_indices)
         if arcs[arc_index].source in relevant_nodes and arcs[arc_index].target in relevant_nodes
     )
-    return _PairFlowDomain(
+    return _SourceFlowDomain(
         source_nodes=relevant_sources,
         target_nodes=relevant_targets,
         nodes=tuple(node for node in nodes if node in relevant_nodes),
@@ -306,39 +317,82 @@ def _pair_flow_domain(
     )
 
 
-def _endpoint_choice(
+def _integer_distribution(
     model: cp_model.CpModel,
     *,
-    pair_id: str,
+    commodity_id: str,
     role: str,
     nodes: tuple[NodeId, ...],
+    total: int,
 ) -> dict[NodeId, cp_model.IntVar | int]:
-    """Represent endpoint choice without variables when only one port remains possible."""
+    """Distribute an exact integer supply or demand over legal endpoint ports."""
 
     if not nodes:
-        raise ValueError("Endpoint choice requires at least one candidate node")
+        raise ValueError("Endpoint distribution requires at least one candidate node")
+    if total <= 0:
+        raise ValueError("Endpoint distribution total must be positive")
     if len(nodes) == 1:
-        return {nodes[0]: 1}
+        return {nodes[0]: total}
 
     choices: dict[NodeId, cp_model.IntVar | int] = {
-        node: model.new_bool_var(f"pair_{role}__{pair_id}__{node}") for node in nodes
+        node: model.new_int_var(0, total, f"source_{role}__{commodity_id}__{node}")
+        for node in nodes
     }
-    model.add_exactly_one(choices.values())
+    model.add(sum(choices.values()) == total)
     return choices
 
 
-def _add_pair_flow_objective(
+def _build_source_commodities(
+    pairs: tuple[ObjectivePair, ...],
+) -> tuple[_SourceCommodity, ...]:
+    """Orient every objective pair once and aggregate exact coefficients by source."""
+
+    ordered_instance_ids = sorted(
+        {
+            instance_id
+            for pair in pairs
+            for instance_id in (pair.source_instance_id, pair.target_instance_id)
+        }
+    )
+    order = {instance_id: index for index, instance_id in enumerate(ordered_instance_ids)}
+    targets_by_source: dict[str, list[tuple[str, int]]] = {}
+    seen_pairs: set[frozenset[str]] = set()
+    for pair in pairs:
+        unordered = frozenset((pair.source_instance_id, pair.target_instance_id))
+        if len(unordered) != 2 or unordered in seen_pairs:
+            raise AssertionError("Every objective pair must identify one unique unordered pair")
+        seen_pairs.add(unordered)
+        source, target = sorted(unordered, key=order.__getitem__)
+        targets_by_source.setdefault(source, []).append((target, pair.coefficient))
+
+    commodities = []
+    for source in ordered_instance_ids:
+        targets = tuple(sorted(targets_by_source.get(source, ())))
+        if not targets:
+            continue
+        total_supply = sum(coefficient for _, coefficient in targets)
+        commodities.append(_SourceCommodity(source, targets, total_supply))
+    return tuple(commodities)
+
+
+def _add_source_aggregated_flow_objective(
     model: cp_model.CpModel,
     *,
     nodes: tuple[NodeId, ...],
     room_nodes: dict[str, tuple[NodeId, ...]],
     arcs: tuple[_Arc, ...],
-    pairs: tuple[ObjectivePair, ...],
+    commodities: tuple[_SourceCommodity, ...],
 ) -> tuple[cp_model.LinearExpr | int, int, int]:
-    """Add exact pair flows after proof-safe pair-specific domain reduction.
+    """Add exact weighted multi-sink flows after proof-safe source-domain reduction.
 
-    Returns the weighted objective expression, the number of arc-flow Boolean variables actually
-    created and the number that the previous full `pairs x arcs` formulation would have created.
+    For one source ``s``, total supply is ``Q_s = sum_t c_st`` and target ``t`` absorbs exactly
+    ``c_st`` units. With linear non-negative arc costs and no capacities, an integral feasible flow
+    decomposes into source-to-target paths plus removable cycles. Its minimum cost is therefore
+    exactly ``sum_t c_st * shortest_distance(s, t)``. Summing the commodity costs reproduces the
+    accepted exact scaled objective without multiplying arc costs by pair coefficients again.
+
+    Returns the primary expression, the actual integer arc-flow count, and the corresponding full
+    ``source commodities x arcs`` count before source-specific domain reduction.
     """
 
     incoming_arcs: dict[NodeId, list[int]] = {node: [] for node in nodes}
@@ -347,15 +401,20 @@ def _add_pair_flow_objective(
         outgoing_arcs[arc.source].append(arc_index)
         incoming_arcs[arc.target].append(arc_index)
 
-    weighted_terms = []
-    pair_flow_variable_count = 0
-    pair_flow_full_variable_count = len(arcs) * len(pairs)
-    for pair in pairs:
-        domain = _pair_flow_domain(
+    flow_cost_terms = []
+    source_flow_variable_count = 0
+    source_flow_full_variable_count = len(arcs) * len(commodities)
+    for commodity in commodities:
+        target_nodes = tuple(
+            node
+            for target_instance_id, _ in commodity.targets
+            for node in room_nodes[target_instance_id]
+        )
+        domain = _source_flow_domain(
             nodes=nodes,
             arcs=arcs,
-            source_nodes=room_nodes[pair.source_instance_id],
-            target_nodes=room_nodes[pair.target_instance_id],
+            source_nodes=room_nodes[commodity.source_instance_id],
+            target_nodes=target_nodes,
             incoming_arcs=incoming_arcs,
             outgoing_arcs=outgoing_arcs,
         )
@@ -363,29 +422,44 @@ def _add_pair_flow_objective(
             model.add_bool_or([])
             continue
 
-        source_choice = _endpoint_choice(
+        source_supply = _integer_distribution(
             model,
-            pair_id=pair.pair_id,
-            role="source",
+            commodity_id=commodity.source_instance_id,
+            role="supply",
             nodes=domain.source_nodes,
+            total=commodity.total_supply,
         )
-        target_choice = _endpoint_choice(
-            model,
-            pair_id=pair.pair_id,
-            role="target",
-            nodes=domain.target_nodes,
-        )
+        target_demand: dict[NodeId, cp_model.IntVar | int] = {}
+        domain_node_set = set(domain.nodes)
+        for target_instance_id, coefficient in commodity.targets:
+            legal_target_nodes = tuple(
+                node for node in room_nodes[target_instance_id] if node in domain_node_set
+            )
+            if not legal_target_nodes:
+                model.add_bool_or([])
+                continue
+            target_demand.update(
+                _integer_distribution(
+                    model,
+                    commodity_id=commodity.source_instance_id,
+                    role=f"demand_{target_instance_id}",
+                    nodes=legal_target_nodes,
+                    total=coefficient,
+                )
+            )
 
         flow = {
-            arc_index: model.new_bool_var(
-                f"pair_flow__{pair.pair_id}__{arcs[arc_index].arc_id}"
+            arc_index: model.new_int_var(
+                0,
+                commodity.total_supply,
+                f"source_flow__{commodity.source_instance_id}__{arcs[arc_index].arc_id}",
             )
             for arc_index in domain.arc_indices
         }
-        pair_flow_variable_count += len(flow)
+        source_flow_variable_count += len(flow)
         for arc_index, variable in flow.items():
             for condition in arcs[arc_index].conditions:
-                model.add(variable <= condition)
+                model.add(variable <= commodity.total_supply * condition)
 
         for node in domain.nodes:
             incoming = sum(
@@ -394,14 +468,17 @@ def _add_pair_flow_objective(
             outgoing = sum(
                 flow[index] for index in outgoing_arcs[node] if index in flow
             )
-            source = source_choice.get(node, 0)
-            target = target_choice.get(node, 0)
+            source = source_supply.get(node, 0)
+            target = target_demand.get(node, 0)
             model.add(incoming + source == outgoing + target)
 
-        path_cost = sum(arcs[index].cost * variable for index, variable in flow.items())
-        weighted_terms.append(pair.coefficient * path_cost)
+        flow_cost_terms.extend(arcs[index].cost * variable for index, variable in flow.items())
 
-    return sum(weighted_terms), pair_flow_variable_count, pair_flow_full_variable_count
+    return (
+        sum(flow_cost_terms),
+        source_flow_variable_count,
+        source_flow_full_variable_count,
+    )
 
 
 def _extract_utilities(
@@ -430,7 +507,7 @@ def _evaluate_solution(
         )
     except ValueError as exc:
         raise AssertionError(
-            "Pair-flow objective model returned infrastructure rejected by the exact evaluator"
+            "Source-aggregated flow model returned infrastructure rejected by the exact evaluator"
         ) from exc
     return utilities, metrics
 
@@ -438,7 +515,9 @@ def _evaluate_solution(
 def _validate_model(model: cp_model.CpModel, phase: str) -> None:
     validation_error = model.validate()
     if validation_error:
-        raise AssertionError(f"Invalid fixed pair-flow model during {phase}: {validation_error}")
+        raise AssertionError(
+            f"Invalid fixed source-aggregated flow model during {phase}: {validation_error}"
+        )
 
 
 def _solve_phase(
@@ -580,18 +659,19 @@ def solve_fixed_layout_flow_objective(
 ) -> FixedFlowObjectiveResult:
     """Optimize exact ``F`` and all accepted tie-breakers for one fixed room packing.
 
-    Unlike the exhaustive reference oracle, this formulation represents each positive-weight
-    room pair by a unit flow over the conditional module graph. Minimizing the sum of weighted
-    arc costs is therefore equivalent to minimizing the sum of exact shortest-path distances.
+    Unlike the exhaustive reference oracle, this formulation deterministically orients every
+    positive-weight room pair and aggregates all pairs with the same source into one weighted
+    integer flow over the conditional module graph. Minimizing the sum of per-unit arc costs is
+    therefore equivalent to minimizing the sum of exact weighted shortest-path distances.
 
-    Before variables are created, each pair flow is restricted to arcs that lie on at least one
-    source-to-target path in the unconditional supergraph. The supergraph ignores infrastructure
-    selection conditions and is therefore a relaxation of every realizable network; removing
-    arcs outside all relaxed endpoint paths is proof-safe and cannot change the exact optimum.
+    Before variables are created, each source flow is restricted to arcs that lie on at least one
+    path from that source to the union of its targets in the unconditional supergraph. The
+    supergraph ignores infrastructure selection conditions and is therefore a relaxation of every
+    realizable network; removing arcs outside all relaxed source-to-target paths is proof-safe and
+    cannot change the exact optimum.
 
-    Singleton endpoint choices are represented by constants rather than auxiliary Boolean
-    variables. This is an exact presolve: once domain reduction leaves only one endpoint port,
-    its choice is logically fixed and no decision variable is required.
+    Source supply and each target demand may be split over their legal endpoint ports. Singleton
+    endpoint distributions are represented by constants rather than auxiliary integer variables.
 
     ``scaled_objective_upper_bound`` is an optional exact decomposition cut. When supplied, the
     fixed subproblem only needs solutions with scaled ``F <= bound``. Equality is deliberately
@@ -608,7 +688,7 @@ def solve_fixed_layout_flow_objective(
     lexicographic phases while yielding the best lexicographic incumbent at any point.
 
     Both proof flags are set only when CP-SAT proves the scalarized objective optimal. A timed-out
-    incumbent may contain non-shortest auxiliary pair flows; its selected infrastructure is
+    incumbent may contain non-shortest auxiliary source flows; its selected infrastructure is
     re-evaluated by exact Dijkstra and reported ``FEASIBLE`` with that proof-safe exact objective
     tuple but no optimality claim.
     """
@@ -638,16 +718,17 @@ def solve_fixed_layout_flow_objective(
         if usage_weights is None
         else build_scaled_objective(rooms, usage_weights)
     )
+    source_commodities = _build_source_commodities(objective.pairs)
     (
         primary_expr,
-        pair_flow_variable_count,
-        pair_flow_full_variable_count,
-    ) = _add_pair_flow_objective(
+        source_flow_variable_count,
+        source_flow_full_variable_count,
+    ) = _add_source_aggregated_flow_objective(
         compiled.model,
         nodes=nodes,
         room_nodes=room_nodes,
         arcs=arcs,
-        pairs=objective.pairs,
+        commodities=source_commodities,
     )
 
     corridor_spec = MODULE_BY_KEY["corridor"]
@@ -665,8 +746,8 @@ def solve_fixed_layout_flow_objective(
     elevator_count_max = len(compiled.variables.elevator)
     utility_mass_max = corridor_count_max * corridor_spec.mass + elevator_count_max * elevator_spec.mass
 
-    # Valid finite upper bound on the primary scaled-F objective: a simple path charges each arc at
-    # most once, so every pair's path cost is bounded by the total arc cost of the shared graph.
+    # Every source-arc flow is bounded by that source's total supply. Summed over sources, charging
+    # every arc at this bound gives a conservative finite upper bound on scaled F.
     total_arc_cost = sum(arc.cost for arc in arcs)
     scaled_f_max = total_arc_cost * sum(pair.coefficient for pair in objective.pairs)
 
@@ -707,8 +788,9 @@ def solve_fixed_layout_flow_objective(
             graph_node_count=len(nodes),
             graph_arc_count=len(arcs),
             objective_pair_count=len(objective.pairs),
-            pair_flow_variable_count=pair_flow_variable_count,
-            pair_flow_full_variable_count=pair_flow_full_variable_count,
+            source_commodity_count=len(source_commodities),
+            source_flow_variable_count=source_flow_variable_count,
+            source_flow_full_variable_count=source_flow_full_variable_count,
             cp_sat_variable_count=model_variable_count,
             cp_sat_constraint_count=model_constraint_count,
             lexicographic_scalarization_used=True,
@@ -738,7 +820,7 @@ def solve_fixed_layout_flow_objective(
     )
     cp_sat_solve_time_s += phase_solve_time
     if status == cp_model.MODEL_INVALID:
-        raise AssertionError("CP-SAT rejected the fixed pair-flow objective model")
+        raise AssertionError("CP-SAT rejected the fixed source-aggregated flow objective model")
     if status == cp_model.INFEASIBLE:
         result_status = (
             "OBJECTIVE_BOUND_INFEASIBLE"
@@ -768,7 +850,7 @@ def solve_fixed_layout_flow_objective(
         status == cp_model.OPTIMAL and solver_scaled_f != dijkstra_scaled_f
     ):
         raise AssertionError(
-            "Pair-flow primary objective disagrees with exact Dijkstra evaluation: "
+            "Source-aggregated flow primary objective disagrees with exact Dijkstra evaluation: "
             f"model_F={solver_scaled_f}, dijkstra_F={dijkstra_scaled_f}"
         )
     if (

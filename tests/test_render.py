@@ -48,10 +48,11 @@ def _sample_result() -> PlanResult:
         max_fixed_graph_nodes=61,
         max_fixed_graph_arcs=120,
         max_fixed_objective_pairs=28,
-        max_fixed_pair_flow_variables=2100,
-        max_fixed_pair_flow_full_variables=3360,
-        total_fixed_pair_flow_variables=7200,
-        total_fixed_pair_flow_full_variables=12000,
+        max_fixed_source_commodities=7,
+        max_fixed_source_flow_variables=2100,
+        max_fixed_source_flow_full_variables=3360,
+        total_fixed_source_flow_variables=7200,
+        total_fixed_source_flow_full_variables=12000,
         max_fixed_cp_sat_variables=3500,
         max_fixed_cp_sat_constraints=6100,
         fixed_lexicographic_scalarization_used=True,
@@ -85,7 +86,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
     payload = result_payload(_sample_result())
     modules = payload["modules"]
     assert isinstance(modules, list)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["feasibility"] == {
         "structural_feasible": True,
         "journey_feasible": True,
@@ -120,7 +121,9 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
         "max_graph_nodes": 61,
         "max_graph_arcs": 120,
         "max_objective_pairs": 28,
-        "pair_flow_domain": {
+        "flow_formulation": "source_aggregated_weighted_flow",
+        "source_flow_domain": {
+            "max_commodities": 7,
             "max_actual_variables": 2100,
             "max_full_domain_variables": 3360,
             "total_actual_variables": 7200,

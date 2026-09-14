@@ -87,7 +87,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Benchmark schema version 4 records the end-to-end search/proof metrics:
+Benchmark schema version 5 records the end-to-end search/proof metrics:
 
 ```text
 status
@@ -114,7 +114,7 @@ corridor_count
 
 `manhattan_pruned_count` counts room packings excluded before the fixed subproblem because their exact-integer admissible lower bound is strictly worse than the current incumbent primary objective.
 
-`incumbent_bound_pruned_count` counts packings for which the exact fixed pair-flow model, constrained by `scaled_F <= incumbent_scaled_F`, is proven infeasible. Such a packing cannot match or improve the incumbent primary objective. It is intentionally tracked separately from modified-Manhattan pruning because it is a stronger exact subproblem proof, not a heuristic or lower-bound estimate.
+`incumbent_bound_pruned_count` counts packings for which the exact fixed source-aggregated flow model, constrained by `scaled_F <= incumbent_scaled_F`, is proven infeasible. Such a packing cannot match or improve the incumbent primary objective. It is intentionally tracked separately from modified-Manhattan pruning because it is a stronger exact subproblem proof, not a heuristic or lower-bound estimate.
 
 Stage-4 fixed-subproblem instrumentation additionally records:
 
@@ -123,10 +123,12 @@ fixed_subproblem_count
 max_fixed_graph_nodes
 max_fixed_graph_arcs
 max_fixed_objective_pairs
-max_fixed_pair_flow_variables
-max_fixed_pair_flow_full_variables
-total_fixed_pair_flow_variables
-total_fixed_pair_flow_full_variables
+fixed_flow_formulation
+max_fixed_source_commodities
+max_fixed_source_flow_variables
+max_fixed_source_flow_full_variables
+total_fixed_source_flow_variables
+total_fixed_source_flow_full_variables
 max_fixed_cp_sat_variables
 max_fixed_cp_sat_constraints
 lexicographic_scalarization.used
@@ -149,23 +151,24 @@ The `max_*` values are maxima across all exact fixed-packing subproblems attempt
 
 `lexicographic_scalarization.used` reports whether attempted fixed subproblems used the exact scalarized objective. The `max_weight_*` and `max_*_bound` fields are maxima across attempted fixed subproblems. `max_primary_objective_upper_bound` is the maximum conservative scaled-`F` bound used in the signed-integer safety calculation, and `max_combined_objective_upper_bound` is the maximum resulting combined-objective safety bound. `max_incumbent_scalar_value` is separately the largest scalar value among returned incumbents; it is not an objective upper bound and is `null` when no fixed subproblem returned an incumbent.
 
-`fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and pair-flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside the single CP-SAT lexicographic-scalarized solve call. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, the CP-SAT solve and exact evaluator work.
+`fixed_model_build_time_s` covers construction of the fixed hard model, conditional travel graph and source-aggregated flow objective. `fixed_cp_sat_solve_time_s` measures time spent inside the single CP-SAT lexicographic-scalarized solve call. `fixed_subproblem_time_s` covers the complete fixed-objective calls, including model construction, validation, the CP-SAT solve and exact evaluator work.
 
 The report also records the Python implementation/version, operating-system platform, OR-Tools version and planner version.
 
-## Pair-flow variable-domain reduction
+## Source-aggregated flow variable-domain reduction
 
-The exact fixed-packing objective originally created one flow Boolean for every combination of positive-weight objective pair and directed graph arc. The current formulation first restricts each pair to the arcs that can lie on a source-to-target path in the unconditional directed supergraph. Infrastructure-selection conditions are ignored for this reachability analysis, so the supergraph is a relaxation of every realizable network. An arc that cannot belong to an endpoint path even in this relaxation cannot belong to any realizable endpoint path and can be removed without changing feasibility or the optimum.
+The exact fixed-packing objective originally created one flow Boolean for every combination of positive-weight objective pair and directed graph arc. The current formulation deterministically orients every pair and aggregates all exact pair coefficients with the same source into one integer multi-sink commodity. For `N` positive-weight rooms this creates at most `N - 1` commodities instead of `N * (N - 1) / 2`.
 
-Endpoint ports are also treated as terminals, and singleton endpoint choices are represented by constants rather than auxiliary Boolean variables. These are exact presolve/domain reductions, not heuristic routing rules.
+Each source commodity is restricted to arcs in the intersection of relaxed forward reachability from its source ports and reverse reachability from the union of all its target ports. Infrastructure-selection conditions are ignored for this analysis, so the graph remains a relaxation of every realizable network. Source revisits are removed; target ports remain available for legal transit toward another target. Singleton source/target distributions are represented by constants. These are exact presolve/domain reductions, not heuristic routing rules.
 
-The benchmark records both the actual pair-flow Boolean count after pair-specific domain reduction and the corresponding full-domain count from the previous formulation:
+The benchmark records the source commodity count, actual source-flow integer arc variables after domain reduction, and the corresponding full `source commodities x graph arcs` count:
 
 ```text
-max_fixed_pair_flow_variables
-max_fixed_pair_flow_full_variables
-total_fixed_pair_flow_variables
-total_fixed_pair_flow_full_variables
+max_fixed_source_commodities
+max_fixed_source_flow_variables
+max_fixed_source_flow_full_variables
+total_fixed_source_flow_variables
+total_fixed_source_flow_full_variables
 ```
 
 The two `total_*` fields are sums over the same fixed-packing subproblems and therefore support a meaningful aggregate structural-reduction ratio:
@@ -178,9 +181,32 @@ The benchmark report must use these totals for the reduction percentage. A ratio
 
 These counts are structural diagnostics. A lower flow-variable count is evidence that the formulation is smaller; it is not by itself evidence that end-to-end runtime improved. Runtime claims still require representative benchmark measurements on comparable environments.
 
+### Local fixed-packing comparison
+
+The following isolated comparison was collected on 2026-09-14 with Python 3.14.4,
+OR-Tools 9.15.6755 and Windows 10. It uses one deterministic, directly connected row of 15
+positive-weight rooms (105 objective pairs), a 20-second fixed-subproblem limit, and five fresh
+solves per formulation. It is evidence for this fixed model only, not a representative-suite or
+end-to-end runtime claim.
+
+| Metric | Pair-specific baseline | Source-aggregated |
+|---|---:|---:|
+| Objective pairs | 105 | 105 |
+| Flow commodities | 105 | 14 |
+| Actual arc-flow variables | 1,834 | 406 |
+| Full-domain arc-flow variables | 6,090 | 812 |
+| Total CP-SAT variables | 1,937 | 719 |
+| Total CP-SAT constraints | 1,296 | 505 |
+| Model-build time, min / median / max | 61.4 / 65.9 / 74.9 ms | 20.3 / 21.2 / 21.5 ms |
+| CP-SAT solve time, min / median / max | 20.5 / 22.9 / 30.6 ms | 19.0 / 21.1 / 22.2 ms |
+
+On this packing, source aggregation removes 77.9% of the actual arc-flow variables, 62.9% of all
+CP-SAT variables and 61.0% of constraints. The deterministic size reduction is the primary result;
+the small solve-time difference should not be generalized beyond this sample.
+
 ## Exact incumbent objective cut
 
-After the production decomposition has a feasible exact incumbent with scaled primary objective `B`, every later fixed-packing pair-flow subproblem is solved with the additional exact constraint:
+After the production decomposition has a feasible exact incumbent with scaled primary objective `B`, every later fixed-packing source-flow subproblem is solved with the additional exact constraint:
 
 ```text
 scaled_F <= B
@@ -202,7 +228,7 @@ The cut does not change the accepted objective, hard constraints, exact distance
 
 `solver.time_limit_s` is one wall-clock budget for the complete planning request. The room-packing master passes only the remaining budget to each fixed-packing subproblem.
 
-The fixed-packing deadline starts **before** hard-model and pair-flow construction. Model construction therefore consumes the same remaining budget as CP-SAT search and exact evaluation; rebuilding a large model cannot silently extend the configured planning budget.
+The fixed-packing deadline starts **before** hard-model and source-flow construction. Model construction therefore consumes the same remaining budget as CP-SAT search and exact evaluation; rebuilding a large model cannot silently extend the configured planning budget.
 
 This timing rule is a correctness/accounting contract, not a performance heuristic. Timeout results remain best-known/unknown as appropriate and never create a false optimality proof.
 
@@ -257,11 +283,11 @@ example-plan-result/
     run-metadata.json
 ```
 
-Metadata schema version 1 records the checked-out commit, Git ref, UTC timestamp,
+Metadata schema version 2 records the checked-out commit, Git ref, UTC timestamp,
 Python/OR-Tools/planner versions, source configuration path, optimizer process
 exit code, status, Base tier, exact/scaled objective and modified-Manhattan lower
 bound, feasibility/proof flags, mass, infrastructure counts, search diagnostics,
-fixed-subproblem model diagnostics and pair-flow actual/full-domain totals and
+fixed-subproblem model diagnostics and source-flow actual/full-domain totals and
 maxima. Values are copied from the canonical result without recomputing solver
 metrics; unavailable values are JSON `null`. The full layout remains separate.
 On pull requests the commit identifies the checked-out Actions merge revision,

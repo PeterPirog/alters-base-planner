@@ -48,10 +48,11 @@ def _result() -> PlanResult:
         max_fixed_graph_nodes=61,
         max_fixed_graph_arcs=120,
         max_fixed_objective_pairs=28,
-        max_fixed_pair_flow_variables=2100,
-        max_fixed_pair_flow_full_variables=3360,
-        total_fixed_pair_flow_variables=7200,
-        total_fixed_pair_flow_full_variables=12000,
+        max_fixed_source_commodities=7,
+        max_fixed_source_flow_variables=2100,
+        max_fixed_source_flow_full_variables=3360,
+        total_fixed_source_flow_variables=7200,
+        total_fixed_source_flow_full_variables=12000,
         max_fixed_cp_sat_variables=3500,
         max_fixed_cp_sat_constraints=6100,
         fixed_model_build_time_s=0.12,
@@ -87,10 +88,12 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.max_fixed_graph_nodes == 61
     assert record.max_fixed_graph_arcs == 120
     assert record.max_fixed_objective_pairs == 28
-    assert record.max_fixed_pair_flow_variables == 2100
-    assert record.max_fixed_pair_flow_full_variables == 3360
-    assert record.total_fixed_pair_flow_variables == 7200
-    assert record.total_fixed_pair_flow_full_variables == 12000
+    assert record.fixed_flow_formulation == "source_aggregated_weighted_flow"
+    assert record.max_fixed_source_commodities == 7
+    assert record.max_fixed_source_flow_variables == 2100
+    assert record.max_fixed_source_flow_full_variables == 3360
+    assert record.total_fixed_source_flow_variables == 7200
+    assert record.total_fixed_source_flow_full_variables == 12000
     assert record.max_fixed_cp_sat_variables == 3500
     assert record.max_fixed_cp_sat_constraints == 6100
     assert record.fixed_model_build_time_s == 0.12
@@ -106,21 +109,24 @@ def test_payload_and_markdown_are_auditable() -> None:
     markdown = benchmark_markdown(payload)
 
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
-    assert BENCHMARK_SCHEMA_VERSION == 4
+    assert BENCHMARK_SCHEMA_VERSION == 5
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
     assert payload["cases"][0]["room_counts"] == {"workshop": 1}
     assert payload["results"][0]["scaled_objective_value"] == 125
     assert payload["results"][0]["incumbent_bound_pruned_count"] == 5
     assert payload["results"][0]["max_fixed_cp_sat_variables"] == 3500
-    assert payload["results"][0]["total_fixed_pair_flow_variables"] == 7200
-    assert payload["results"][0]["total_fixed_pair_flow_full_variables"] == 12000
+    assert payload["results"][0]["total_fixed_source_flow_variables"] == 7200
+    assert payload["results"][0]["total_fixed_source_flow_full_variables"] == 12000
     assert "| sample | 1 | FEASIBLE |" in markdown
     assert "| 2 | 5 | 1.2500 |" in markdown
     assert "## Fixed-packing model diagnostics" in markdown
     assert "| sample | 4 | 61 | 120 | 28 | 3500 | 6100 |" in markdown
-    assert "## Pair-flow domain reduction" in markdown
-    assert "| sample | 2100 | 3360 | 7200 | 12000 | 4800 | 40.0% |" in markdown
+    assert "## Source-aggregated flow domain reduction" in markdown
+    assert (
+        "| sample | source_aggregated_weighted_flow | 7 | 2100 | 3360 | 7200 | 12000 | "
+        "4800 | 40.0% |"
+    ) in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
 
 
@@ -156,7 +162,7 @@ def test_write_report_creates_json_and_markdown(tmp_path) -> None:
     assert payload["results"][0]["name"] == "sample"
     assert payload["results"][0]["incumbent_bound_pruned_count"] == 5
     assert payload["results"][0]["fixed_subproblem_count"] == 4
-    assert payload["results"][0]["total_fixed_pair_flow_variables"] == 7200
+    assert payload["results"][0]["total_fixed_source_flow_variables"] == 7200
     assert "# The Alters Base Planner benchmark report" in markdown
 
 

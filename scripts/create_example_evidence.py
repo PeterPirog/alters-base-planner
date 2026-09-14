@@ -37,7 +37,8 @@ FIXED_FIELDS = (
     "cp_sat_solve_time_s",
     "total_time_s",
 )
-PAIR_FLOW_FIELDS = (
+SOURCE_FLOW_FIELDS = (
+    "max_commodities",
     "total_actual_variables",
     "total_full_domain_variables",
     "max_actual_variables",
@@ -129,8 +130,10 @@ def layout_metadata(layout: dict) -> dict:
         **{key: field(layout, *search, key) for key in SEARCH_FIELDS},
         "fixed_subproblems": {
             **{key: field(layout, *fixed, key) for key in FIXED_FIELDS},
-            "pair_flow_domain": {
-                key: field(layout, *fixed, "pair_flow_domain", key) for key in PAIR_FLOW_FIELDS
+            "flow_formulation": field(layout, *fixed, "flow_formulation"),
+            "source_flow_domain": {
+                key: field(layout, *fixed, "source_flow_domain", key)
+                for key in SOURCE_FLOW_FIELDS
             },
             "lexicographic_scalarization": {
                 key: field(layout, *fixed, "lexicographic_scalarization", key)
@@ -173,7 +176,7 @@ def create_evidence(optimizer_exit_code: int | None, destination: Path = Path(".
         except ValueError as exc:
             parse_error = str(exc)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "git_commit": commit,
         "git_ref": os.getenv("GITHUB_REF") or git_value("symbolic-ref", "--quiet", "HEAD"),
         "timestamp_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
