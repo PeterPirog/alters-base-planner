@@ -28,6 +28,11 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             source_commodity_count=4,
             source_flow_variable_count=400,
             source_flow_full_variable_count=800,
+            endpoint_distribution_variable_count=0,
+            condition_capacity_bucket_count=11,
+            condition_capacity_literal_count=6,
+            flow_capacity_constraint_count=700,
+            flow_balance_constraint_count=800,
             cp_sat_variable_count=900,
             cp_sat_constraint_count=1200,
             model_build_time_s=0.1,
@@ -48,6 +53,11 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
             source_commodity_count=5,
             source_flow_variable_count=500,
             source_flow_full_variable_count=750,
+            endpoint_distribution_variable_count=0,
+            condition_capacity_bucket_count=9,
+            condition_capacity_literal_count=5,
+            flow_capacity_constraint_count=650,
+            flow_balance_constraint_count=900,
             cp_sat_variable_count=1000,
             cp_sat_constraint_count=1100,
             model_build_time_s=0.2,
@@ -74,6 +84,11 @@ def test_fixed_diagnostics_aggregate_preserves_source_flow_maxima_and_totals() -
     assert result.max_fixed_source_flow_full_variables == 800
     assert result.total_fixed_source_flow_variables == 900
     assert result.total_fixed_source_flow_full_variables == 1550
+    assert result.max_fixed_condition_capacity_buckets == 11
+    assert result.max_fixed_condition_capacity_literals == 6
+    assert result.max_fixed_endpoint_distribution_variables == 0
+    assert result.max_fixed_flow_capacity_constraints == 700
+    assert result.max_fixed_flow_balance_constraints == 900
     assert result.max_fixed_cp_sat_variables == 1000
     assert result.max_fixed_cp_sat_constraints == 1200
     assert result.fixed_model_build_time_s == pytest.approx(0.3)

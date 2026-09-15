@@ -51,6 +51,11 @@ SOURCE_FLOW_FIELDS = (
     "total_full_domain_variables",
     "max_actual_variables",
     "max_full_domain_variables",
+    "max_condition_capacity_buckets",
+    "max_condition_capacity_literals",
+    "max_endpoint_distribution_variables",
+    "max_capacity_constraints",
+    "max_balance_constraints",
 )
 LEXICOGRAPHIC_FIELDS = (
     "used",
@@ -64,6 +69,16 @@ LEXICOGRAPHIC_FIELDS = (
     "max_elevator_bound",
     "max_mass_bound",
     "max_incumbent_scalar_value",
+)
+INCUMBENT_DISTANCE_CAP_FIELDS = (
+    "used",
+    "relaxation_proved_infeasible",
+    "max_relaxed_primary_lower_bound",
+    "min_incumbent_primary_bound",
+    "max_capped_pairs",
+    "max_flow_variables_before_cap",
+    "max_flow_variables_after_cap",
+    "max_pruned_flow_variables",
 )
 
 
@@ -151,6 +166,10 @@ def layout_metadata(layout: dict) -> dict:
                 key: field(layout, *fixed, "lexicographic_scalarization", key)
                 for key in LEXICOGRAPHIC_FIELDS
             },
+            "incumbent_distance_cap": {
+                key: field(layout, *fixed, "incumbent_distance_cap", key)
+                for key in INCUMBENT_DISTANCE_CAP_FIELDS
+            },
         },
     }
 
@@ -188,7 +207,7 @@ def create_evidence(optimizer_exit_code: int | None, destination: Path = Path(".
         except ValueError as exc:
             parse_error = str(exc)
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "git_commit": commit,
         "git_ref": os.getenv("GITHUB_REF") or git_value("symbolic-ref", "--quiet", "HEAD"),
         "timestamp_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

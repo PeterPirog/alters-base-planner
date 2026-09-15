@@ -494,7 +494,7 @@ After a feasible exact incumbent with primary objective `B` exists, production m
 scaled_F <= B
 ```
 
-The inequality must remain non-strict because a packing with equal F can still improve mass, Elevator count or Corridor count. If CP-SAT proves this bounded fixed model infeasible, the packing cannot match or improve the incumbent primary objective. Such a certificate is a valid exact decomposition proof even when it does not distinguish hard infrastructure infeasibility from strict objective domination.
+The inequality must remain non-strict because a packing with equal F can still improve mass, Elevator count or Corridor count. If CP-SAT proves this bounded fixed model infeasible, the packing cannot match or improve the incumbent primary objective. Such a certificate is a valid exact decomposition proof even when it does not distinguish hard infrastructure infeasibility from strict objective domination. The same bound may additionally drive a proof-safe domain reduction before CP-SAT: exact integer shortest-path lower bounds on the unconditional relaxed travel graph can prove `scaled_F > bound` directly (reported as `OBJECTIVE_BOUND_INFEASIBLE` without a solve) and derive mathematically necessary per-pair distance caps whose union-of-target arc pruning removes no solution capable of satisfying `scaled_F <= bound`.
 
 Production sets `global_objective_optimum_proven=true` only when:
 

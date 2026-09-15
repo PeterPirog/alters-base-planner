@@ -53,6 +53,19 @@ def _result() -> PlanResult:
         max_fixed_source_flow_full_variables=3360,
         total_fixed_source_flow_variables=7200,
         total_fixed_source_flow_full_variables=12000,
+        max_fixed_condition_capacity_buckets=11,
+        max_fixed_condition_capacity_literals=6,
+        max_fixed_endpoint_distribution_variables=0,
+        max_fixed_flow_capacity_constraints=2800,
+        max_fixed_flow_balance_constraints=1600,
+        fixed_incumbent_distance_cap_pruning_used=True,
+        fixed_objective_bound_relaxation_pruned=False,
+        max_fixed_relaxed_graph_primary_lower_bound=4600,
+        min_fixed_incumbent_primary_bound=4600,
+        max_fixed_incumbent_distance_cap_pairs=28,
+        max_fixed_source_flow_variables_before_incumbent_cap=4200,
+        max_fixed_source_flow_variables_after_incumbent_cap=3900,
+        max_fixed_incumbent_cap_pruned_flow_variables=300,
         max_fixed_cp_sat_variables=3500,
         max_fixed_cp_sat_constraints=6100,
         fixed_model_build_time_s=0.12,
@@ -99,6 +112,19 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.max_fixed_source_flow_full_variables == 3360
     assert record.total_fixed_source_flow_variables == 7200
     assert record.total_fixed_source_flow_full_variables == 12000
+    assert record.max_fixed_condition_capacity_buckets == 11
+    assert record.max_fixed_condition_capacity_literals == 6
+    assert record.max_fixed_endpoint_distribution_variables == 0
+    assert record.max_fixed_flow_capacity_constraints == 2800
+    assert record.max_fixed_flow_balance_constraints == 1600
+    assert record.fixed_incumbent_distance_cap_pruning_used is True
+    assert record.fixed_objective_bound_relaxation_pruned is False
+    assert record.max_fixed_relaxed_graph_primary_lower_bound == 4600
+    assert record.min_fixed_incumbent_primary_bound == 4600
+    assert record.max_fixed_incumbent_distance_cap_pairs == 28
+    assert record.max_fixed_source_flow_variables_before_incumbent_cap == 4200
+    assert record.max_fixed_source_flow_variables_after_incumbent_cap == 3900
+    assert record.max_fixed_incumbent_cap_pruned_flow_variables == 300
     assert record.max_fixed_cp_sat_variables == 3500
     assert record.max_fixed_cp_sat_constraints == 6100
     assert record.fixed_model_build_time_s == 0.12
@@ -119,7 +145,7 @@ def test_payload_and_markdown_are_auditable() -> None:
     markdown = benchmark_markdown(payload)
 
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
-    assert BENCHMARK_SCHEMA_VERSION == 5
+    assert BENCHMARK_SCHEMA_VERSION == 6
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
     assert payload["cases"][0]["room_counts"] == {"workshop": 1}
@@ -139,6 +165,8 @@ def test_payload_and_markdown_are_auditable() -> None:
         "| sample | source_aggregated_weighted_flow | 7 | 2100 | 3360 | 7200 | 12000 | "
         "4800 | 40.0% |"
     ) in markdown
+    assert "## Source-flow construction diagnostics" in markdown
+    assert "| sample | 11 | 6 | 0 | 2800 | 1600 |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
 
 

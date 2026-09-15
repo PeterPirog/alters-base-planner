@@ -392,7 +392,7 @@ target demand(s,t) = c_st
 0 <= flow[s,a] <= Q_s
 ```
 
-Supply `Q_s` may split across all legal source ports, and each target demand may split across that target's legal ports. Different units therefore retain the same independent endpoint choice as the former pair-specific paths. Flow balance holds at every graph node. Target rooms may carry through-flow to other targets when their module transit rule permits it; only arcs entering the source endpoint set are removed as unnecessary.
+Supply `Q_s` may split across all legal source ports, and each target demand may split across that target's legal ports. Different units therefore retain the same independent endpoint choice as the former pair-specific paths. The source ports use one aggregate `sum(outgoing) = Q_s` equation because the reduced domain retains no arc entering a source port. Every target port has non-negative net inflow, and the net inflows for target `t` sum to exactly `c_st`; this represents the same endpoint-allocation projection without explicit supply/demand variables. Ordinary nodes retain exact flow conservation. Target rooms may carry through-flow to other targets when their module transit rule permits it.
 
 The primary expression is:
 
@@ -402,9 +402,30 @@ scaled_F = sum_s sum_a arc_cost[a] * flow[s,a]
 
 The coefficient is represented by flow quantity and is not multiplied onto the arc term again. For a fixed selected infrastructure, every integral feasible source flow decomposes into source-to-target paths plus cycles. Arc costs are non-negative, so cycles can be removed without increasing cost, and each unit ending at target `t` costs at least `shortest_distance(s,t)`. Conversely, routing exactly `c_st` units along a shortest legal path to each target is feasible. Thus the minimum commodity cost is exactly `sum_t c_st * shortest_distance(s,t)`, and summing commodities reproduces the accepted exact pairwise objective.
 
-All source commodities share one infrastructure selection. A conditional arc flow is bounded by `Q_s` times each corresponding Corridor/Elevator selection variable, preserving the original infrastructure semantics.
+All source commodities share one infrastructure selection through exact **condition-capacity buckets**. Every conditioned flow variable `flow[s,a]` with individual upper bound `U = Q_s` contributes `(flow[s,a], U)` to the bucket of each of its canonical, de-duplicated Boolean infrastructure conditions. For one condition `c` with contributions `(v_i, U_i)` the emitted constraint is:
+
+```text
+sum_i v_i <= c * sum_i U_i
+```
+
+This is exactly equivalent to the individual bounds `v_i <= U_i * c`:
+
+```text
+c = 0 -> sum_i v_i <= 0 with every v_i >= 0, therefore every v_i = 0;
+c = 1 -> sum_i v_i <= sum_i U_i, already implied by the individual domains.
+```
+
+A multi-condition arc contributes its variable to the bucket of every required condition, so any false condition still forces that variable to zero; explicit AND-gate variables are unnecessary. Buckets aggregate across all source commodities, are emitted after all flow variables exist, and are ordered by condition variable index with source-commodity and arc order preserved inside each bucket. When the aggregated upper-bound sum could exceed the supported signed-integer range, contributions are split into deterministic chunks whose sums stay within a conservative safe limit; the conjunction of the per-chunk constraints remains exact, and a single contribution exceeding the limit fails fast instead of weakening exactness.
 
 Before variables are created, relaxed forward reachability from all source ports and reverse reachability from the union of all target ports restrict each commodity to arcs that can lie on a source-to-some-target path. Infrastructure conditions are ignored only for this reachability calculation, making it a supergraph reduction that cannot remove a realizable path.
+
+When an exact incumbent primary bound `B` is supplied, the same unconditional supergraph yields a stronger exact reduction before any flow variable exists. One integer multi-source Dijkstra per source commodity over the relaxed domain gives `l_st = min dist_s[target port] <= d_st` for every pair, because the relaxed graph contains every realizable path and ignores only infrastructure conditions. The integer sum `LB = sum_(s,t) c_st * l_st` is therefore a valid lower bound on scaled `F` for this packing; it is independent of, and never replaces, the documented modified-Manhattan lower bound. If `LB > B`, no selected infrastructure can satisfy `scaled_F <= B`; the solver returns `OBJECTIVE_BOUND_INFEASIBLE` without entering CP-SAT, which is an exact domination proof. Otherwise the global slack `S = B - LB` derives the mathematically necessary per-pair cap
+
+```text
+cap_st = l_st + (B - LB) // c_st
+```
+
+(any solution with `sum_q c_q d_q <= B` and `d_q >= l_q` satisfies `c_p d_p <= B - sum_(q!=p) c_q l_q`, hence `d_p <= cap_p`; equality is retained because a layout with `scaled_F == B` may still improve mass, Elevator count or Corridor count). Directed arc `a = (u -> v)` is admissible for pair `(s, t)` iff `dist_s[u] + cost(a) + dist_t[v] <= cap_st` with all three integer distances finite, where `dist_t` is the reverse Dijkstra map to `t`'s ports on the same relaxed domain. An arc is retained for source `s` iff it is admissible for at least one target of that commodity — a union of per-target admissible sets. This union is exact: for any infrastructure with `F <= B`, each per-pair shortest path has length `d_st <= cap_st`, and every one of its arcs satisfies the cap inequality because relaxed prefix/suffix distances never exceed the real selected-network prefix/suffix. Target-as-transit is preserved because an arc leaving a target endpoint is judged only by per-target caps, never by the fact that its tail is a target. Without a bound, none of these Dijkstra computations run and the model is identical to the unbounded formulation. Ordinary graph nodes whose incident arcs were all pruned would carry the tautology `0 == 0`, so their balance rows are skipped; endpoint equations always remain, and a commodity whose aggregate supply equation becomes unsatisfiable is proven bound-dominated exactly.
 
 Without a global incumbent, the fixed subproblem optimizes its complete legal domain. After an exact incumbent with scaled primary value `B` exists, the production master may add:
 
