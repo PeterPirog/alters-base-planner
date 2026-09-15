@@ -78,7 +78,7 @@ research branch and is not included in v1.
 | W | Streamlit UI | DONE | No | Form/JSON modes, Tier I-IV, 60 s default, locked SYSTEM, bounded PLAYER, AUTO utilities, weights, persistence/invalidation and downloads pass AppTest and HTTP smoke. |
 | X | Benchmark suite | DONE | No | Schema v7 records first-feasible time and all required diagnostics; smoke and representative suites each cover Tier I-IV. Acceptance is semantic, not an arbitrary Tier III/IV proof deadline. |
 | Y | Known-optimum regression suite | DONE | No | Fixed/global oracles cover the accepted tuple, bounds, transit, zero weights and custom weights; the missing top-access flow regression was added. |
-| Z | CI | PARTIAL | Yes | PR #27 passed Python 3.11-3.13 CI, but the three post-#27 production commits and closure commit have no PR checks. Acceptance: normal CI and evidence workflows pass on every SHA that will be merged; no workflow weakening or waiver by default. |
+| Z | CI | DONE | No | PR #25-#29 passed Python 3.11-3.13 CI and the example-evidence workflow on their reviewed stack boundaries. No workflow was weakened; the closure status-only commit must retain the same green checks. |
 | AA | Installation/package UX | DONE | No | Python `>=3.11`, dependencies and both console scripts are declared; an isolated Python 3.12 editable install, `pip check`, console invocation and tests pass. |
 | AB | Public README | DONE | No | Clone/install/CLI/UI/test instructions match the product and result schema v4. |
 | AC | Release/versioning | PARTIAL | Yes | Package remains `0.1.0`; no changelog, software-license file or tag procedure has been executed. Acceptance: owner chooses a software license, adds its file/metadata, records v1 changes, sets `1.0.0`, passes gates, creates an annotated `v1.0.0` tag from the reviewed main SHA, and publishes release notes. |
@@ -87,11 +87,11 @@ research branch and is not included in v1.
 
 ## Finite v1 blockers
 
-1. Review and merge the existing stack in order; main currently stops before PR #25.
-2. Put the three accepted post-#27 performance commits through one cohesive PR and normal CI.
-3. Put this closure branch through normal CI after its parent stack is accepted.
-4. Obtain the repository owner's software-license decision and add the selected license metadata.
-5. Prepare the `1.0.0` changelog/release notes, update the package version, rerun all gates, then tag the reviewed main SHA.
+1. Complete architecture review and controlled merge of PR #25, #26, #27, #28 and #29 in order;
+   main currently stops before PR #25.
+2. Obtain the repository owner's software-license decision and add the selected license metadata.
+3. Prepare the `1.0.0` changelog/release notes, update the package version, rerun all gates, then
+   tag the reviewed main SHA.
 
 The previously observed Actions billing annotation is not a current blocker: PR #27 later completed
 both CI and evidence workflows successfully. Any recurrence is an `EXTERNAL_RELEASE_BLOCKER` and
@@ -156,17 +156,16 @@ constant. The table reports `total mass (utility mass)` where a concrete feasibl
 
 ## Public GitHub state
 
-State recorded during the 2026-09-15 audit. No PR was modified or merged.
+State recorded during the 2026-09-15 integration gate. No PR was merged.
 
 | Ref | Base SHA | Head SHA | Decision | CI/checks | Mergeability / downstream |
 |---|---|---|---|---|---|
 | `main` | - | `e634360c4ef5bb1b93a8ff941f5733587f952b1e` | Current public production | Latest main CI/evidence success | Contains work through PR #24. |
-| PR #25 | `e634360c` | `0328487c` | Production-accepted, pending merge | Historical billing failure; rerun required | MERGEABLE / UNSTABLE; draft. |
-| PR #26 | `0328487c` | `8985b5e7` | Production-accepted, pending merge | Historical billing failure; rerun required | MERGEABLE / UNSTABLE. |
+| PR #25 | `e634360c` | `0328487c` | Production-accepted, pending review/merge | Rerun CI 3.11-3.13 and evidence SUCCESS | MERGEABLE / CLEAN; draft. |
+| PR #26 | `0328487c` | `8985b5e7` | Production-accepted, pending review/merge | Rerun CI 3.11-3.13 and evidence SUCCESS | MERGEABLE / CLEAN. |
 | PR #27 | `8985b5e7` | `58cfaaab` | Production-accepted, pending merge | CI and evidence SUCCESS | MERGEABLE / CLEAN; draft. |
-| source-flow build branch | `58cfaaab` | `656870c1` | Production-accepted | No PR checks | Fully contained downstream in `b00abc`. |
-| condition-bucket branch | `656870c1` | `43ffc936` | Production-accepted | No PR checks | Fully contained downstream in `b00abc`. |
-| distance-cap branch | `43ffc936` | `b00abc34` | Production-accepted v1 baseline | No PR checks | Contains all accepted post-#27 work. |
+| PR #28 | `58cfaaab` | `b00abc34` | Cohesive accepted fixed-flow hardening | CI 3.11-3.13 and evidence SUCCESS | MERGEABLE / CLEAN; draft; exactly three commits. |
+| PR #29 | `b00abc34` | `787bb311` | V1 closure content before this status-only update | CI 3.11-3.13 and evidence SUCCESS | MERGEABLE / CLEAN; draft; status commit requires the same checks. |
 | master-LB branch | `b00abc34` | `3c07b13e` | Experimental, rejected for production | No PR checks | Preserve as research evidence; do not merge into v1. |
 
 ## Integration plan
@@ -178,18 +177,18 @@ main e634360c
 -> PR #25 exact mixed-radix fixed objective
 -> PR #26 Streamlit form and usage-weight overrides
 -> PR #27 source-aggregated exact weighted flow
--> one cohesive Stage-4 exact-flow performance PR containing:
+-> PR #28, cohesive Stage-4 exact-flow performance hardening:
    656870c1 source-flow construction overhead
    43ffc936 condition-capacity buckets
    b00abc34 incumbent distance-cap pruning
--> opencode/v1-release-candidate closure/release-hardening commit(s)
+-> PR #29, opencode/v1-release-candidate closure/release hardening
 -> release metadata commit after owner license decision and green CI
 ```
 
-Use one performance PR against the PR #27 head because the three commits are tightly related,
-semantics-preserving fixed-flow implementation work. Keep closure/release hardening separate so it
-can be reviewed as release policy and product acceptance. Do not merge while required checks are
-not executable or green. Do not merge/cherry-pick `3c07b13`.
+PR #28 uses the PR #27 head as its base because the three commits are tightly related,
+semantics-preserving fixed-flow implementation work. PR #29 keeps closure/release hardening
+separate so it can be reviewed as release policy and product acceptance. Do not merge before
+architecture review. Do not merge/cherry-pick `3c07b13`.
 
 ## Release gates
 
