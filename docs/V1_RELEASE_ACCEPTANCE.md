@@ -1,6 +1,6 @@
 # V1 release acceptance
 
-Status: **IN PROGRESS**
+Status: **BLOCKED ON PRACTICAL USABILITY**
 
 Baseline integrated `main` at the start of this milestone:
 
@@ -87,18 +87,44 @@ If usability blocks v1, the next solver change must target the measured bottlene
 report. It must be a cohesive, proof-safe intervention with before/after evidence. Do not start a
 new optimization simply because it is available.
 
-## Results
+## Measured integrated-main baseline
 
-Release-acceptance results are intentionally not pre-filled. Record only measured evidence from the
-integrated solver or from a review branch whose solver tree is identical to the integrated main
-baseline.
+The release-acceptance suite was measured on integrated `main` commit
+`672e591e44e7b5343ef7242d56c62103f1f4110f` in two environments:
 
-| Tier | Status | First feasible s | Exact F | Mass | Elevators | Corridors | Global proof | Decision |
-|---|---|---:|---:|---:|---:|---:|---|---|
-| I | PENDING | - | - | - | - | - | - | PENDING |
-| II | PENDING | - | - | - | - | - | - | PENDING |
-| III | PENDING | - | - | - | - | - | - | PENDING |
-| IV | PENDING | - | - | - | - | - | - | PENDING |
+- local: Windows 10, CPython 3.12.9, OR-Tools 9.15.6755;
+- GitHub Actions: Ubuntu, CPython 3.12.14, OR-Tools 9.15.6755, run
+  [35004341669](https://github.com/PeterPirog/alters-base-planner/actions/runs/35004341669).
+
+The tables retain measured values rather than combining the two runs. Fixed build and solve times
+are totals across all fixed-packing subproblems in a case.
+
+### Local baseline
+
+| Tier | Classification | First feasible s | Packings | Connected | Fixed build s | Fixed CP-SAT s | Scaled F | Mass | E | C |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| I | USABLE_FEASIBLE | 6.312 | 66 | 6 | 0.985 | 13.516 | 15011 | 68 | 12 | 0 |
+| II | USABLE_FEASIBLE | 120.609 | 1 | 1 | 0.485 | 118.235 | 81459 | 158 | 31 | 3 |
+| III | NO_INCUMBENT_WITHIN_BUDGET | - | 32 | 0 | 21.841 | 0.611 | - | - | - | - |
+| IV | NO_INCUMBENT_WITHIN_BUDGET | - | 27 | 0 | 17.624 | 0.564 | - | - | - | - |
+
+### GitHub Actions baseline
+
+| Tier | Classification | First feasible s | Packings | Connected | Fixed build s | Fixed CP-SAT s | Scaled F | Mass | E | C |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| I | USABLE_FEASIBLE | 4.262 | 142 | 6 | 0.435 | 7.951 | 15011 | 68 | 12 | 0 |
+| II | USABLE_FEASIBLE | 120.057 | 1 | 1 | 0.132 | 119.075 | 81459 | 164 | 31 | 6 |
+| III | NO_INCUMBENT_WITHIN_BUDGET | - | 50 | 0 | 12.057 | 0.244 | - | - | - | - |
+| IV | NO_INCUMBENT_WITHIN_BUDGET | - | 45 | 0 | 9.158 | 0.195 | - | - | - | - |
+
+For Tier III and IV, both environments examined tens of geometrically legal room packings without
+finding one structurally connected candidate. Direct profiling attributed approximately 157 of the
+local Tier-III 180 seconds and 282 of the local Tier-IV 300 seconds to room-master/packing-search
+work before structural connectivity. The recorded fixed CP-SAT search totals were below one second
+for both cases; fixed-model construction was secondary. The measured blocker is therefore room
+packing enumeration before structural connectivity, not source-flow optimization.
+
+Decision: **BLOCK_V1_ON_USABILITY**.
 
 ## Remaining release sequence
 
