@@ -275,7 +275,7 @@ layout.svg
 layout.json
 ```
 
-The JSON schema version is currently `3`. It contains module placements, resolved ports, exact/scaled objective data, lower bounds, pair distances and contributions, traffic weights, infrastructure counts, mass/journey metrics, search diagnostics and `global_objective_optimum_proven`.
+The JSON schema version is currently `4`. It contains module placements, resolved ports, exact/scaled objective data, lower bounds, pair distances and contributions, traffic weights, infrastructure counts, mass/journey metrics, search diagnostics and `global_objective_optimum_proven`.
 
 PNG/SVG preserve the project grid aspect ratio and distinguish unavailable/core/buildable cells and module types.
 
@@ -401,13 +401,16 @@ Stage 0  data/contract stabilization           COMPLETE / maintain
 Stage 1  unified Module domain                 COMPLETE / maintain
 Stage 2  exact hard-feasibility decomposition  COMPLETE / maintain
 Stage 3  exact objective decomposition         COMPLETE / harden
-Stage 4  benchmark/performance engineering     IN PROGRESS
-Stage 5  user-facing planning quality          planned
-Stage 6  progression-aware mobile Base         deferred
-Stage 7  The Last Variable DLC                 deferred until exact data
+Stage 4  benchmark/performance engineering     COMPLETE / maintain
+Stage 5  user-facing planning quality          COMPLETE / maintain
+Stage 6  progression-aware mobile Base         POST V1
+Stage 7  The Last Variable DLC                 POST V1 / blocked on exact data
 ```
 
-Stage 3 correctness is validated on independently exhaustive tiny known-optimum cases. Stage 4 is improving scalability without weakening those exact semantics. This does **not** imply that a realistic Tier I-IV run will always finish a global proof inside its configured budget; when it does not, the planner reports the best-known feasible result explicitly.
+Stage 3 correctness is validated on independently exhaustive tiny known-optimum cases. Stage 4
+improved scalability without weakening those exact semantics and now remains in maintenance. This
+does **not** imply that a realistic Tier I-IV run will always finish a global proof inside its
+configured budget; when it does not, the planner reports the best-known feasible result explicitly.
 
 The DLC is intentionally not approximated with mobile-Base geometry.
 

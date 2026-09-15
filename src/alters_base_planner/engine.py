@@ -538,6 +538,7 @@ def _solve_instances(
     manhattan_pruned = 0
     incumbent_bound_pruned = 0
     room_packings_examined = 0
+    time_to_first_feasible_s: float | None = None
     time_limit_reached = False
     search_exhausted = False
     attempt_limit_reached = False
@@ -705,6 +706,8 @@ def _solve_instances(
             )
 
         connected_candidates += 1
+        if time_to_first_feasible_s is None:
+            time_to_first_feasible_s = monotonic() - started_at
         room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
             base, rooms, utilities
         )
@@ -746,6 +749,7 @@ def _solve_instances(
             pairwise_distances=distance_metrics.pairwise_distances,
             pairwise_contributions=distance_metrics.pairwise_contributions,
             room_usage_weights=room_usage_weights,
+            time_to_first_feasible_s=time_to_first_feasible_s,
             global_objective_optimum_proven=False,
         )
         if best_result is None or _candidate_rank(candidate_result) < _candidate_rank(best_result):

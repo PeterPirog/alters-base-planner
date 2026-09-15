@@ -556,7 +556,7 @@ SYSTEM modules are injected automatically; Corridor/Elevator are generated autom
 
 ## 13. Output contract
 
-Every run persists machine-readable diagnostics. Feasible JSON schema version 3 includes at least:
+Every run persists machine-readable diagnostics. Feasible JSON schema version 4 includes at least:
 
 ```text
 status
@@ -642,7 +642,7 @@ Delivered:
 
 Stage-3 completion means the architecture can prove the global accepted objective when configured search completes. It does not imply full Base I-IV instances will always complete within practical budgets.
 
-### Stage 4 — Performance and benchmark suite — IN PROGRESS
+### Stage 4 — Performance and benchmark suite — COMPLETE / MAINTAIN
 
 Delivered or active:
 
@@ -654,7 +654,7 @@ Delivered or active:
 - single exact mixed-radix lexicographic-scalarized fixed-objective solve (replacing the four sequential tie-breaker phases), with dominance weights derived from the fixed hard model's utility-anchor domain and a signed-64-bit objective safety check;
 - exact source-aggregated weighted integer flow, reducing up to `N * (N - 1) / 2` pair commodities to at most `N - 1` source commodities for `N` positive-weight rooms.
 
-Remaining Stage-4 work includes:
+Post-v1 performance work may include:
 
 - representative before/after benchmark evidence for accepted optimizations;
 - stronger mathematically safe domain reduction and symmetry breaking;
@@ -663,7 +663,7 @@ Remaining Stage-4 work includes:
 
 No performance claim without reproducible benchmark evidence.
 
-### Stage 5 — User-facing planning quality
+### Stage 5 — User-facing planning quality — COMPLETE / MAINTAIN
 
 The Streamlit entry point supports a default Form mode and an alternative JSON-file mode through
 one canonical parser and solve path. Form mode exposes a prominent Plan settings section with Base
@@ -675,11 +675,11 @@ semantic planning inputs remains unchanged; changed settings hide the stale resu
 solve. Continue improving journey warnings and best-known-vs-proven explanations without weakening
 solver semantics.
 
-### Stage 6 — Progression-aware mobile Base
+### Stage 6 — Progression-aware mobile Base — POST V1
 
 After Stage 3/4 stability, add explicit `act/game_state`, unlocks and already-built/non-removable state. Do not emulate progression with ad-hoc mandatory-list changes.
 
-### Stage 7 — The Last Variable DLC — DEFERRED
+### Stage 7 — The Last Variable DLC — POST V1 / BLOCKED ON EXACT DATA
 
 DLC topology/module rules differ materially. Implement as a separate environment only when exact geometry/data are sufficient. Never approximate DLC with mobile Base masks.
 
