@@ -43,6 +43,19 @@ PAIR_FLOW_FIELDS = (
     "max_actual_variables",
     "max_full_domain_variables",
 )
+LEXICOGRAPHIC_FIELDS = (
+    "used",
+    "max_primary_objective_upper_bound",
+    "max_combined_objective_upper_bound",
+    "max_weight_f",
+    "max_weight_mass",
+    "max_weight_elevator",
+    "max_weight_corridor",
+    "max_corridor_bound",
+    "max_elevator_bound",
+    "max_mass_bound",
+    "max_incumbent_scalar_value",
+)
 
 
 def git_value(*args: str) -> str | None:
@@ -118,6 +131,10 @@ def layout_metadata(layout: dict) -> dict:
             **{key: field(layout, *fixed, key) for key in FIXED_FIELDS},
             "pair_flow_domain": {
                 key: field(layout, *fixed, "pair_flow_domain", key) for key in PAIR_FLOW_FIELDS
+            },
+            "lexicographic_scalarization": {
+                key: field(layout, *fixed, "lexicographic_scalarization", key)
+                for key in LEXICOGRAPHIC_FIELDS
             },
         },
     }

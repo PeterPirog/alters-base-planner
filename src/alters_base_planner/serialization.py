@@ -118,6 +118,25 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     },
                     "max_cp_sat_variables": result.max_fixed_cp_sat_variables,
                     "max_cp_sat_constraints": result.max_fixed_cp_sat_constraints,
+                    "lexicographic_scalarization": {
+                        "used": result.fixed_lexicographic_scalarization_used,
+                        "max_primary_objective_upper_bound": (
+                            result.max_fixed_primary_objective_upper_bound
+                        ),
+                        "max_combined_objective_upper_bound": (
+                            result.max_fixed_combined_objective_upper_bound
+                        ),
+                        "max_weight_f": result.max_fixed_lexicographic_weight_f,
+                        "max_weight_mass": result.max_fixed_lexicographic_weight_mass,
+                        "max_weight_elevator": result.max_fixed_lexicographic_weight_elevator,
+                        "max_weight_corridor": result.max_fixed_lexicographic_weight_corridor,
+                        "max_corridor_bound": result.max_fixed_lexicographic_corridor_bound,
+                        "max_elevator_bound": result.max_fixed_lexicographic_elevator_bound,
+                        "max_mass_bound": result.max_fixed_lexicographic_mass_bound,
+                        "max_incumbent_scalar_value": (
+                            result.max_fixed_incumbent_scalar_value
+                        ),
+                    },
                     "model_build_time_s": result.fixed_model_build_time_s,
                     "cp_sat_solve_time_s": result.fixed_cp_sat_solve_time_s,
                     "total_time_s": result.fixed_subproblem_time_s,
