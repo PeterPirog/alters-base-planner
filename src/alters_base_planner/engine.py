@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 
 from ortools.sat.python import cp_model
 
 from .base import builtin_base
-from .catalog import MODULE_BY_KEY, MODULES
+from .catalog import MODULE_BY_KEY, MODULES, resolve_usage_weights
 from .fixed_flow_objective_solver import (
     FixedFlowObjectiveDiagnostics,
     solve_fixed_layout_flow_objective,
@@ -162,7 +163,11 @@ class _FixedDiagnosticsAggregate:
         result.fixed_subproblem_time_s = self.total_time_s
 
 
-def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_Candidate]:
+def _candidate_positions(
+    instance: ModuleInstance,
+    base: BaseGeometry,
+    usage_weights: Mapping[str, float] | None = None,
+) -> list[_Candidate]:
     """Enumerate legal non-SOLVER positions; ``search_cost`` only orders candidates."""
 
     spec = instance.spec
@@ -180,7 +185,10 @@ def _candidate_positions(instance: ModuleInstance, base: BaseGeometry) -> list[_
             px = x + (spec.width - 1) / 2
             py = y + mean_world_port_offset
             distance = abs(px - cx) + 0.35 * abs(py - cy)
-            search_cost = int(100 * max(spec.visit_weight, 0.05) * distance)
+            usage_weight = (
+                spec.visit_weight if usage_weights is None else usage_weights[spec.key]
+            )
+            search_cost = int(100 * max(usage_weight, 0.05) * distance)
             result.append(_Candidate(x, y, cells, search_cost))
     return result
 
@@ -325,6 +333,7 @@ def _solve_instances(
     max_layout_attempts: int,
     root_instance_id: str = "airlock-1",
     started_at: float | None = None,
+    usage_weights: Mapping[str, float] | None = None,
 ) -> PlanResult:
     """Exact objective decomposition over a supplied non-SOLVER instance set.
 
@@ -339,6 +348,9 @@ def _solve_instances(
         raise ValueError("max_layout_attempts must be positive")
 
     started_at = monotonic() if started_at is None else started_at
+    effective_usage_weights = (
+        resolve_usage_weights() if usage_weights is None else usage_weights
+    )
     fixed_diagnostics = _FixedDiagnosticsAggregate()
     model = cp_model.CpModel()
     candidates: dict[str, list[_Candidate]] = {}
@@ -347,7 +359,7 @@ def _solve_instances(
 
     candidate_order_terms = []
     for instance in instances:
-        candidate_list = _candidate_positions(instance, base)
+        candidate_list = _candidate_positions(instance, base, effective_usage_weights)
         if not candidate_list:
             result = PlanResult(
                 status="INFEASIBLE",
@@ -450,7 +462,7 @@ def _solve_instances(
         if len(chosen_vars) != len(instances):
             raise AssertionError("CP-SAT solution did not select exactly one placement per module")
 
-        objective = build_scaled_objective(rooms)
+        objective = build_scaled_objective(rooms, effective_usage_weights)
         if common_objective is None:
             common_objective = objective
         elif objective != common_objective:
@@ -458,7 +470,11 @@ def _solve_instances(
                 "Objective coefficients changed across room packings for one planning request"
             )
 
-        scaled_lower_bound = scaled_modified_manhattan_lower_bound(rooms, objective)
+        scaled_lower_bound = scaled_modified_manhattan_lower_bound(
+            rooms,
+            objective,
+            effective_usage_weights,
+        )
         incumbent_scaled: int | None = None
         if best_result is not None:
             incumbent_scaled = best_result.scaled_objective_value
@@ -475,13 +491,23 @@ def _solve_instances(
             all_fixed_objectives_resolved = False
             break
 
-        fixed_result = solve_fixed_layout_flow_objective(
-            base,
-            tuple(rooms),
-            time_limit_s=remaining,
-            root_instance_id=root_instance_id,
-            scaled_objective_upper_bound=incumbent_scaled,
-        )
+        if usage_weights is None:
+            fixed_result = solve_fixed_layout_flow_objective(
+                base,
+                tuple(rooms),
+                time_limit_s=remaining,
+                root_instance_id=root_instance_id,
+                scaled_objective_upper_bound=incumbent_scaled,
+            )
+        else:
+            fixed_result = solve_fixed_layout_flow_objective(
+                base,
+                tuple(rooms),
+                time_limit_s=remaining,
+                root_instance_id=root_instance_id,
+                scaled_objective_upper_bound=incumbent_scaled,
+                usage_weights=effective_usage_weights,
+            )
         fixed_diagnostics.observe(fixed_result.diagnostics)
         if fixed_result.status == "TIME_LIMIT":
             time_limit_reached = True
@@ -556,7 +582,7 @@ def _solve_instances(
             base, rooms, utilities
         )
         room_usage_weights = {
-            room.instance_id: MODULE_BY_KEY[room.module_key].visit_weight for room in rooms
+            room.instance_id: effective_usage_weights[room.module_key] for room in rooms
         }
         fixed_status = "proven fixed-packing optimum" if fixed_proven else "best-known fixed packing"
         message = (
@@ -734,10 +760,12 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
         )
     base = base or builtin_base(request.tier)
     instances = expand_instances(MODULES, request.room_counts)
+    effective_usage_weights = resolve_usage_weights(request.usage_weights)
     return _solve_instances(
         base,
         instances,
         time_limit_s=float(request.time_limit_s),
         max_layout_attempts=request.max_layout_attempts,
         started_at=started_at,
+        usage_weights=effective_usage_weights,
     )

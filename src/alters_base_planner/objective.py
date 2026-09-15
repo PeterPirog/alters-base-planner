@@ -67,7 +67,10 @@ class ScaledObjective:
         return scaled_score / self.scale
 
 
-def build_scaled_objective(rooms: Sequence[ModulePlacement]) -> ScaledObjective:
+def build_scaled_objective(
+    rooms: Sequence[ModulePlacement],
+    usage_weights: Mapping[str, float] | None = None,
+) -> ScaledObjective:
     """Build one exact integer objective definition for an installed room set.
 
     Catalogue traffic weights are decimal planner parameters. ``Fraction(str(weight))`` treats
@@ -75,14 +78,19 @@ def build_scaled_objective(rooms: Sequence[ModulePlacement]) -> ScaledObjective:
     round-off into CP-SAT coefficients or global proof comparisons.
     """
 
-    active = [room for room in rooms if MODULE_BY_KEY[room.module_key].visit_weight > 0]
+    def room_weight(room: ModulePlacement) -> float:
+        if usage_weights is None:
+            return MODULE_BY_KEY[room.module_key].visit_weight
+        return usage_weights[room.module_key]
+
+    active = [room for room in rooms if room_weight(room) > 0]
     fractional_pairs: list[tuple[str, str, str, Fraction]] = []
     scale = 1
 
     for index, room_a in enumerate(active):
-        weight_a = Fraction(str(MODULE_BY_KEY[room_a.module_key].visit_weight))
+        weight_a = Fraction(str(room_weight(room_a)))
         for room_b in active[index + 1 :]:
-            weight_b = Fraction(str(MODULE_BY_KEY[room_b.module_key].visit_weight))
+            weight_b = Fraction(str(room_weight(room_b)))
             pair_weight = weight_a * weight_b
             if pair_weight <= 0:
                 raise AssertionError("Positive-weight objective pair has non-positive weight")
@@ -108,10 +116,11 @@ def build_scaled_objective(rooms: Sequence[ModulePlacement]) -> ScaledObjective:
 def scaled_modified_manhattan_lower_bound(
     rooms: Sequence[ModulePlacement],
     objective: ScaledObjective | None = None,
+    usage_weights: Mapping[str, float] | None = None,
 ) -> int:
     """Return the admissible modified-Manhattan lower bound in exact objective units."""
 
-    objective = objective or build_scaled_objective(rooms)
+    objective = objective or build_scaled_objective(rooms, usage_weights)
     by_instance_id = {room.instance_id: room for room in rooms}
     if len(by_instance_id) != len(rooms):
         raise ValueError("Module placement instance IDs must be unique")

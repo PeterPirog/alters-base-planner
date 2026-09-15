@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 
@@ -200,6 +201,7 @@ def solve_global_reference_objective(
     *,
     time_limit_s: float,
     root_instance_id: str = "airlock-1",
+    usage_weights: Mapping[str, float] | None = None,
 ) -> GlobalReferenceResult:
     """Prove the complete accepted objective on tiny instances by exact decomposition.
 
@@ -245,7 +247,7 @@ def solve_global_reference_objective(
 
     packing_entries = [
         (
-            weighted_modified_manhattan_lower_bound(list(rooms)),
+            weighted_modified_manhattan_lower_bound(list(rooms), usage_weights),
             _packing_signature(rooms),
             rooms,
         )
@@ -284,6 +286,7 @@ def solve_global_reference_objective(
             rooms,
             time_limit_s=remaining,
             root_instance_id=root_instance_id,
+            usage_weights=usage_weights,
         )
         room_packings_evaluated += 1
         networks_examined += fixed.networks_examined

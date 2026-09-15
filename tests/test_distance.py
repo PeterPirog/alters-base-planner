@@ -1,6 +1,6 @@
 import pytest
 
-from alters_base_planner.catalog import MODULE_BY_KEY
+from alters_base_planner.catalog import MODULE_BY_KEY, resolve_usage_weights
 from alters_base_planner.distance import (
     _validate_vertical_elevator_coverage,
     evaluate_distances,
@@ -164,6 +164,17 @@ def test_zero_weight_module_still_requires_airlock_connectivity() -> None:
     ]
     with pytest.raises(ValueError, match="storage-1 has no port reachable from the Airlock"):
         evaluate_distances(rooms, [])
+
+
+def test_custom_zero_weight_room_still_requires_airlock_connectivity() -> None:
+    rooms = [
+        ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1),
+        ModulePlacement("workshop-1", "workshop", 8, 0, 4, 1),
+    ]
+    usage_weights = resolve_usage_weights({"workshop": 0.0})
+
+    with pytest.raises(ValueError, match="workshop-1 has no port reachable from the Airlock"):
+        evaluate_distances(rooms, [], usage_weights)
 
 
 def test_floating_solver_utility_is_hard_infeasible() -> None:

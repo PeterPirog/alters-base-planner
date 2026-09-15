@@ -5,13 +5,26 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog import MODULE_BY_KEY, PLAYER_MODULES, SOLVER_MODULES, SYSTEM_MODULES
+from .catalog import (
+    MODULE_BY_KEY,
+    PLAYER_MODULES,
+    SOLVER_MODULES,
+    SYSTEM_MODULES,
+    resolve_usage_weights,
+)
 from .models import PlanRequest
 
 _PLAYER_KEYS = {module.key for module in PLAYER_MODULES}
 _SYSTEM_KEYS = {module.key for module in SYSTEM_MODULES}
 _SOLVER_KEYS = {module.key for module in SOLVER_MODULES}
-_TOP_LEVEL_KEYS = {"$schema", "base_tier", "rooms", "solver", "output"}
+_TOP_LEVEL_KEYS = {
+    "$schema",
+    "base_tier",
+    "rooms",
+    "usage_weights",
+    "solver",
+    "output",
+}
 _SOLVER_CONFIG_KEYS = {"objective", "time_limit_s", "max_layout_attempts"}
 _OUTPUT_KEYS = {"svg", "png", "json"}
 
@@ -62,9 +75,9 @@ def _reject_unknown_keys(raw: dict[str, object], allowed: set[str], field: str) 
         raise ValueError(f"Unknown {field} keys: {', '.join(unknown)}")
 
 
-def load_plan_config(path: str | Path) -> LoadedPlanConfig:
-    path = Path(path)
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def parse_plan_config(raw: object) -> LoadedPlanConfig:
+    """Validate an already-decoded plan configuration."""
+
     if not isinstance(raw, dict):
         raise ValueError("Plan configuration root must be a JSON object")
 
@@ -110,6 +123,14 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
             raise ValueError(f"rooms.{key} must be <= {max_count}")
         room_counts[key] = count
 
+    usage_weights_raw = raw.get("usage_weights", {})
+    if not isinstance(usage_weights_raw, dict):
+        raise ValueError("usage_weights must be a JSON object mapping module keys to weights")
+    effective_usage_weights = resolve_usage_weights(usage_weights_raw)
+    usage_weight_overrides = {
+        key: effective_usage_weights[key] for key in usage_weights_raw
+    }
+
     solver = raw.get("solver", {})
     if not isinstance(solver, dict):
         raise ValueError("solver must be a JSON object")
@@ -139,9 +160,67 @@ def load_plan_config(path: str | Path) -> LoadedPlanConfig:
         request=PlanRequest(
             tier=tier,
             room_counts=room_counts,
+            usage_weights=usage_weight_overrides,
             objective="weighted_pair_distance",
             time_limit_s=time_limit_s,
             max_layout_attempts=max_layout_attempts,
         ),
         output=OutputConfig(svg=Path(svg), png=Path(png), json=Path(json_path)),
     )
+
+
+def load_plan_config(path: str | Path) -> LoadedPlanConfig:
+    """Load a plan JSON file and delegate validation to the canonical parser."""
+
+    path = Path(path)
+    return parse_plan_config(json.loads(path.read_text(encoding="utf-8")))
+
+
+def build_plan_config_data(
+    *,
+    base_tier: int,
+    room_counts: dict[str, int],
+    usage_weights: dict[str, float],
+    time_limit_s: float,
+    max_layout_attempts: int,
+    output: OutputConfig | None = None,
+) -> dict[str, object]:
+    """Build a stable, canonical plan payload from form values."""
+
+    invalid_room_keys = sorted(set(room_counts) - _PLAYER_KEYS)
+    if invalid_room_keys:
+        raise ValueError(f"Form room counts contain non-PLAYER keys: {invalid_room_keys}")
+
+    effective_usage_weights = resolve_usage_weights(usage_weights)
+    output = output or OutputConfig()
+    payload: dict[str, object] = {
+        "$schema": "./plan.schema.json",
+        "base_tier": base_tier,
+        "rooms": {
+            key: int(room_counts.get(key, 0))
+            for key in sorted(_PLAYER_KEYS)
+        },
+        "usage_weights": {
+            key: effective_usage_weights[key]
+            for key in sorted(effective_usage_weights)
+        },
+        "solver": {
+            "objective": "weighted_pair_distance",
+            "time_limit_s": float(time_limit_s),
+            "max_layout_attempts": int(max_layout_attempts),
+        },
+        "output": {
+            "svg": str(output.svg),
+            "png": str(output.png),
+            "json": str(output.json),
+        },
+    }
+    parse_plan_config(payload)
+    return payload
+
+
+def plan_config_json(payload: object) -> str:
+    """Serialize a canonical plan payload for reproducible download."""
+
+    parse_plan_config(payload)
+    return json.dumps(payload, indent=2, ensure_ascii=True) + "\n"

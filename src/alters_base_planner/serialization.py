@@ -13,8 +13,20 @@ def average_pair_distance(result: PlanResult) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def _placed_module_payload(module: ModulePlacement) -> dict[str, object]:
+def _placed_module_payload(
+    module: ModulePlacement,
+    room_usage_weights: dict[str, float],
+) -> dict[str, object]:
     spec = MODULE_BY_KEY[module.module_key]
+    if spec.authority is PlacementAuthority.SOLVER:
+        usage_weight = 0.0
+    else:
+        try:
+            usage_weight = room_usage_weights[module.instance_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"Missing effective usage weight for {module.instance_id}"
+            ) from exc
     return {
         "instance_id": module.instance_id,
         "module_key": module.module_key,
@@ -22,7 +34,7 @@ def _placed_module_payload(module: ModulePlacement) -> dict[str, object]:
         "module_type": spec.module_type.value,
         "placement_authority": spec.authority.value,
         "mass": spec.mass,
-        "usage_weight": spec.visit_weight,
+        "usage_weight": usage_weight,
         "transit_allowed": spec.transit_allowed,
         "vertical_connectivity": spec.vertical_connectivity,
         "x": module.x,
@@ -162,5 +174,8 @@ def result_payload(result: PlanResult) -> dict[str, object]:
             "mass_breakdown": result.mass_breakdown,
         },
         "module_counts_by_authority": authority_counts,
-        "modules": [_placed_module_payload(module) for module in result.modules],
+        "modules": [
+            _placed_module_payload(module, result.room_usage_weights)
+            for module in result.modules
+        ],
     }

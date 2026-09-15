@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 
@@ -84,6 +85,7 @@ def solve_fixed_layout_objective(
     *,
     time_limit_s: float,
     root_instance_id: str = "airlock-1",
+    usage_weights: Mapping[str, float] | None = None,
 ) -> FixedObjectiveResult:
     """Enumerate hard-feasible utility networks and optimize exact ``F`` lexicographically.
 
@@ -104,7 +106,7 @@ def solve_fixed_layout_objective(
         rooms,
         root_instance_id=root_instance_id,
     )
-    lower_bound = weighted_modified_manhattan_lower_bound(list(rooms))
+    lower_bound = weighted_modified_manhattan_lower_bound(list(rooms), usage_weights)
     deadline = monotonic() + float(time_limit_s)
 
     solver = cp_model.CpSolver()
@@ -171,7 +173,7 @@ def solve_fixed_layout_objective(
         seen_networks.add(signature)
 
         try:
-            metrics = evaluate_distances(list(rooms), list(utilities))
+            metrics = evaluate_distances(list(rooms), list(utilities), usage_weights)
         except ValueError as exc:
             raise AssertionError(
                 "Hard-feasible utility selection was rejected by the exact distance evaluator"

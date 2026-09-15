@@ -247,13 +247,18 @@ def render_png(result: PlanResult, path: str | Path, dpi: int = 180) -> None:
     ]
     for key in used_module_keys:
         spec = MODULE_BY_KEY[key]
+        instance_id = next(room.instance_id for room in rooms if room.module_key == key)
+        try:
+            usage_weight = result.room_usage_weights[instance_id]
+        except KeyError as exc:
+            raise ValueError(f"Missing effective usage weight for {instance_id}") from exc
         legend_handles.append(
             Patch(
                 facecolor=MODULE_COLORS[key],
                 edgecolor="black",
                 label=(
                     f"{spec.name} — {spec.width}×{spec.height}, "
-                    f"mass {spec.mass}, weight {spec.visit_weight:.2f}"
+                    f"mass {spec.mass}, weight {usage_weight:.2f}"
                 ),
             )
         )

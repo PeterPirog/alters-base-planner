@@ -27,6 +27,7 @@ def example_files(tmp_path, monkeypatch):
     result = PlanResult(
         status="FEASIBLE", base=builtin_base(1),
         modules=[ModulePlacement("airlock-1", "airlock", 0, 0, 4, 1)],
+        room_usage_weights={"airlock-1": 1.0},
         objective_value=1.25, weighted_distance_score=1.25,
         objective_scale=100, scaled_objective_value=125,
         scaled_modified_manhattan_lower_bound=100, modified_manhattan_lower_bound=1.0,

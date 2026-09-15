@@ -32,7 +32,8 @@ Given:
 
 1. Base tier I, II, III or IV;
 2. exact requested counts of PLAYER modules;
-3. solver budget/configuration;
+3. optional per-plan SYSTEM/PLAYER traffic-weight overrides;
+4. solver budget/configuration;
 
 produce a layout that:
 
@@ -423,7 +424,16 @@ Accepted lexicographic order:
 
 Traffic weights come from `src/alters_base_planner/data/usage_weights.json` and are planner heuristics, not hidden game constants.
 
-Decimal weights are converted through exact rational arithmetic to integer coefficients. CP-SAT objective comparison, Dijkstra reconstruction and room-packing pruning use the same `ScaledObjective` definition.
+A plan may override known SYSTEM/PLAYER keys with finite numeric values in `[0, 1]`. Missing
+keys inherit catalogue defaults. Overrides are immutable per-request inputs: they must not mutate
+the catalogue or affect later plans. Corridor and Elevator are not endpoint destinations, retain
+effective weight `0`, and are rejected from `usage_weights`. A zero override removes that room
+from objective pairs only; every hard placement and connectivity requirement remains active.
+
+Effective per-plan decimal weights are resolved once for a solve and converted through exact
+rational arithmetic to integer coefficients. CP-SAT objective comparison, Dijkstra reconstruction,
+modified-Manhattan room-packing pruning and all correctness oracles use the same explicit map and
+`ScaledObjective` definition.
 
 No undocumented competing objective is allowed.
 
@@ -654,7 +664,15 @@ No performance claim without reproducible benchmark evidence.
 
 ### Stage 5 — User-facing planning quality
 
-Improve CLI/Streamlit clarity, SYSTEM-vs-PLAYER controls, journey warnings, downloads and best-known-vs-proven explanations.
+The Streamlit entry point supports a default Form mode and an alternative JSON-file mode through
+one canonical parser and solve path. Form mode exposes a prominent Plan settings section with Base
+tier and optimization time, locked mandatory SYSTEM counts, bounded PLAYER counts, solver-generated
+infrastructure labels, editable/resettable per-plan usage weights, advanced layout-attempt controls
+and reproducible pre-solve plan JSON download. The interactive default time is 60 seconds. A stored
+result and optimized Base image survive ordinary reruns only while a deterministic signature of the
+semantic planning inputs remains unchanged; changed settings hide the stale result and request a new
+solve. Continue improving journey warnings and best-known-vs-proven explanations without weakening
+solver semantics.
 
 ### Stage 6 — Progression-aware mobile Base
 

@@ -34,6 +34,7 @@ def _sample_result() -> PlanResult:
         normalized_weighted_distance=1.0,
         modified_manhattan_lower_bound=0.9,
         pairwise_distances={"airlock-1|workshop-1": 1},
+        room_usage_weights={"airlock-1": 1.0, "workshop-1": 0.9},
         room_mass=12,
         utility_mass=2,
         total_mass=14,
@@ -99,6 +100,7 @@ def test_serialized_result_is_one_module_collection_with_authority() -> None:
         "player",
         "solver",
     ]
+    assert [module["usage_weight"] for module in modules] == [1.0, 0.9, 0.0]
     corridor = modules[2]
     assert corridor["module_key"] == "corridor"
     assert corridor["mass"] == MODULE_BY_KEY["corridor"].mass
