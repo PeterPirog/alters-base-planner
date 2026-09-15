@@ -5,7 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from .benchmark import BenchmarkCase, REPRESENTATIVE_CASES, run_cases, write_report
+from .benchmark import REPRESENTATIVE_CASES, BenchmarkCase, run_cases, write_report
 
 # Release-acceptance budgets are deliberately longer than the representative benchmark budgets.
 # They are measurement windows, not runtime SLAs and not optimality-proof requirements.
