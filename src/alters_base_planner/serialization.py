@@ -3,7 +3,7 @@ from __future__ import annotations
 from .catalog import MODULE_BY_KEY
 from .models import ModulePlacement, PlacementAuthority, PlanResult, resolve_ports
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 
 
 def average_pair_distance(result: PlanResult) -> float:
@@ -120,12 +120,16 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     "max_graph_nodes": result.max_fixed_graph_nodes,
                     "max_graph_arcs": result.max_fixed_graph_arcs,
                     "max_objective_pairs": result.max_fixed_objective_pairs,
-                    "pair_flow_domain": {
-                        "max_actual_variables": result.max_fixed_pair_flow_variables,
-                        "max_full_domain_variables": result.max_fixed_pair_flow_full_variables,
-                        "total_actual_variables": result.total_fixed_pair_flow_variables,
+                    "flow_formulation": result.fixed_flow_formulation,
+                    "source_flow_domain": {
+                        "max_commodities": result.max_fixed_source_commodities,
+                        "max_actual_variables": result.max_fixed_source_flow_variables,
+                        "max_full_domain_variables": (
+                            result.max_fixed_source_flow_full_variables
+                        ),
+                        "total_actual_variables": result.total_fixed_source_flow_variables,
                         "total_full_domain_variables": (
-                            result.total_fixed_pair_flow_full_variables
+                            result.total_fixed_source_flow_full_variables
                         ),
                     },
                     "max_cp_sat_variables": result.max_fixed_cp_sat_variables,
@@ -152,6 +156,18 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     "model_build_time_s": result.fixed_model_build_time_s,
                     "cp_sat_solve_time_s": result.fixed_cp_sat_solve_time_s,
                     "total_time_s": result.fixed_subproblem_time_s,
+                    "build_phases": {
+                        "hard_model_time_s": result.fixed_hard_model_build_time_s,
+                        "path_graph_time_s": result.fixed_path_graph_build_time_s,
+                        "objective_definition_time_s": (
+                            result.fixed_objective_definition_time_s
+                        ),
+                        "source_flow_time_s": result.fixed_source_flow_model_build_time_s,
+                        "lexicographic_finalize_time_s": (
+                            result.fixed_lexicographic_finalize_time_s
+                        ),
+                        "total_model_build_time_s": result.fixed_model_build_time_s,
+                    },
                 },
             },
             "infrastructure": {

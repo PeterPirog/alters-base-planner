@@ -50,7 +50,9 @@ def _force_status(forced: int):
 
 def test_model_invalid_fails_fast(monkeypatch) -> None:
     monkeypatch.setattr(flow_solver, "_solve_phase", _inject_status(cp_model.MODEL_INVALID))
-    with pytest.raises(AssertionError, match="rejected the fixed pair-flow objective model"):
+    with pytest.raises(
+        AssertionError, match="rejected the fixed source-aggregated flow objective model"
+    ):
         flow_solver.solve_fixed_layout_flow_objective(_base(), _rooms(), time_limit_s=5.0)
 
 

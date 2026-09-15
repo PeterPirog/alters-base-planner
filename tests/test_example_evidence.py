@@ -49,8 +49,15 @@ def example_files(tmp_path, monkeypatch):
         max_fixed_lexicographic_mass_bound=72, max_fixed_incumbent_scalar_value=63042,
         fixed_model_build_time_s=0.12,
         fixed_cp_sat_solve_time_s=0.51, fixed_subproblem_time_s=0.69,
-        max_fixed_pair_flow_variables=2100, max_fixed_pair_flow_full_variables=3360,
-        total_fixed_pair_flow_variables=7200, total_fixed_pair_flow_full_variables=12000,
+        fixed_hard_model_build_time_s=0.04,
+        fixed_path_graph_build_time_s=0.01,
+        fixed_objective_definition_time_s=0.01,
+        fixed_source_flow_model_build_time_s=0.05,
+        fixed_lexicographic_finalize_time_s=0.01,
+        max_fixed_source_commodities=7,
+        max_fixed_source_flow_variables=2100, max_fixed_source_flow_full_variables=3360,
+        total_fixed_source_flow_variables=7200,
+        total_fixed_source_flow_full_variables=12000,
     )
     payload = result_payload(result)
     (tmp_path / "layout.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -75,7 +82,7 @@ def test_feasible_package_copies_outputs_metadata_and_exact_zip_members(example_
     run = run_helper(root, "--optimizer-exit-code", "0")
     assert run.returncode == 0, run.stderr
     metadata = read_metadata(root)
-    assert metadata["schema_version"] == 1
+    assert metadata["schema_version"] == 2
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=SCRIPT.parents[1], text=True
     ).strip()
@@ -131,11 +138,23 @@ def test_diagnostics_are_extracted_from_canonical_serialization(example_files):
     search = payload["optimization"]["search_diagnostics"]
     for key, value in search.items():
         assert metadata[key] == value
-    assert metadata["fixed_subproblems"]["pair_flow_domain"] == {
+    assert metadata["fixed_subproblems"]["flow_formulation"] == (
+        "source_aggregated_weighted_flow"
+    )
+    assert metadata["fixed_subproblems"]["source_flow_domain"] == {
+        "max_commodities": 7,
         "total_actual_variables": 7200,
         "total_full_domain_variables": 12000,
         "max_actual_variables": 2100,
         "max_full_domain_variables": 3360,
+    }
+    assert metadata["fixed_subproblems"]["build_phases"] == {
+        "hard_model_time_s": 0.04,
+        "path_graph_time_s": 0.01,
+        "objective_definition_time_s": 0.01,
+        "source_flow_time_s": 0.05,
+        "lexicographic_finalize_time_s": 0.01,
+        "total_model_build_time_s": 0.12,
     }
     assert metadata["fixed_subproblems"]["lexicographic_scalarization"] == {
         "used": True,
@@ -178,7 +197,10 @@ def test_failure_keeps_json_and_nulls_without_images(tmp_path, monkeypatch, stat
         "structural_feasible", "journey_feasible", "search_time_s",
     ):
         assert metadata[key] is None
-    assert all(value is None for value in metadata["fixed_subproblems"]["pair_flow_domain"].values())
+    assert all(
+        value is None
+        for value in metadata["fixed_subproblems"]["source_flow_domain"].values()
+    )
     with ZipFile(next(tmp_path.glob("*.zip"))) as archive:
         assert set(archive.namelist()) == {
             PREFIX + "input/example-plan.json", PREFIX + "output/layout.json",

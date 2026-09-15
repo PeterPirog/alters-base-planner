@@ -468,12 +468,12 @@ Production uses:
 ```text
 CP-SAT room-packing master
         -> exact scaled room-packing lower bound
-        -> exact fixed-packing pair-flow objective CP-SAT
+        -> exact fixed-packing source-aggregated flow objective CP-SAT
         -> independent Dijkstra cross-check
         -> exact global lexicographic incumbent
 ```
 
-The fixed subproblem jointly chooses Corridor/Elevator infrastructure and one legal path for each positive-weight room pair. Accepted distance costs are represented directly as conditional graph arc costs.
+The fixed subproblem jointly chooses Corridor/Elevator infrastructure and exact weighted integer flows. Every unordered positive-weight room pair is oriented once by deterministic instance-ID order. Pairs with the same source share one uncapacitated commodity: source supply is the sum of their exact scaled coefficients, and each target absorbs its pair coefficient. Accepted distance costs are represented directly as conditional graph arc costs.
 
 The fixed packing is optimized with a **single exact lexicographic-scalarized objective**, replacing the previous four sequential proof-preserving phases:
 
@@ -556,7 +556,7 @@ SYSTEM modules are injected automatically; Corridor/Elevator are generated autom
 
 ## 13. Output contract
 
-Every run persists machine-readable diagnostics. Feasible JSON schema version 2 includes at least:
+Every run persists machine-readable diagnostics. Feasible JSON schema version 3 includes at least:
 
 ```text
 status
@@ -630,7 +630,7 @@ Delivered exact fixed-packing Corridor/Elevator feasibility with shared occupanc
 
 Delivered:
 
-- exact pair-flow path-cost representation for fixed room packings;
+- exact source-aggregated weighted-flow representation for fixed room packings;
 - exact rational-to-integer objective scaling;
 - exact fixed-packing `F -> mass -> Elevator -> Corridor` proof phases;
 - admissible exact integer room-packing lower bounds;
@@ -651,7 +651,8 @@ Delivered or active:
 - auditable pruning/proof-completion diagnostics;
 - opt-in reproducible benchmark workflow;
 - exact equality-preserving incumbent objective cut for fixed subproblems;
-- single exact mixed-radix lexicographic-scalarized fixed-objective solve (replacing the four sequential tie-breaker phases), with dominance weights derived from the fixed hard model's utility-anchor domain and a signed-64-bit objective safety check.
+- single exact mixed-radix lexicographic-scalarized fixed-objective solve (replacing the four sequential tie-breaker phases), with dominance weights derived from the fixed hard model's utility-anchor domain and a signed-64-bit objective safety check;
+- exact source-aggregated weighted integer flow, reducing up to `N * (N - 1) / 2` pair commodities to at most `N - 1` source commodities for `N` positive-weight rooms.
 
 Remaining Stage-4 work includes:
 

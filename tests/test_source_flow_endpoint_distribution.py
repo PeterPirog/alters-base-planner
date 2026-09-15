@@ -1,35 +1,37 @@
 import pytest
 from ortools.sat.python import cp_model
 
-from alters_base_planner.fixed_flow_objective_solver import _endpoint_choice
+from alters_base_planner.fixed_flow_objective_solver import _integer_distribution
 
 
-def test_singleton_endpoint_choice_uses_constant_without_cp_sat_variable() -> None:
+def test_singleton_endpoint_distribution_uses_constant_without_cp_sat_variable() -> None:
     model = cp_model.CpModel()
 
-    choice = _endpoint_choice(
+    choice = _integer_distribution(
         model,
-        pair_id="airlock-1|workshop-1",
-        role="source",
+        commodity_id="airlock-1",
+        role="supply",
         nodes=("room:airlock-1:port:right",),
+        total=7,
     )
 
-    assert choice == {"room:airlock-1:port:right": 1}
+    assert choice == {"room:airlock-1:port:right": 7}
     assert len(model.Proto().variables) == 0
     assert len(model.Proto().constraints) == 0
 
 
-def test_multiple_endpoint_choices_keep_exactly_one_boolean_decision() -> None:
+def test_multiple_endpoint_ports_split_one_exact_integer_total() -> None:
     model = cp_model.CpModel()
 
-    choice = _endpoint_choice(
+    choice = _integer_distribution(
         model,
-        pair_id="airlock-1|workshop-1",
-        role="target",
+        commodity_id="airlock-1",
+        role="demand_workshop-1",
         nodes=(
             "room:workshop-1:port:left",
             "room:workshop-1:port:right",
         ),
+        total=7,
     )
 
     assert set(choice) == {
@@ -40,11 +42,12 @@ def test_multiple_endpoint_choices_keep_exactly_one_boolean_decision() -> None:
     assert len(model.Proto().constraints) == 1
 
 
-def test_endpoint_choice_rejects_empty_domain() -> None:
+def test_endpoint_distribution_rejects_empty_domain() -> None:
     with pytest.raises(ValueError, match="at least one candidate node"):
-        _endpoint_choice(
+        _integer_distribution(
             cp_model.CpModel(),
-            pair_id="airlock-1|workshop-1",
-            role="source",
+            commodity_id="airlock-1",
+            role="supply",
             nodes=(),
+            total=7,
         )

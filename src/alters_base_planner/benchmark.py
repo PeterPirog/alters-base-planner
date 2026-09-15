@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 4
+BENCHMARK_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,15 +66,22 @@ class BenchmarkRecord:
     max_fixed_graph_nodes: int
     max_fixed_graph_arcs: int
     max_fixed_objective_pairs: int
-    max_fixed_pair_flow_variables: int
-    max_fixed_pair_flow_full_variables: int
-    total_fixed_pair_flow_variables: int
-    total_fixed_pair_flow_full_variables: int
+    fixed_flow_formulation: str
+    max_fixed_source_commodities: int
+    max_fixed_source_flow_variables: int
+    max_fixed_source_flow_full_variables: int
+    total_fixed_source_flow_variables: int
+    total_fixed_source_flow_full_variables: int
     max_fixed_cp_sat_variables: int
     max_fixed_cp_sat_constraints: int
     fixed_model_build_time_s: float
     fixed_cp_sat_solve_time_s: float
     fixed_subproblem_time_s: float
+    fixed_hard_model_build_time_s: float
+    fixed_path_graph_build_time_s: float
+    fixed_objective_definition_time_s: float
+    fixed_source_flow_model_build_time_s: float
+    fixed_lexicographic_finalize_time_s: float
 
 
 SMOKE_CASES: tuple[BenchmarkCase, ...] = (
@@ -195,15 +202,22 @@ def record_from_result(
         max_fixed_graph_nodes=result.max_fixed_graph_nodes,
         max_fixed_graph_arcs=result.max_fixed_graph_arcs,
         max_fixed_objective_pairs=result.max_fixed_objective_pairs,
-        max_fixed_pair_flow_variables=result.max_fixed_pair_flow_variables,
-        max_fixed_pair_flow_full_variables=result.max_fixed_pair_flow_full_variables,
-        total_fixed_pair_flow_variables=result.total_fixed_pair_flow_variables,
-        total_fixed_pair_flow_full_variables=result.total_fixed_pair_flow_full_variables,
+        fixed_flow_formulation=result.fixed_flow_formulation,
+        max_fixed_source_commodities=result.max_fixed_source_commodities,
+        max_fixed_source_flow_variables=result.max_fixed_source_flow_variables,
+        max_fixed_source_flow_full_variables=result.max_fixed_source_flow_full_variables,
+        total_fixed_source_flow_variables=result.total_fixed_source_flow_variables,
+        total_fixed_source_flow_full_variables=result.total_fixed_source_flow_full_variables,
         max_fixed_cp_sat_variables=result.max_fixed_cp_sat_variables,
         max_fixed_cp_sat_constraints=result.max_fixed_cp_sat_constraints,
         fixed_model_build_time_s=result.fixed_model_build_time_s,
         fixed_cp_sat_solve_time_s=result.fixed_cp_sat_solve_time_s,
         fixed_subproblem_time_s=result.fixed_subproblem_time_s,
+        fixed_hard_model_build_time_s=result.fixed_hard_model_build_time_s,
+        fixed_path_graph_build_time_s=result.fixed_path_graph_build_time_s,
+        fixed_objective_definition_time_s=result.fixed_objective_definition_time_s,
+        fixed_source_flow_model_build_time_s=result.fixed_source_flow_model_build_time_s,
+        fixed_lexicographic_finalize_time_s=result.fixed_lexicographic_finalize_time_s,
     )
 
 
@@ -283,6 +297,33 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
     lines.extend(
         [
             "",
+            "## Fixed-model build phases",
+            "",
+            "All timing columns are totals across fixed-packing subproblems in the run.",
+            "",
+            "| Case | Hard model s | Path graph s | Objective s | Source flow s | Lex finalize s | Total build s |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        lines.append(
+            "| {name} | {hard:.3f} | {graph:.3f} | {objective:.3f} | {flow:.3f} | "
+            "{finalize:.3f} | {total:.3f} |".format(
+                name=raw["name"],
+                hard=raw["fixed_hard_model_build_time_s"],
+                graph=raw["fixed_path_graph_build_time_s"],
+                objective=raw["fixed_objective_definition_time_s"],
+                flow=raw["fixed_source_flow_model_build_time_s"],
+                finalize=raw["fixed_lexicographic_finalize_time_s"],
+                total=raw["fixed_model_build_time_s"],
+            )
+        )
+
+    lines.extend(
+        [
+            "",
             "## Fixed-packing model diagnostics",
             "",
             "Counts are maxima over fixed-packing subproblems in the run; timing columns are totals.",
@@ -313,27 +354,29 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
     lines.extend(
         [
             "",
-            "## Pair-flow domain reduction",
+            "## Source-aggregated flow domain reduction",
             "",
-            "Actual counts are pair-flow Boolean variables after exact pair-specific domain reduction; full-domain counts are the previous pairs x graph-arcs formulation.",
+            "Actual counts are source-flow integer arc variables after exact source-specific domain reduction; full-domain counts are source commodities x graph arcs before that reduction.",
             "",
-            "| Case | Max actual | Max full | Total actual | Total full | Removed | Reduction |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Case | Formulation | Max commodities | Max actual | Max full | Total actual | Total full | Removed | Reduction |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for raw in results:
         if not isinstance(raw, dict):
             raise ValueError("Invalid benchmark result row")
-        actual = raw["total_fixed_pair_flow_variables"]
-        full = raw["total_fixed_pair_flow_full_variables"]
+        actual = raw["total_fixed_source_flow_variables"]
+        full = raw["total_fixed_source_flow_full_variables"]
         removed = full - actual
         reduction = "-" if full == 0 else f"{100.0 * removed / full:.1f}%"
         lines.append(
-            "| {name} | {max_actual} | {max_full} | {actual} | {full} | {removed} | "
+            "| {name} | {formulation} | {commodities} | {max_actual} | {max_full} | {actual} | {full} | {removed} | "
             "{reduction} |".format(
                 name=raw["name"],
-                max_actual=raw["max_fixed_pair_flow_variables"],
-                max_full=raw["max_fixed_pair_flow_full_variables"],
+                formulation=raw["fixed_flow_formulation"],
+                commodities=raw["max_fixed_source_commodities"],
+                max_actual=raw["max_fixed_source_flow_variables"],
+                max_full=raw["max_fixed_source_flow_full_variables"],
                 actual=actual,
                 full=full,
                 removed=removed,

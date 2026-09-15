@@ -21,7 +21,7 @@ The production solver now uses an **exact objective decomposition**:
 ```text
 CP-SAT SYSTEM/PLAYER room-packing master
         -> exact integer modified-Manhattan lower bound
-        -> exact fixed-packing pair-flow CP-SAT
+        -> exact fixed-packing source-aggregated flow CP-SAT
              optional exact cut: scaled_F <= incumbent_scaled_F
              jointly selects Corridor/Elevator infrastructure
              minimizes exact weighted travel F
@@ -32,7 +32,7 @@ CP-SAT SYSTEM/PLAYER room-packing master
 
 The old deterministic greedy post-router is not part of the correctness boundary.
 
-For a fixed room packing, the pair-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT returns `OPTIMAL` for its single exact mixed-radix lexicographic-scalarized objective. Across room packings, the master may prune by the admissible lower bound only when:
+For a fixed room packing, the source-aggregated weighted-flow subproblem jointly chooses legal infrastructure and proves the accepted lexicographic optimum when CP-SAT returns `OPTIMAL` for its single exact mixed-radix lexicographic-scalarized objective. Across room packings, the master may prune by the admissible lower bound only when:
 
 ```text
 scaled_F_LB > incumbent_scaled_F
@@ -61,7 +61,7 @@ fixed_objective_oracle.py
     exhaustive infrastructure optimization for one fixed room packing
 
 fixed_flow_objective_solver.py
-    production fixed-packing pair-flow formulation
+    production fixed-packing source-aggregated weighted-flow formulation
     cross-validated against the exhaustive fixed oracle
 
 global_objective_oracle.py
@@ -224,7 +224,7 @@ The accepted lexicographic optimization order is:
 ```
 
 Effective per-plan decimal weights are converted to exact rational/integer coefficients for
-CP-SAT and proof comparisons. The same resolved map is used by pair-flow optimization,
+CP-SAT and proof comparisons. The same resolved map is used by weighted-flow optimization,
 modified-Manhattan bounds and independent Dijkstra evaluation. Result JSON includes both the
 user-facing objective, effective room weights and its exact scaled integer representation.
 
@@ -275,7 +275,7 @@ layout.svg
 layout.json
 ```
 
-The JSON schema version is currently `2`. It contains module placements, resolved ports, exact/scaled objective data, lower bounds, pair distances and contributions, traffic weights, infrastructure counts, mass/journey metrics, search diagnostics and `global_objective_optimum_proven`.
+The JSON schema version is currently `3`. It contains module placements, resolved ports, exact/scaled objective data, lower bounds, pair distances and contributions, traffic weights, infrastructure counts, mass/journey metrics, search diagnostics and `global_objective_optimum_proven`.
 
 PNG/SVG preserve the project grid aspect ratio and distinguish unavailable/core/buildable cells and module types.
 

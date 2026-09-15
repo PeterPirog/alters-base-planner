@@ -343,10 +343,12 @@ class PlanResult:
     max_fixed_graph_nodes: int = 0
     max_fixed_graph_arcs: int = 0
     max_fixed_objective_pairs: int = 0
-    max_fixed_pair_flow_variables: int = 0
-    max_fixed_pair_flow_full_variables: int = 0
-    total_fixed_pair_flow_variables: int = 0
-    total_fixed_pair_flow_full_variables: int = 0
+    fixed_flow_formulation: str = "source_aggregated_weighted_flow"
+    max_fixed_source_commodities: int = 0
+    max_fixed_source_flow_variables: int = 0
+    max_fixed_source_flow_full_variables: int = 0
+    total_fixed_source_flow_variables: int = 0
+    total_fixed_source_flow_full_variables: int = 0
     max_fixed_cp_sat_variables: int = 0
     max_fixed_cp_sat_constraints: int = 0
     fixed_model_build_time_s: float = 0.0
@@ -363,6 +365,11 @@ class PlanResult:
     max_fixed_lexicographic_elevator_bound: int = 0
     max_fixed_lexicographic_mass_bound: int = 0
     max_fixed_incumbent_scalar_value: int | None = None
+    fixed_hard_model_build_time_s: float = 0.0
+    fixed_path_graph_build_time_s: float = 0.0
+    fixed_objective_definition_time_s: float = 0.0
+    fixed_source_flow_model_build_time_s: float = 0.0
+    fixed_lexicographic_finalize_time_s: float = 0.0
 
     @property
     def used_cells(self) -> set[tuple[int, int]]:

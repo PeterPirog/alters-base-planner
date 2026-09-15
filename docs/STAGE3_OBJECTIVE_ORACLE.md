@@ -16,7 +16,7 @@ The production solver now uses an exact decomposition:
 ```text
 CP-SAT SYSTEM/PLAYER room-packing master
         -> exact integer modified-Manhattan lower bound
-        -> exact fixed-packing pair-flow CP-SAT
+        -> exact fixed-packing source-aggregated flow CP-SAT
              Corridor/Elevator selection
              hard connectivity
              exact weighted travel F
@@ -87,7 +87,7 @@ It enumerates distinct Corridor/Elevator selections allowed by the Stage-2 hard 
 
 Its role is correctness validation, not production-scale solving.
 
-## Fixed-packing pair-flow production solver
+## Fixed-packing source-aggregated flow production solver
 
 `src/alters_base_planner/fixed_flow_objective_solver.py` is the production exact objective subproblem.
 
@@ -104,7 +104,7 @@ non-transit room                        = no internal side-to-side arc
 vertical movement                       = adjacent same-x Elevators only
 ```
 
-All pair flows share the same Corridor/Elevator decision variables. Infrastructure is therefore optimized jointly rather than independently for each pair.
+All source commodities share the same Corridor/Elevator decision variables. Infrastructure is therefore optimized jointly rather than independently for each pair.
 
 ### Lexicographic scalarization
 
@@ -125,7 +125,7 @@ The proof is set only when CP-SAT returns `OPTIMAL` for that single scalarized o
 
 Every returned infrastructure witness is evaluated independently by the existing Dijkstra graph evaluator.
 
-The solver evaluates the primary pair-flow expression directly with exact integer `CpSolver.value()` and independently reconstructs scaled `F` from `DistanceMetrics.pairwise_distances`. A disagreement between pair-flow CP-SAT and Dijkstra raises an internal assertion. The complete scalarized expression is evaluated exactly and checked separately against the reconstructed `(F, mass, Elevator, Corridor)` tuple.
+The solver evaluates the primary source-flow expression directly with exact integer `CpSolver.value()` and independently reconstructs scaled `F` from `DistanceMetrics.pairwise_distances`. A disagreement between source-flow CP-SAT and Dijkstra raises an internal assertion. The complete scalarized expression is evaluated exactly and checked separately against the reconstructed `(F, mass, Elevator, Corridor)` tuple.
 
 Model/evaluator disagreement is an internal correctness defect, never ordinary infeasibility.
 
@@ -140,7 +140,7 @@ The master:
 3. computes the shared exact integer objective definition;
 4. computes the admissible exact integer modified-Manhattan bound;
 5. prunes only a strict `scaled_F_LB > incumbent_scaled_F`;
-6. calls the exact pair-flow fixed-packing optimizer for every unpruned packing;
+6. calls the exact source-flow fixed-packing optimizer for every unpruned packing;
 7. ranks proven/best-known candidates by scaled F, total Base mass, Elevator count and Corridor count;
 8. excludes each examined packing with a no-good before continuing.
 
@@ -185,7 +185,7 @@ It is not intended for full Base I-IV production workloads.
 
 `tests/test_fixed_objective_oracle.py` independently brute-forces tiny utility-state spaces.
 
-`tests/test_fixed_flow_objective_solver.py` cross-validates pair-flow against the exhaustive fixed oracle for:
+`tests/test_fixed_flow_objective_solver.py` cross-validates source-aggregated flow against the exhaustive fixed oracle for:
 
 - direct zero-cost adjacency;
 - Corridor-versus-Elevator tie-breaking;
@@ -205,7 +205,7 @@ At the Stage-3 production integration validation point, Ruff passes and the repo
 
 ## Result audit contract
 
-Result JSON schema version 2 includes:
+Result JSON schema version 3 includes:
 
 ```text
 objective_value
@@ -226,7 +226,7 @@ Together with pair distances, pair contributions, module placements and mass dat
 
 ## Remaining limitation: scalability, not mathematical semantics
 
-The exhaustive oracles are intentionally exponential. The production pair-flow formulation avoids infrastructure-selection enumeration, but model size grows with approximately the product of weighted room pairs and conditional travel-graph arcs.
+The exhaustive oracles are intentionally exponential. The production source-aggregated formulation avoids infrastructure-selection enumeration and reduces its principal flow dimension from weighted room pairs to deterministic source rooms.
 
 Stage 4 must therefore measure and improve performance without weakening exactness. Priority work:
 

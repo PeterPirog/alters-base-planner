@@ -46,10 +46,12 @@ class _FixedDiagnosticsAggregate:
     max_graph_nodes: int = 0
     max_graph_arcs: int = 0
     max_objective_pairs: int = 0
-    max_pair_flow_variables: int = 0
-    max_pair_flow_full_variables: int = 0
-    total_pair_flow_variables: int = 0
-    total_pair_flow_full_variables: int = 0
+    flow_formulation: str = "source_aggregated_weighted_flow"
+    max_source_commodities: int = 0
+    max_source_flow_variables: int = 0
+    max_source_flow_full_variables: int = 0
+    total_source_flow_variables: int = 0
+    total_source_flow_full_variables: int = 0
     max_cp_sat_variables: int = 0
     max_cp_sat_constraints: int = 0
     lexicographic_scalarization_used: bool = False
@@ -66,25 +68,36 @@ class _FixedDiagnosticsAggregate:
     model_build_time_s: float = 0.0
     cp_sat_solve_time_s: float = 0.0
     total_time_s: float = 0.0
+    hard_model_build_time_s: float = 0.0
+    path_graph_build_time_s: float = 0.0
+    objective_definition_time_s: float = 0.0
+    flow_model_build_time_s: float = 0.0
+    lexicographic_finalize_time_s: float = 0.0
 
     def observe(self, diagnostics: FixedFlowObjectiveDiagnostics) -> None:
         self.subproblem_count += 1
+        if diagnostics.flow_formulation != self.flow_formulation:
+            raise AssertionError("Fixed subproblems must use one flow formulation")
         self.max_graph_nodes = max(self.max_graph_nodes, diagnostics.graph_node_count)
         self.max_graph_arcs = max(self.max_graph_arcs, diagnostics.graph_arc_count)
         self.max_objective_pairs = max(
             self.max_objective_pairs,
             diagnostics.objective_pair_count,
         )
-        self.max_pair_flow_variables = max(
-            self.max_pair_flow_variables,
-            diagnostics.pair_flow_variable_count,
+        self.max_source_commodities = max(
+            self.max_source_commodities,
+            diagnostics.source_commodity_count,
         )
-        self.max_pair_flow_full_variables = max(
-            self.max_pair_flow_full_variables,
-            diagnostics.pair_flow_full_variable_count,
+        self.max_source_flow_variables = max(
+            self.max_source_flow_variables,
+            diagnostics.source_flow_variable_count,
         )
-        self.total_pair_flow_variables += diagnostics.pair_flow_variable_count
-        self.total_pair_flow_full_variables += diagnostics.pair_flow_full_variable_count
+        self.max_source_flow_full_variables = max(
+            self.max_source_flow_full_variables,
+            diagnostics.source_flow_full_variable_count,
+        )
+        self.total_source_flow_variables += diagnostics.source_flow_variable_count
+        self.total_source_flow_full_variables += diagnostics.source_flow_full_variable_count
         self.max_cp_sat_variables = max(
             self.max_cp_sat_variables,
             diagnostics.cp_sat_variable_count,
@@ -135,16 +148,23 @@ class _FixedDiagnosticsAggregate:
         self.model_build_time_s += diagnostics.model_build_time_s
         self.cp_sat_solve_time_s += diagnostics.cp_sat_solve_time_s
         self.total_time_s += diagnostics.total_time_s
+        self.hard_model_build_time_s += diagnostics.hard_model_build_time_s
+        self.path_graph_build_time_s += diagnostics.path_graph_build_time_s
+        self.objective_definition_time_s += diagnostics.objective_definition_time_s
+        self.flow_model_build_time_s += diagnostics.flow_model_build_time_s
+        self.lexicographic_finalize_time_s += diagnostics.lexicographic_finalize_time_s
 
     def apply(self, result: PlanResult) -> None:
         result.fixed_subproblem_count = self.subproblem_count
         result.max_fixed_graph_nodes = self.max_graph_nodes
         result.max_fixed_graph_arcs = self.max_graph_arcs
         result.max_fixed_objective_pairs = self.max_objective_pairs
-        result.max_fixed_pair_flow_variables = self.max_pair_flow_variables
-        result.max_fixed_pair_flow_full_variables = self.max_pair_flow_full_variables
-        result.total_fixed_pair_flow_variables = self.total_pair_flow_variables
-        result.total_fixed_pair_flow_full_variables = self.total_pair_flow_full_variables
+        result.fixed_flow_formulation = self.flow_formulation
+        result.max_fixed_source_commodities = self.max_source_commodities
+        result.max_fixed_source_flow_variables = self.max_source_flow_variables
+        result.max_fixed_source_flow_full_variables = self.max_source_flow_full_variables
+        result.total_fixed_source_flow_variables = self.total_source_flow_variables
+        result.total_fixed_source_flow_full_variables = self.total_source_flow_full_variables
         result.max_fixed_cp_sat_variables = self.max_cp_sat_variables
         result.max_fixed_cp_sat_constraints = self.max_cp_sat_constraints
         result.fixed_lexicographic_scalarization_used = self.lexicographic_scalarization_used
@@ -161,6 +181,11 @@ class _FixedDiagnosticsAggregate:
         result.fixed_model_build_time_s = self.model_build_time_s
         result.fixed_cp_sat_solve_time_s = self.cp_sat_solve_time_s
         result.fixed_subproblem_time_s = self.total_time_s
+        result.fixed_hard_model_build_time_s = self.hard_model_build_time_s
+        result.fixed_path_graph_build_time_s = self.path_graph_build_time_s
+        result.fixed_objective_definition_time_s = self.objective_definition_time_s
+        result.fixed_source_flow_model_build_time_s = self.flow_model_build_time_s
+        result.fixed_lexicographic_finalize_time_s = self.lexicographic_finalize_time_s
 
 
 def _candidate_positions(
@@ -740,7 +765,7 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     Stage 3 production search now uses:
 
     1. a CP-SAT master that enumerates legal SYSTEM/PLAYER room packings;
-    2. the exact pair-flow CP-SAT subproblem that jointly selects Corridor/Elevator
+    2. the exact source-aggregated flow CP-SAT subproblem that jointly selects Corridor/Elevator
        infrastructure and proves the accepted fixed-packing lexicographic objective;
     3. exact integer modified-Manhattan lower bounds to prune only when a packing cannot match
        the incumbent primary objective;

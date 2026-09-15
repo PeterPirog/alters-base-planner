@@ -14,7 +14,7 @@ The production architecture is now an exact objective decomposition:
 ```text
 CP-SAT SYSTEM/PLAYER room-packing master
         -> exact integer modified-Manhattan lower bound
-        -> exact fixed-packing pair-flow CP-SAT
+        -> exact fixed-packing source-aggregated flow CP-SAT
              optional exact incumbent cut: scaled_F <= incumbent_scaled_F
              hard Corridor/Elevator topology
              exact weighted travel F
@@ -321,7 +321,7 @@ No undocumented soft objective may compete with this order. Community layout str
 
 `objective.py` interprets each effective per-plan decimal traffic weight with exact rational arithmetic and chooses a common denominator scale. Each pair obtains a positive integer coefficient.
 
-The effective weight map is passed explicitly through the room-packing search, pair-flow optimizer,
+The effective weight map is passed explicitly through the room-packing search, weighted-flow optimizer,
 exhaustive reference oracles, modified-Manhattan lower bounds and independent Dijkstra evaluator.
 The same `ScaledObjective` is shared by optimization and exact cross-checks. The mathematical proof
 boundary therefore uses integer arithmetic rather than floating-point epsilon comparisons.
@@ -380,11 +380,31 @@ The master:
 
 The search-order surrogate has no correctness or objective meaning.
 
-### 9.2 Fixed-packing pair-flow subproblem
+### 9.2 Fixed-packing source-aggregated flow subproblem
 
-`solve_fixed_layout_flow_objective()` shares the Stage-2 Corridor/Elevator selection variables and hard constraints, then adds a conditional directed travel graph and one binary unit flow per positive-weight room pair.
+`solve_fixed_layout_flow_objective()` shares the Stage-2 Corridor/Elevator selection variables and hard constraints, then adds a conditional directed travel graph and one weighted integer flow commodity per deterministic source room.
 
-Arc costs reproduce the accepted distance semantics. All pair flows share one infrastructure selection.
+For the sorted positive-weight room IDs, every unordered pair `{s,t}` is oriented once from the earlier ID to the later ID. For each source `s`:
+
+```text
+Q_s = sum_t c_st
+target demand(s,t) = c_st
+0 <= flow[s,a] <= Q_s
+```
+
+Supply `Q_s` may split across all legal source ports, and each target demand may split across that target's legal ports. Different units therefore retain the same independent endpoint choice as the former pair-specific paths. Flow balance holds at every graph node. Target rooms may carry through-flow to other targets when their module transit rule permits it; only arcs entering the source endpoint set are removed as unnecessary.
+
+The primary expression is:
+
+```text
+scaled_F = sum_s sum_a arc_cost[a] * flow[s,a]
+```
+
+The coefficient is represented by flow quantity and is not multiplied onto the arc term again. For a fixed selected infrastructure, every integral feasible source flow decomposes into source-to-target paths plus cycles. Arc costs are non-negative, so cycles can be removed without increasing cost, and each unit ending at target `t` costs at least `shortest_distance(s,t)`. Conversely, routing exactly `c_st` units along a shortest legal path to each target is feasible. Thus the minimum commodity cost is exactly `sum_t c_st * shortest_distance(s,t)`, and summing commodities reproduces the accepted exact pairwise objective.
+
+All source commodities share one infrastructure selection. A conditional arc flow is bounded by `Q_s` times each corresponding Corridor/Elevator selection variable, preserving the original infrastructure semantics.
+
+Before variables are created, relaxed forward reachability from all source ports and reverse reachability from the union of all target ports restrict each commodity to arcs that can lie on a source-to-some-target path. Infrastructure conditions are ignored only for this reachability calculation, making it a supergraph reduction that cannot remove a realizable path.
 
 Without a global incumbent, the fixed subproblem optimizes its complete legal domain. After an exact incumbent with scaled primary value `B` exists, the production master may add:
 
@@ -418,13 +438,13 @@ where `C_max`, `E_max` are the numbers of legal Corridor and Elevator anchors an
 
 Before the model is solved, the scalarized objective maximum `W_F * scaled_F_max + W_M * M_max + W_E * E_max + W_C * C_max` is checked to fit signed 64-bit CP-SAT arithmetic; an overflow would corrupt exactness and therefore fails fast.
 
-`lexicographic_optimum_proven=true` is set only when CP-SAT proves that single scalarized objective `OPTIMAL`, which simultaneously proves the exact `F` optimum and every tie-breaker. A timed-out incumbent is reported `FEASIBLE` with its exact objective tuple but carries no optimality proof. Its selected infrastructure is fixed and independently evaluated with exact Dijkstra; if timeout left non-shortest auxiliary pair flows, those flow witnesses are replaced analytically by the shorter legal paths for incumbent reporting. This can only improve the same feasible infrastructure and never creates an optimality claim.
+`lexicographic_optimum_proven=true` is set only when CP-SAT proves that single scalarized objective `OPTIMAL`, which simultaneously proves the exact `F` optimum and every tie-breaker. A timed-out incumbent is reported `FEASIBLE` with its exact objective tuple but carries no optimality proof. Its selected infrastructure is fixed and independently evaluated with exact Dijkstra; if timeout left non-shortest auxiliary source flows, those flow witnesses are replaced analytically by the shorter legal paths for incumbent reporting. This can only improve the same feasible infrastructure and never creates an optimality claim.
 
 Because the proof is a single objective, a `MODEL_INVALID` status is an internal contradiction and fails fast; `INFEASIBLE` under the incumbent cut remains the exact proof that the packing cannot match the incumbent primary objective.
 
 ### 9.3 Independent exact evaluator
 
-Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. CP-SAT evaluates both the primary pair-flow expression and the complete scalarized expression directly as exact integer linear expressions. For an `OPTIMAL` fixed solve, the model primary value must equal the scaled value reconstructed independently from evaluator pair distances and the complete scalar identity must also match; any disagreement fails fast. For a timeout `FEASIBLE` incumbent, Dijkstra may be strictly lower because CP-SAT had not yet minimized every auxiliary flow witness. A higher Dijkstra value remains impossible and fails fast; a lower value is the exact shortest-path repair on the same selected infrastructure and becomes the unproven incumbent value.
+Every feasible infrastructure result is evaluated by the Dijkstra graph evaluator. CP-SAT evaluates both the primary source-flow expression and the complete scalarized expression directly as exact integer linear expressions. For an `OPTIMAL` fixed solve, the model primary value must equal the scaled value reconstructed independently from evaluator pair distances and the complete scalar identity must also match; any disagreement fails fast. For a timeout `FEASIBLE` incumbent, Dijkstra may be strictly lower because CP-SAT had not yet minimized every auxiliary flow witness. A higher Dijkstra value remains impossible and fails fast; a lower value is the exact shortest-path repair on the same selected infrastructure and becomes the unproven incumbent value.
 
 The exact lower bound is also checked against the exact evaluated objective.
 
@@ -523,7 +543,7 @@ Optimality is represented separately by the proof flag.
 
 ## 12. Required output and audit invariants
 
-Result JSON schema version 2 records at least:
+Result JSON schema version 3 records at least:
 
 ```text
 objective_value / weighted_distance_score
@@ -575,7 +595,7 @@ PNG/SVG are emitted for feasible layouts and preserve the project cell aspect ra
 
 The exhaustive fixed and global objective oracles are intentionally exponential and remain correctness/benchmark machinery.
 
-The production pair-flow model is exact but can still be expensive. Its variable count grows with approximately the product of weighted room pairs and conditional graph arcs.
+The production source-aggregated model is exact but can still be expensive. Its principal flow-variable count grows with approximately the product of positive-weight source rooms and conditional graph arcs, rather than weighted room pairs and arcs.
 
 Stage 4 performance work must preserve semantics. Safe directions include:
 
