@@ -564,7 +564,7 @@ Optimality is represented separately by the proof flag.
 
 ## 12. Required output and audit invariants
 
-Result JSON schema version 3 records at least:
+Result JSON schema version 4 records at least:
 
 ```text
 objective_value / weighted_distance_score

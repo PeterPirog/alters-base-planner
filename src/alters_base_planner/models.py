@@ -336,6 +336,7 @@ class PlanResult:
     manhattan_pruned_count: int = 0
     incumbent_bound_pruned_count: int = 0
     search_time_s: float = 0.0
+    time_to_first_feasible_s: float | None = None
     time_limit_reached: bool = False
     search_exhausted: bool = False
     global_objective_optimum_proven: bool = False

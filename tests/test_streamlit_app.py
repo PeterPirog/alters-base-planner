@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import alters_base_planner.engine as engine_module
@@ -211,9 +212,10 @@ def test_feasible_result_persists_and_is_hidden_when_configuration_changes(
     ]
 
 
-def test_non_feasible_result_does_not_render_a_layout_image(monkeypatch) -> None:
+@pytest.mark.parametrize("status", ["TIME_LIMIT", "INFEASIBLE", "NO_CONNECTED_LAYOUT"])
+def test_non_feasible_result_does_not_render_a_layout_image(monkeypatch, status: str) -> None:
     result = _feasible_result()
-    result.status = "INFEASIBLE"
+    result.status = status
     result.modules = []
     result.room_usage_weights = {}
     result.message = "No feasible layout."

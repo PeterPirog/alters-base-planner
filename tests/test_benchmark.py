@@ -4,6 +4,7 @@ import alters_base_planner.benchmark as benchmark_module
 from alters_base_planner.benchmark import (
     BENCHMARK_SCHEMA_VERSION,
     REPRESENTATIVE_CASES,
+    SMOKE_CASES,
     BenchmarkCase,
     benchmark_markdown,
     benchmark_payload,
@@ -41,6 +42,7 @@ def _result() -> PlanResult:
         manhattan_pruned_count=2,
         incumbent_bound_pruned_count=5,
         search_time_s=0.75,
+        time_to_first_feasible_s=0.25,
         search_exhausted=False,
         time_limit_reached=True,
         global_objective_optimum_proven=False,
@@ -95,6 +97,7 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
 
     assert record.name == "sample"
     assert record.elapsed_wall_s == 0.8
+    assert record.time_to_first_feasible_s == 0.25
     assert record.room_packings_examined == 7
     assert record.connected_candidates_examined == 4
     assert record.fixed_objective_optima_proven == 3
@@ -145,7 +148,7 @@ def test_payload_and_markdown_are_auditable() -> None:
     markdown = benchmark_markdown(payload)
 
     assert payload["schema_version"] == BENCHMARK_SCHEMA_VERSION
-    assert BENCHMARK_SCHEMA_VERSION == 6
+    assert BENCHMARK_SCHEMA_VERSION == 7
     assert payload["environment"]["python"]
     assert payload["environment"]["ortools"]
     assert payload["cases"][0]["room_counts"] == {"workshop": 1}
@@ -154,7 +157,7 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert payload["results"][0]["max_fixed_cp_sat_variables"] == 3500
     assert payload["results"][0]["total_fixed_source_flow_variables"] == 7200
     assert payload["results"][0]["total_fixed_source_flow_full_variables"] == 12000
-    assert "| sample | 1 | FEASIBLE |" in markdown
+    assert "| sample | 1 | FEASIBLE | 0.800 | 0.250 |" in markdown
     assert "| 2 | 5 | 1.2500 |" in markdown
     assert "## Fixed-packing model diagnostics" in markdown
     assert "| sample | 4 | 61 | 120 | 28 | 3500 | 6100 |" in markdown
@@ -211,3 +214,10 @@ def test_representative_suite_covers_all_mobile_base_tiers() -> None:
     assert len({case.name for case in REPRESENTATIVE_CASES}) == len(REPRESENTATIVE_CASES)
     assert all(case.time_limit_s > 0 for case in REPRESENTATIVE_CASES)
     assert all(case.max_layout_attempts > 0 for case in REPRESENTATIVE_CASES)
+
+
+def test_smoke_suite_covers_all_mobile_base_tiers() -> None:
+    assert [case.tier for case in SMOKE_CASES] == [1, 2, 3, 4]
+    assert len({case.name for case in SMOKE_CASES}) == len(SMOKE_CASES)
+    assert all(case.time_limit_s == 1.0 for case in SMOKE_CASES)
+    assert all(case.max_layout_attempts == 1 for case in SMOKE_CASES)

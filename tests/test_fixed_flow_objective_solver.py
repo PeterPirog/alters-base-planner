@@ -426,6 +426,39 @@ def test_source_flow_matches_reference_for_vertical_elevator_chain() -> None:
     assert result.diagnostics.condition_capacity_bucket_count == 4
 
 
+def test_source_flow_matches_reference_for_top_access_radiation_repulsor() -> None:
+    base = _base(8, 3)
+    rooms = (
+        _room("airlock-1", "airlock", 0, 0),
+        _room("radiation-repulsor-1", "radiation_repulsor", 6, 0),
+    )
+    usage_weights = resolve_usage_weights({"radiation_repulsor": 0.5})
+
+    result = solve_fixed_layout_flow_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+    reference = solve_fixed_layout_objective(
+        base,
+        rooms,
+        time_limit_s=5.0,
+        usage_weights=usage_weights,
+    )
+
+    assert result.status == reference.status == "OPTIMAL"
+    assert result.scaled_objective_value == 1
+    assert result.objective_scale == 2
+    assert result.distance_metrics is not None
+    assert reference.distance_metrics is not None
+    assert result.distance_metrics.weighted_score == reference.distance_metrics.weighted_score == 0.5
+    assert result.distance_metrics.elevator_module_count == 0
+    assert result.distance_metrics.corridor_count == 1
+    assert sum(MODULE_BY_KEY[module.module_key].mass for module in (*rooms, *result.utilities)) == 22
+    assert _signature(result) == _signature(reference) == (("corridor", 4, 0),)
+
+
 def test_source_flow_target_can_transit_flow_to_another_target_at_exact_width() -> None:
     base = _base(12, 1)
     rooms = (

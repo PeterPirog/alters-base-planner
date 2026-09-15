@@ -13,7 +13,7 @@ from typing import Iterable
 from .engine import solve_plan
 from .models import PlanRequest, PlanResult
 
-BENCHMARK_SCHEMA_VERSION = 6
+BENCHMARK_SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +47,7 @@ class BenchmarkRecord:
     configured_max_layout_attempts: int
     elapsed_wall_s: float
     solver_reported_search_s: float
+    time_to_first_feasible_s: float | None
     room_packings_examined: int
     connected_candidates_examined: int
     fixed_objective_optima_proven: int
@@ -105,6 +106,30 @@ SMOKE_CASES: tuple[BenchmarkCase, ...] = (
         time_limit_s=1.0,
         max_layout_attempts=1,
         purpose="Fast production-path smoke measurement; no performance threshold.",
+    ),
+    BenchmarkCase(
+        name="tier2-baseline-smoke",
+        tier=2,
+        room_counts={},
+        time_limit_s=1.0,
+        max_layout_attempts=1,
+        purpose="Fast Tier-II production-path smoke measurement; no performance threshold.",
+    ),
+    BenchmarkCase(
+        name="tier3-baseline-smoke",
+        tier=3,
+        room_counts={},
+        time_limit_s=1.0,
+        max_layout_attempts=1,
+        purpose="Fast Tier-III production-path smoke measurement; no performance threshold.",
+    ),
+    BenchmarkCase(
+        name="tier4-baseline-smoke",
+        tier=4,
+        room_counts={},
+        time_limit_s=1.0,
+        max_layout_attempts=1,
+        purpose="Fast Tier-IV production-path smoke measurement; no performance threshold.",
     ),
 )
 
@@ -196,6 +221,7 @@ def record_from_result(
         configured_max_layout_attempts=case.max_layout_attempts,
         elapsed_wall_s=elapsed_wall_s,
         solver_reported_search_s=result.search_time_s,
+        time_to_first_feasible_s=result.time_to_first_feasible_s,
         room_packings_examined=result.attempts,
         connected_candidates_examined=result.connected_candidates_examined,
         fixed_objective_optima_proven=result.fixed_objective_optima_proven,
@@ -308,8 +334,8 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
             "",
             "## Results",
             "",
-            "| Case | Tier | Status | Wall s | Packings | Exact fixed optima | LB pruned | Incumbent-cut | F | Mass | E | C | Global proof |",
-            "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Case | Tier | Status | Wall s | First feasible s | Packings | Exact fixed optima | LB pruned | Incumbent-cut | F | Mass | E | C | Global proof |",
+            "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for raw in results:
@@ -317,13 +343,16 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
             raise ValueError("Invalid benchmark result row")
         score = raw["weighted_distance_score"]
         score_text = "-" if score is None else f"{score:.4f}"
+        first_feasible = raw["time_to_first_feasible_s"]
+        first_feasible_text = "-" if first_feasible is None else f"{first_feasible:.3f}"
         lines.append(
-            "| {name} | {tier} | {status} | {wall:.3f} | {packings} | {fixed} | {pruned} | "
+            "| {name} | {tier} | {status} | {wall:.3f} | {first_feasible} | {packings} | {fixed} | {pruned} | "
             "{incumbent_cut} | {score} | {mass} | {elevators} | {corridors} | {proof} |".format(
                 name=raw["name"],
                 tier=raw["tier"],
                 status=raw["status"],
                 wall=raw["elapsed_wall_s"],
+                first_feasible=first_feasible_text,
                 packings=raw["room_packings_examined"],
                 fixed=raw["fixed_objective_optima_proven"],
                 pruned=raw["manhattan_pruned_count"],

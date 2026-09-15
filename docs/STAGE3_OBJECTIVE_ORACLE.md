@@ -205,7 +205,7 @@ At the Stage-3 production integration validation point, Ruff passes and the repo
 
 ## Result audit contract
 
-Result JSON schema version 3 includes:
+Result JSON schema version 4 includes:
 
 ```text
 objective_value

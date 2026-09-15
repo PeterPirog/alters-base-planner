@@ -1,6 +1,6 @@
 # Benchmark methodology
 
-Status: **Stage 4 in progress**
+Status: **Stage 4 complete / maintain**
 
 This document defines how performance measurements for the exact production solver are collected and interpreted. It does not define game mechanics; `PROJECT_SYSTEM_REQUIREMENTS.md` and `docs/OPTIMIZATION_MODEL.md` remain normative for correctness.
 
@@ -68,7 +68,17 @@ This workflow is intended to provide a stable shared-runner reference environmen
 
 ### Smoke
 
-`tier1-baseline-smoke` is a short production-path check. It is useful for verifying that benchmark collection itself works. Its runtime is not a regression threshold.
+The smoke suite runs one short production-path check for each mobile Base tier:
+
+| Case | Tier | Budget |
+|---|---:|---:|
+| `tier1-baseline-smoke` | I | 1 s / 1 packing |
+| `tier2-baseline-smoke` | II | 1 s / 1 packing |
+| `tier3-baseline-smoke` | III | 1 s / 1 packing |
+| `tier4-baseline-smoke` | IV | 1 s / 1 packing |
+
+These cases verify benchmark collection and honest timeout behavior. Their runtimes are not
+regression thresholds, and they are not required to find an incumbent.
 
 ### Representative
 
@@ -87,7 +97,7 @@ The exact case definitions live in `src/alters_base_planner/benchmark.py` and ar
 
 ## Captured metrics
 
-Benchmark schema version 6 records the end-to-end search/proof metrics:
+Benchmark schema version 7 records the end-to-end search/proof metrics:
 
 ```text
 status
@@ -95,6 +105,7 @@ configured_time_limit_s
 configured_max_layout_attempts
 elapsed_wall_s
 solver_reported_search_s
+time_to_first_feasible_s
 room_packings_examined
 connected_candidates_examined
 fixed_objective_optima_proven
@@ -194,10 +205,11 @@ fixed_subproblems.build_phases:
 These fields are additive diagnostics apart from one incompatible rename: result schema version 4
 replaced `max_shared_activation_gates` with `max_condition_capacity_buckets` and added
 `max_condition_capacity_literals`, because exact condition-capacity buckets replaced shared
-activation gates. Benchmark schema version 6 records the same rename, replacing benchmark schema
-version 5. The condition-bucket and incumbent distance-cap fields introduced afterwards are purely
-additive, so result schema version 4, benchmark schema version 6 and evidence metadata schema
-version 3 all remain unchanged for them. The four source-flow construction counts are maxima across fixed subproblems. They
+activation gates. Benchmark schema version 6 recorded the same rename, replacing benchmark schema
+version 5. Benchmark schema version 7 adds `time_to_first_feasible_s`; it is `null` when no
+incumbent was found. The condition-bucket and incumbent distance-cap fields are otherwise purely
+additive, so result schema version 4 and evidence metadata schema version 3 remain unchanged. The
+four source-flow construction counts are maxima across fixed subproblems. They
 expose exact condition-capacity bucket constraints, distinct Boolean infrastructure conditions
 represented by those buckets, explicit endpoint-allocation variables, capacity constraints and
 balance/endpoint constraints. The direct endpoint formulation reports zero explicit

@@ -63,6 +63,8 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum() 
     assert result.global_objective_optimum_proven is True
     assert result.search_exhausted is True
     assert result.time_limit_reached is False
+    assert result.time_to_first_feasible_s is not None
+    assert 0 <= result.time_to_first_feasible_s <= result.search_time_s
     assert result.fixed_objective_optima_proven >= 1
     assert result.attempts > result.fixed_objective_optima_proven
     assert result.objective_scale == 10
