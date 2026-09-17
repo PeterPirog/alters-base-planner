@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from time import monotonic
 
 from ortools.sat.python import cp_model
@@ -36,6 +37,42 @@ class _Candidate:
     y: int
     cells: frozenset[tuple[int, int]]
     search_cost: int
+
+
+class _RoomMasterMode(StrEnum):
+    HEURISTIC_OBJECTIVE = "heuristic_objective"
+    FEASIBILITY_ENUMERATION = "feasibility_enumeration"
+
+
+@dataclass(slots=True)
+class _RoomMasterDiagnostics:
+    mode: _RoomMasterMode
+    solve_count: int = 0
+    solve_time_s: float = 0.0
+    first_solution_time_s: float | None = None
+    optimal_status_count: int = 0
+    feasible_status_count: int = 0
+
+    def observe(self, status: cp_model.CpSolverStatus, elapsed_s: float) -> None:
+        self.solve_count += 1
+        self.solve_time_s += elapsed_s
+        if status == cp_model.OPTIMAL:
+            self.optimal_status_count += 1
+        elif status == cp_model.FEASIBLE:
+            self.feasible_status_count += 1
+        if (
+            self.first_solution_time_s is None
+            and status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        ):
+            self.first_solution_time_s = self.solve_time_s
+
+    def apply(self, result: PlanResult) -> None:
+        result.room_master_mode = self.mode.value
+        result.room_master_solve_count = self.solve_count
+        result.room_master_solve_time_s = self.solve_time_s
+        result.room_master_first_solution_time_s = self.first_solution_time_s
+        result.room_master_optimal_status_count = self.optimal_status_count
+        result.room_master_feasible_status_count = self.feasible_status_count
 
 
 @dataclass(slots=True)
@@ -409,6 +446,19 @@ def _add_identical_instance_symmetry_breaking(
             model.add(left_rank < right_rank)
 
 
+def _configure_room_master_ordering(
+    model: cp_model.CpModel,
+    candidate_order_terms: list[cp_model.LinearExpr],
+    mode: _RoomMasterMode,
+) -> None:
+    """Choose only the master enumeration order; never alter its feasible packing set."""
+
+    if mode is _RoomMasterMode.HEURISTIC_OBJECTIVE:
+        model.minimize(sum(candidate_order_terms))
+    elif mode is not _RoomMasterMode.FEASIBILITY_ENUMERATION:
+        raise ValueError("Unsupported room-master mode")
+
+
 def _finalize_search_diagnostics(
     result: PlanResult,
     *,
@@ -417,6 +467,7 @@ def _finalize_search_diagnostics(
     fixed_objective_optima_proven: int,
     manhattan_pruned: int,
     incumbent_bound_pruned: int,
+    room_master_diagnostics: _RoomMasterDiagnostics,
     fixed_diagnostics: _FixedDiagnosticsAggregate,
     started_at: float,
     time_limit_reached: bool,
@@ -430,6 +481,7 @@ def _finalize_search_diagnostics(
     result.search_time_s = monotonic() - started_at
     result.time_limit_reached = time_limit_reached
     result.search_exhausted = search_exhausted
+    room_master_diagnostics.apply(result)
     fixed_diagnostics.apply(result)
 
 
@@ -461,6 +513,7 @@ def _solve_instances(
     root_instance_id: str = "airlock-1",
     started_at: float | None = None,
     usage_weights: Mapping[str, float] | None = None,
+    room_master_mode: _RoomMasterMode = _RoomMasterMode.HEURISTIC_OBJECTIVE,
 ) -> PlanResult:
     """Exact objective decomposition over a supplied non-SOLVER instance set.
 
@@ -473,11 +526,14 @@ def _solve_instances(
         raise ValueError("time_limit_s must be positive")
     if max_layout_attempts <= 0:
         raise ValueError("max_layout_attempts must be positive")
+    if not isinstance(room_master_mode, _RoomMasterMode):
+        raise ValueError("room_master_mode must be a _RoomMasterMode")
 
     started_at = monotonic() if started_at is None else started_at
     effective_usage_weights = (
         resolve_usage_weights() if usage_weights is None else usage_weights
     )
+    room_master_diagnostics = _RoomMasterDiagnostics(room_master_mode)
     fixed_diagnostics = _FixedDiagnosticsAggregate()
     model = cp_model.CpModel()
     candidates: dict[str, list[_Candidate]] = {}
@@ -500,6 +556,7 @@ def _solve_instances(
                 fixed_objective_optima_proven=0,
                 manhattan_pruned=0,
                 incumbent_bound_pruned=0,
+                room_master_diagnostics=room_master_diagnostics,
                 fixed_diagnostics=fixed_diagnostics,
                 started_at=started_at,
                 time_limit_reached=False,
@@ -522,7 +579,7 @@ def _solve_instances(
         model.add_at_most_one(variables)
 
     _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
-    model.minimize(sum(candidate_order_terms))
+    _configure_room_master_ordering(model, candidate_order_terms, room_master_mode)
 
     validation_error = model.validate()
     if validation_error:
@@ -553,7 +610,9 @@ def _solve_instances(
             break
 
         solver.parameters.max_time_in_seconds = max(0.001, remaining)
+        master_solve_started = monotonic()
         status = solver.solve(model)
+        room_master_diagnostics.observe(status, monotonic() - master_solve_started)
 
         if status == cp_model.MODEL_INVALID:
             raise RuntimeError("CP-SAT rejected the generated placement model as invalid")
@@ -784,6 +843,7 @@ def _solve_instances(
             fixed_objective_optima_proven=fixed_objective_optima_proven,
             manhattan_pruned=manhattan_pruned,
             incumbent_bound_pruned=incumbent_bound_pruned,
+            room_master_diagnostics=room_master_diagnostics,
             fixed_diagnostics=fixed_diagnostics,
             started_at=started_at,
             time_limit_reached=time_limit_reached,
@@ -857,12 +917,40 @@ def _solve_instances(
         fixed_objective_optima_proven=fixed_objective_optima_proven,
         manhattan_pruned=manhattan_pruned,
         incumbent_bound_pruned=incumbent_bound_pruned,
+        room_master_diagnostics=room_master_diagnostics,
         fixed_diagnostics=fixed_diagnostics,
         started_at=started_at,
         time_limit_reached=time_limit_reached,
         search_exhausted=search_exhausted,
     )
     return result
+
+
+def _solve_plan_with_room_master_mode(
+    request: PlanRequest,
+    base: BaseGeometry | None = None,
+    *,
+    room_master_mode: _RoomMasterMode,
+) -> PlanResult:
+    """Internal benchmark seam for comparing exact room-master enumeration modes."""
+
+    started_at = monotonic()
+    if base is not None and base.tier != request.tier:
+        raise ValueError(
+            f"PlanRequest tier {request.tier} does not match supplied BaseGeometry tier {base.tier}"
+        )
+    base = base or builtin_base(request.tier)
+    instances = expand_instances(MODULES, request.room_counts)
+    effective_usage_weights = resolve_usage_weights(request.usage_weights)
+    return _solve_instances(
+        base,
+        instances,
+        time_limit_s=float(request.time_limit_s),
+        max_layout_attempts=request.max_layout_attempts,
+        started_at=started_at,
+        usage_weights=effective_usage_weights,
+        room_master_mode=room_master_mode,
+    )
 
 
 def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanResult:
@@ -884,19 +972,8 @@ def solve_plan(request: PlanRequest, base: BaseGeometry | None = None) -> PlanRe
     best-known semantics rather than creating a false global proof.
     """
 
-    started_at = monotonic()
-    if base is not None and base.tier != request.tier:
-        raise ValueError(
-            f"PlanRequest tier {request.tier} does not match supplied BaseGeometry tier {base.tier}"
-        )
-    base = base or builtin_base(request.tier)
-    instances = expand_instances(MODULES, request.room_counts)
-    effective_usage_weights = resolve_usage_weights(request.usage_weights)
-    return _solve_instances(
+    return _solve_plan_with_room_master_mode(
+        request,
         base,
-        instances,
-        time_limit_s=float(request.time_limit_s),
-        max_layout_attempts=request.max_layout_attempts,
-        started_at=started_at,
-        usage_weights=effective_usage_weights,
+        room_master_mode=_RoomMasterMode.HEURISTIC_OBJECTIVE,
     )

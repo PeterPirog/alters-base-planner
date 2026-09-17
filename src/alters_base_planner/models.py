@@ -340,6 +340,12 @@ class PlanResult:
     time_limit_reached: bool = False
     search_exhausted: bool = False
     global_objective_optimum_proven: bool = False
+    room_master_mode: str = "heuristic_objective"
+    room_master_solve_count: int = 0
+    room_master_solve_time_s: float = 0.0
+    room_master_first_solution_time_s: float | None = None
+    room_master_optimal_status_count: int = 0
+    room_master_feasible_status_count: int = 0
     fixed_subproblem_count: int = 0
     max_fixed_graph_nodes: int = 0
     max_fixed_graph_arcs: int = 0

@@ -1,6 +1,6 @@
 # V1 release acceptance
 
-Status: **IN PROGRESS**
+Status: **BLOCKED ON PRACTICAL USABILITY**
 
 Baseline integrated `main` at the start of this milestone:
 
@@ -95,10 +95,31 @@ baseline.
 
 | Tier | Status | First feasible s | Exact F | Mass | Elevators | Corridors | Global proof | Decision |
 |---|---|---:|---:|---:|---:|---:|---|---|
-| I | PENDING | - | - | - | - | - | - | PENDING |
-| II | PENDING | - | - | - | - | - | - | PENDING |
-| III | PENDING | - | - | - | - | - | - | PENDING |
-| IV | PENDING | - | - | - | - | - | - | PENDING |
+| I | FEASIBLE | 4.262 | 37.5275 | 68 | 12 | 0 | no | USABLE_FEASIBLE |
+| II | FEASIBLE | 120.057 | 203.6475 | 164 | 31 | 6 | no | USABLE_FEASIBLE |
+| III | TIME_LIMIT | - | - | - | - | - | no | NO_INCUMBENT_WITHIN_BUDGET |
+| IV | TIME_LIMIT | - | - | - | - | - | no | NO_INCUMBENT_WITHIN_BUDGET |
+
+## Measured release blocker
+
+The integrated-main GitHub Actions release run found a valid Tier-I incumbent in 4.262 seconds and
+a Tier-II incumbent in 120.057 seconds. Tier III examined 50 room packings in 180 seconds and Tier
+IV examined 45 room packings in 300 seconds without finding a connected candidate. The release
+decision is **BLOCK V1 ON USABILITY**; the measured bottleneck is room-packing enumeration before
+structural connectivity.
+
+## Integrated hard bootstrap preflight
+
+Classification: **NO_GO_PERFORMANCE**.
+
+- Tier I found no witness within 15 seconds.
+- Tier II found no witness within 30 seconds.
+- Tier III built 243,002 variables and 458,736 constraints and found no witness within 180 seconds.
+- Tier IV built 417,902 variables and 795,244 constraints and found no witness within 300 seconds.
+- Sparse Corridor/Elevator hints did not recover a witness.
+
+The integrated hard bootstrap was not implemented in production. The next measured experiment is
+documented in `docs/ROOM_MASTER_SEARCH_EXPERIMENT.md`.
 
 ## Remaining release sequence
 

@@ -1,6 +1,8 @@
+import pytest
+
 import alters_base_planner.engine as engine_module
 from alters_base_planner.catalog import MODULE_BY_KEY
-from alters_base_planner.engine import _solve_instances
+from alters_base_planner.engine import _RoomMasterMode, _solve_instances
 from alters_base_planner.fixed_flow_objective_solver import FixedFlowObjectiveResult
 from alters_base_planner.global_objective_oracle import solve_global_reference_objective
 from alters_base_planner.models import BaseGeometry, ModuleInstance
@@ -36,7 +38,10 @@ def _rank(result) -> tuple[int, int, int, int]:
     )
 
 
-def test_production_decomposition_matches_global_reference_and_proves_optimum() -> None:
+@pytest.mark.parametrize("room_master_mode", tuple(_RoomMasterMode))
+def test_production_decomposition_matches_global_reference_and_proves_optimum(
+    room_master_mode: _RoomMasterMode,
+) -> None:
     # Width 10 admits direct adjacency, exactly-one-Corridor layouts and physically legal
     # room packings that cannot be connected by a 2x1 utility. The production decomposition
     # must account for all of them and still match the independently exhaustive global oracle.
@@ -53,6 +58,7 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum() 
         instances,
         time_limit_s=5.0,
         max_layout_attempts=50,
+        room_master_mode=room_master_mode,
     )
 
     assert reference.status == "OPTIMAL"
@@ -71,6 +77,10 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum() 
     assert result.scaled_objective_value == 0
     assert result.scaled_modified_manhattan_lower_bound == 0
     assert result.incumbent_bound_pruned_count >= 0
+    assert result.room_master_mode == room_master_mode.value
+    assert result.room_master_solve_count == result.attempts + 1
+    assert result.room_master_solve_time_s >= 0
+    assert result.room_master_first_solution_time_s is not None
 
     reference_total_mass = sum(
         MODULE_BY_KEY[module.module_key].mass for module in reference.modules

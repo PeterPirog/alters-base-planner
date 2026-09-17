@@ -48,6 +48,13 @@ class BenchmarkRecord:
     elapsed_wall_s: float
     solver_reported_search_s: float
     time_to_first_feasible_s: float | None
+    room_master_mode: str
+    room_master_solve_count: int
+    room_master_solve_time_s: float
+    room_master_first_solution_time_s: float | None
+    room_master_optimal_status_count: int
+    room_master_feasible_status_count: int
+    room_master_packings_per_second: float | None
     room_packings_examined: int
     connected_candidates_examined: int
     fixed_objective_optima_proven: int
@@ -222,6 +229,17 @@ def record_from_result(
         elapsed_wall_s=elapsed_wall_s,
         solver_reported_search_s=result.search_time_s,
         time_to_first_feasible_s=result.time_to_first_feasible_s,
+        room_master_mode=result.room_master_mode,
+        room_master_solve_count=result.room_master_solve_count,
+        room_master_solve_time_s=result.room_master_solve_time_s,
+        room_master_first_solution_time_s=result.room_master_first_solution_time_s,
+        room_master_optimal_status_count=result.room_master_optimal_status_count,
+        room_master_feasible_status_count=result.room_master_feasible_status_count,
+        room_master_packings_per_second=(
+            result.attempts / result.room_master_solve_time_s
+            if result.room_master_solve_time_s > 0
+            else None
+        ),
         room_packings_examined=result.attempts,
         connected_candidates_examined=result.connected_candidates_examined,
         fixed_objective_optima_proven=result.fixed_objective_optima_proven,
@@ -362,6 +380,48 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 elevators=raw["elevator_module_count"],
                 corridors=raw["corridor_count"],
                 proof="yes" if raw["global_objective_optimum_proven"] else "no",
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Room-master diagnostics",
+            "",
+            "Timing covers only calls to `solver.solve(room_master_model)`.",
+            "",
+            "| Case | Mode | Solves | OPTIMAL | FEASIBLE | First solution s | Total solve s | Packings/s |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ValueError("Invalid benchmark result row")
+        mode = raw.get("room_master_mode")
+        mode_text = "-" if mode is None else str(mode)
+        solves = raw.get("room_master_solve_count")
+        solves_text = "-" if solves is None else str(solves)
+        optimal = raw.get("room_master_optimal_status_count")
+        optimal_text = "-" if optimal is None else str(optimal)
+        feasible = raw.get("room_master_feasible_status_count")
+        feasible_text = "-" if feasible is None else str(feasible)
+        first_solution = raw.get("room_master_first_solution_time_s")
+        first_solution_text = "-" if first_solution is None else f"{first_solution:.3f}"
+        total = raw.get("room_master_solve_time_s")
+        total_text = "-" if total is None else f"{total:.3f}"
+        throughput = raw.get("room_master_packings_per_second")
+        throughput_text = "-" if throughput is None else f"{throughput:.3f}"
+        lines.append(
+            "| {name} | {mode} | {solves} | {optimal} | {feasible} | {first} | "
+            "{total} | {throughput} |".format(
+                name=raw["name"],
+                mode=mode_text,
+                solves=solves_text,
+                optimal=optimal_text,
+                feasible=feasible_text,
+                first=first_solution_text,
+                total=total_text,
+                throughput=throughput_text,
             )
         )
 

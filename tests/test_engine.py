@@ -269,6 +269,14 @@ def test_fixed_subproblem_diagnostics_are_aggregated_by_exact_master() -> None:
     assert result.fixed_model_build_time_s >= 0
     assert result.fixed_cp_sat_solve_time_s >= 0
     assert result.fixed_subproblem_time_s >= result.fixed_model_build_time_s
+    assert result.room_master_mode == "heuristic_objective"
+    assert result.room_master_solve_count == 1
+    assert result.room_master_solve_time_s >= 0
+    assert result.room_master_first_solution_time_s is not None
+    assert (
+        result.room_master_optimal_status_count + result.room_master_feasible_status_count
+        == result.room_master_solve_count
+    )
 
 
 def test_effective_usage_weights_reach_search_result_and_serialization() -> None:
@@ -298,7 +306,8 @@ def test_effective_usage_weights_reach_search_result_and_serialization() -> None
 
     assert result.status == "FEASIBLE"
     assert result.room_usage_weights == {"airlock-1": 0.75, "workshop-1": 0.2}
-    serialized_modules = result_payload(result)["modules"]
+    payload = result_payload(result)
+    serialized_modules = payload["modules"]
     assert isinstance(serialized_modules, list)
     serialized_weights = {
         module["instance_id"]: module["usage_weight"]
@@ -311,6 +320,14 @@ def test_effective_usage_weights_reach_search_result_and_serialization() -> None
         for module in result.modules
         if module.module_key in {"corridor", "elevator"}
     )
+    assert payload["optimization"]["search_diagnostics"]["room_master"] == {
+        "mode": "heuristic_objective",
+        "solve_count": 1,
+        "solve_time_s": result.room_master_solve_time_s,
+        "first_solution_time_s": result.room_master_first_solution_time_s,
+        "optimal_status_count": result.room_master_optimal_status_count,
+        "feasible_status_count": result.room_master_feasible_status_count,
+    }
 
 
 def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> None:
@@ -325,6 +342,7 @@ def test_solver_returns_unified_modules_and_search_metrics_when_connected() -> N
     assert result.status in {"FEASIBLE", "NO_CONNECTED_LAYOUT", "INFEASIBLE", "TIME_LIMIT"}
     assert result.base.tier == 2
     assert result.search_time_s >= 0
+    assert result.room_master_mode == "heuristic_objective"
     assert 0 <= result.attempts <= 8
     assert result.connected_candidates_examined >= 0
     assert result.manhattan_pruned_count >= 0

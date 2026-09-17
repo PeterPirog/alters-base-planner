@@ -115,6 +115,14 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                 "search_time_s": result.search_time_s,
                 "time_limit_reached": result.time_limit_reached,
                 "search_exhausted": result.search_exhausted,
+                "room_master": {
+                    "mode": result.room_master_mode,
+                    "solve_count": result.room_master_solve_count,
+                    "solve_time_s": result.room_master_solve_time_s,
+                    "first_solution_time_s": result.room_master_first_solution_time_s,
+                    "optimal_status_count": result.room_master_optimal_status_count,
+                    "feasible_status_count": result.room_master_feasible_status_count,
+                },
                 "fixed_subproblems": {
                     "count": result.fixed_subproblem_count,
                     "max_graph_nodes": result.max_fixed_graph_nodes,

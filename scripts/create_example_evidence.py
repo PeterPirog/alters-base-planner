@@ -151,6 +151,7 @@ def layout_metadata(layout: dict) -> dict:
         "elevator_module_count": field(layout, *infrastructure, "elevator_module_count"),
         "corridor_count": field(layout, *infrastructure, "corridor_count"),
         **{key: field(layout, *search, key) for key in SEARCH_FIELDS},
+        "room_master": field(layout, *search, "room_master"),
         "fixed_subproblems": {
             **{key: field(layout, *fixed, key) for key in FIXED_FIELDS},
             "build_phases": {

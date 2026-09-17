@@ -106,6 +106,13 @@ configured_max_layout_attempts
 elapsed_wall_s
 solver_reported_search_s
 time_to_first_feasible_s
+room_master_mode
+room_master_solve_count
+room_master_solve_time_s
+room_master_first_solution_time_s
+room_master_optimal_status_count
+room_master_feasible_status_count
+room_master_packings_per_second
 room_packings_examined
 connected_candidates_examined
 fixed_objective_optima_proven
@@ -124,6 +131,21 @@ corridor_count
 ```
 
 `manhattan_pruned_count` counts room packings excluded before the fixed subproblem because their exact-integer admissible lower bound is strictly worse than the current incumbent primary objective.
+
+Room-master timing covers only calls to `solver.solve(room_master_model)`, excluding model
+construction and every fixed subproblem. `room_master_first_solution_time_s` is cumulative master
+solve time when the first packing is returned. The status counts distinguish master solves that
+returned CP-SAT `OPTIMAL` from those that returned `FEASIBLE`; the latter can occur when an
+objective-bearing master reaches its time limit with an incumbent. `room_master_solve_count` also
+includes a final `INFEASIBLE` exhaustion proof or an `UNKNOWN` timeout when present, so the two
+solution-status counts need not sum to it. Benchmark reports additionally derive packings per
+master-solve second. Older schema-v7 payloads without these additive fields render dashes in the
+new diagnostics table. These additions keep result schema version 4 and benchmark schema version 7
+unchanged.
+
+Production uses `heuristic_objective`. The private `feasibility_enumeration` mode exists only for the
+controlled experiment documented in `docs/ROOM_MASTER_SEARCH_EXPERIMENT.md`; it is not a CLI/UI
+setting or a production-default change.
 
 `incumbent_bound_pruned_count` counts packings for which the exact fixed source-aggregated flow model, constrained by `scaled_F <= incumbent_scaled_F`, is proven infeasible. Such a packing cannot match or improve the incumbent primary objective. It is intentionally tracked separately from modified-Manhattan pruning because it is a stronger exact subproblem proof, not a heuristic or lower-bound estimate.
 

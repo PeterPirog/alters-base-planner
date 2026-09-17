@@ -46,6 +46,12 @@ def _result() -> PlanResult:
         search_exhausted=False,
         time_limit_reached=True,
         global_objective_optimum_proven=False,
+        room_master_mode="feasibility_enumeration",
+        room_master_solve_count=8,
+        room_master_solve_time_s=0.5,
+        room_master_first_solution_time_s=0.1,
+        room_master_optimal_status_count=7,
+        room_master_feasible_status_count=0,
         fixed_subproblem_count=4,
         max_fixed_graph_nodes=61,
         max_fixed_graph_arcs=120,
@@ -105,6 +111,13 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.incumbent_bound_pruned_count == 5
     assert record.scaled_objective_value == 125
     assert record.global_objective_optimum_proven is False
+    assert record.room_master_mode == "feasibility_enumeration"
+    assert record.room_master_solve_count == 8
+    assert record.room_master_solve_time_s == 0.5
+    assert record.room_master_first_solution_time_s == 0.1
+    assert record.room_master_optimal_status_count == 7
+    assert record.room_master_feasible_status_count == 0
+    assert record.room_master_packings_per_second == 14.0
     assert record.fixed_subproblem_count == 4
     assert record.max_fixed_graph_nodes == 61
     assert record.max_fixed_graph_arcs == 120
@@ -159,6 +172,11 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert payload["results"][0]["total_fixed_source_flow_full_variables"] == 12000
     assert "| sample | 1 | FEASIBLE | 0.800 | 0.250 |" in markdown
     assert "| 2 | 5 | 1.2500 |" in markdown
+    assert "## Room-master diagnostics" in markdown
+    assert (
+        "| sample | feasibility_enumeration | 8 | 7 | 0 | 0.100 | 0.500 | 14.000 |"
+        in markdown
+    )
     assert "## Fixed-packing model diagnostics" in markdown
     assert "| sample | 4 | 61 | 120 | 28 | 3500 | 6100 |" in markdown
     assert "## Fixed-model build phases" in markdown
@@ -171,6 +189,20 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert "## Source-flow construction diagnostics" in markdown
     assert "| sample | 11 | 6 | 0 | 2800 | 1600 |" in markdown
     assert "Runtime values are measurements, not correctness thresholds" in markdown
+
+
+def test_markdown_accepts_older_schema_v7_payload_without_master_diagnostics() -> None:
+    case = _case()
+    record = record_from_result(case, _result(), elapsed_wall_s=0.8)
+    payload = benchmark_payload((case,), (record,))
+    row = payload["results"][0]
+    for key in tuple(row):
+        if key.startswith("room_master_"):
+            del row[key]
+
+    markdown = benchmark_markdown(payload)
+
+    assert "| sample | - | - | - | - | - | - | - |" in markdown
 
 
 def test_run_case_uses_production_request_contract(monkeypatch) -> None:
