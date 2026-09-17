@@ -126,6 +126,37 @@ packing enumeration before structural connectivity, not source-flow optimization
 
 Decision: **BLOCK_V1_ON_USABILITY**.
 
+## Exact integrated hard-feasibility bootstrap experiment
+
+The proposed bootstrap was tested directly against the accepted
+`compile_integrated_hard_model()` adapter and its canonical `build_hard_constraint_layer()` on the
+same local environment as the baseline. Each case used a 60-second diagnostic target from the
+original construction start, eight CP-SAT workers, no gameplay objective and no approximation. No
+bootstrap witness was passed to the fixed objective solver because every integrated SAT solve
+returned `UNKNOWN` without a solution.
+
+| Tier | Integrated status | Model build s | SAT solve s | Total observed s | CP-SAT variables | Constraints | Witness |
+|---|---|---:|---:|---:|---:|---:|---|
+| I | UNKNOWN | 1.500 | 60.906 | 62.406 | 32,250 | 57,624 | no |
+| II | UNKNOWN | 4.906 | 62.078 | 66.984 | 91,216 | 168,394 | no |
+| III | UNKNOWN | 16.766 | 41.265 | 58.031 | 243,002 | 458,736 | no |
+| IV | UNKNOWN | 30.454 | 27.656 | 58.110 | 417,902 | 795,244 | no |
+
+CP-SAT can finish slightly after its configured remaining-time limit, so observed wall time may
+exceed the 60-second diagnostic target. That strengthens rather than weakens the release concern.
+The Tier-I baseline found its first exact incumbent in 6.312 seconds, while this bootstrap found no
+hard-feasible witness after consuming the entire release budget. The integrated model also grows to
+417,902 variables and 795,244 constraints for Tier IV before the fixed exact objective model is
+constructed.
+
+This directly meets the experiment rejection criteria: the bootstrap consumes the Tier-I release
+window, materially regresses existing usability and provides no first-feasible improvement. The
+authoritative 11-minute release suite was not run because Tier I had already failed a mandatory
+acceptance condition. No production solver change was retained and no second optimization strategy
+was attempted.
+
+Experiment decision: **REJECTED_EXPERIMENT**.
+
 ## Remaining release sequence
 
 After release acceptance is explicitly accepted:
