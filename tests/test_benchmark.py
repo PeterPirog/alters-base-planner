@@ -52,6 +52,14 @@ def _result() -> PlanResult:
         room_master_first_solution_time_s=0.1,
         room_master_optimal_status_count=7,
         room_master_feasible_status_count=0,
+        room_master_model_build_time_s=0.03,
+        room_master_band_count=2,
+        room_master_cost_discovery_solve_count=3,
+        room_master_cost_discovery_time_s=0.2,
+        room_master_band_enumeration_solve_count=5,
+        room_master_band_enumeration_time_s=0.3,
+        room_master_same_cost_packings_examined=5,
+        room_master_largest_completed_band_size=4,
         fixed_subproblem_count=4,
         max_fixed_graph_nodes=61,
         max_fixed_graph_arcs=120,
@@ -118,6 +126,14 @@ def test_record_from_result_preserves_solver_diagnostics() -> None:
     assert record.room_master_optimal_status_count == 7
     assert record.room_master_feasible_status_count == 0
     assert record.room_master_packings_per_second == 14.0
+    assert record.room_master_model_build_time_s == 0.03
+    assert record.room_master_band_count == 2
+    assert record.room_master_cost_discovery_solve_count == 3
+    assert record.room_master_cost_discovery_time_s == 0.2
+    assert record.room_master_band_enumeration_solve_count == 5
+    assert record.room_master_band_enumeration_time_s == 0.3
+    assert record.room_master_same_cost_packings_examined == 5
+    assert record.room_master_largest_completed_band_size == 4
     assert record.fixed_subproblem_count == 4
     assert record.max_fixed_graph_nodes == 61
     assert record.max_fixed_graph_arcs == 120
@@ -174,7 +190,7 @@ def test_payload_and_markdown_are_auditable() -> None:
     assert "| 2 | 5 | 1.2500 |" in markdown
     assert "## Room-master diagnostics" in markdown
     assert (
-        "| sample | feasibility_enumeration | 8 | 7 | 0 | 0.100 | 0.500 | 14.000 |"
+        "| sample | feasibility_enumeration | 8 | 7 | 0 | 0.100 | 0.500 | 0.030 | 14.000 | 2 | 3/0.200 | 5/0.300 | 5 | 4 |"
         in markdown
     )
     assert "## Fixed-packing model diagnostics" in markdown

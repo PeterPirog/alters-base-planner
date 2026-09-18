@@ -346,6 +346,14 @@ class PlanResult:
     room_master_first_solution_time_s: float | None = None
     room_master_optimal_status_count: int = 0
     room_master_feasible_status_count: int = 0
+    room_master_model_build_time_s: float = 0.0
+    room_master_band_count: int = 0
+    room_master_cost_discovery_solve_count: int = 0
+    room_master_cost_discovery_time_s: float = 0.0
+    room_master_band_enumeration_solve_count: int = 0
+    room_master_band_enumeration_time_s: float = 0.0
+    room_master_same_cost_packings_examined: int = 0
+    room_master_largest_completed_band_size: int = 0
     fixed_subproblem_count: int = 0
     max_fixed_graph_nodes: int = 0
     max_fixed_graph_arcs: int = 0

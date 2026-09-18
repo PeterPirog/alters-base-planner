@@ -78,7 +78,12 @@ def test_production_decomposition_matches_global_reference_and_proves_optimum(
     assert result.scaled_modified_manhattan_lower_bound == 0
     assert result.incumbent_bound_pruned_count >= 0
     assert result.room_master_mode == room_master_mode.value
-    assert result.room_master_solve_count == result.attempts + 1
+    if room_master_mode is _RoomMasterMode.HEURISTIC_COST_BANDS:
+        assert result.room_master_solve_count == (
+            result.attempts + result.room_master_band_count + 1
+        )
+    else:
+        assert result.room_master_solve_count == result.attempts + 1
     assert result.room_master_solve_time_s >= 0
     assert result.room_master_first_solution_time_s is not None
 

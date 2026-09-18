@@ -55,6 +55,14 @@ class BenchmarkRecord:
     room_master_optimal_status_count: int
     room_master_feasible_status_count: int
     room_master_packings_per_second: float | None
+    room_master_model_build_time_s: float
+    room_master_band_count: int
+    room_master_cost_discovery_solve_count: int
+    room_master_cost_discovery_time_s: float
+    room_master_band_enumeration_solve_count: int
+    room_master_band_enumeration_time_s: float
+    room_master_same_cost_packings_examined: int
+    room_master_largest_completed_band_size: int
     room_packings_examined: int
     connected_candidates_examined: int
     fixed_objective_optima_proven: int
@@ -240,6 +248,22 @@ def record_from_result(
             if result.room_master_solve_time_s > 0
             else None
         ),
+        room_master_model_build_time_s=result.room_master_model_build_time_s,
+        room_master_band_count=result.room_master_band_count,
+        room_master_cost_discovery_solve_count=(
+            result.room_master_cost_discovery_solve_count
+        ),
+        room_master_cost_discovery_time_s=result.room_master_cost_discovery_time_s,
+        room_master_band_enumeration_solve_count=(
+            result.room_master_band_enumeration_solve_count
+        ),
+        room_master_band_enumeration_time_s=result.room_master_band_enumeration_time_s,
+        room_master_same_cost_packings_examined=(
+            result.room_master_same_cost_packings_examined
+        ),
+        room_master_largest_completed_band_size=(
+            result.room_master_largest_completed_band_size
+        ),
         room_packings_examined=result.attempts,
         connected_candidates_examined=result.connected_candidates_examined,
         fixed_objective_optima_proven=result.fixed_objective_optima_proven,
@@ -390,8 +414,8 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
             "",
             "Timing covers only calls to `solver.solve(room_master_model)`.",
             "",
-            "| Case | Mode | Solves | OPTIMAL | FEASIBLE | First solution s | Total solve s | Packings/s |",
-            "|---|---|---:|---:|---:|---:|---:|---:|",
+            "| Case | Mode | Solves | OPTIMAL | FEASIBLE | First solution s | Total solve s | Build s | Packings/s | Bands | Discovery solves/s | Band solves/s | Same-cost packings | Largest complete band |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for raw in results:
@@ -411,9 +435,32 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
         total_text = "-" if total is None else f"{total:.3f}"
         throughput = raw.get("room_master_packings_per_second")
         throughput_text = "-" if throughput is None else f"{throughput:.3f}"
+        build = raw.get("room_master_model_build_time_s")
+        build_text = "-" if build is None else f"{build:.3f}"
+        bands = raw.get("room_master_band_count")
+        bands_text = "-" if bands is None else str(bands)
+        discovery_count = raw.get("room_master_cost_discovery_solve_count")
+        discovery_time = raw.get("room_master_cost_discovery_time_s")
+        discovery_text = (
+            "-"
+            if discovery_count is None or discovery_time is None
+            else f"{discovery_count}/{discovery_time:.3f}"
+        )
+        enumeration_count = raw.get("room_master_band_enumeration_solve_count")
+        enumeration_time = raw.get("room_master_band_enumeration_time_s")
+        enumeration_text = (
+            "-"
+            if enumeration_count is None or enumeration_time is None
+            else f"{enumeration_count}/{enumeration_time:.3f}"
+        )
+        same_cost = raw.get("room_master_same_cost_packings_examined")
+        same_cost_text = "-" if same_cost is None else str(same_cost)
+        largest_band = raw.get("room_master_largest_completed_band_size")
+        largest_band_text = "-" if largest_band is None else str(largest_band)
         lines.append(
             "| {name} | {mode} | {solves} | {optimal} | {feasible} | {first} | "
-            "{total} | {throughput} |".format(
+            "{total} | {build} | {throughput} | {bands} | {discovery} | {enumeration} | "
+            "{same_cost} | {largest_band} |".format(
                 name=raw["name"],
                 mode=mode_text,
                 solves=solves_text,
@@ -421,7 +468,13 @@ def benchmark_markdown(payload: dict[str, object]) -> str:
                 feasible=feasible_text,
                 first=first_solution_text,
                 total=total_text,
+                build=build_text,
                 throughput=throughput_text,
+                bands=bands_text,
+                discovery=discovery_text,
+                enumeration=enumeration_text,
+                same_cost=same_cost_text,
+                largest_band=largest_band_text,
             )
         )
 

@@ -42,6 +42,18 @@ class _Candidate:
 class _RoomMasterMode(StrEnum):
     HEURISTIC_OBJECTIVE = "heuristic_objective"
     FEASIBILITY_ENUMERATION = "feasibility_enumeration"
+    HEURISTIC_COST_BANDS = "heuristic_cost_bands"
+
+
+@dataclass(slots=True)
+class _RoomPackingTrace:
+    selected_search_cost: int
+    master_solve_time_s: float
+    master_status: str
+    master_phase: str
+    fixed_subproblem_status: str = "NOT_EVALUATED"
+    fixed_subproblem_time_s: float = 0.0
+    connected_candidate: bool = False
 
 
 @dataclass(slots=True)
@@ -52,10 +64,30 @@ class _RoomMasterDiagnostics:
     first_solution_time_s: float | None = None
     optimal_status_count: int = 0
     feasible_status_count: int = 0
+    model_build_time_s: float = 0.0
+    band_count: int = 0
+    cost_discovery_solve_count: int = 0
+    cost_discovery_time_s: float = 0.0
+    band_enumeration_solve_count: int = 0
+    band_enumeration_time_s: float = 0.0
+    same_cost_packings_examined: int = 0
+    largest_completed_band_size: int = 0
 
-    def observe(self, status: cp_model.CpSolverStatus, elapsed_s: float) -> None:
+    def observe(
+        self,
+        status: cp_model.CpSolverStatus,
+        elapsed_s: float,
+        *,
+        phase: str,
+    ) -> None:
         self.solve_count += 1
         self.solve_time_s += elapsed_s
+        if phase == "cost_discovery":
+            self.cost_discovery_solve_count += 1
+            self.cost_discovery_time_s += elapsed_s
+        elif phase == "band_enumeration":
+            self.band_enumeration_solve_count += 1
+            self.band_enumeration_time_s += elapsed_s
         if status == cp_model.OPTIMAL:
             self.optimal_status_count += 1
         elif status == cp_model.FEASIBLE:
@@ -66,6 +98,17 @@ class _RoomMasterDiagnostics:
         ):
             self.first_solution_time_s = self.solve_time_s
 
+    def observe_model_build(self, elapsed_s: float) -> None:
+        self.model_build_time_s += elapsed_s
+
+    def start_band(self) -> None:
+        self.band_count += 1
+
+    def complete_band(self, size: int) -> None:
+        if size <= 0:
+            raise AssertionError("A completed room-master cost band must contain a packing")
+        self.largest_completed_band_size = max(self.largest_completed_band_size, size)
+
     def apply(self, result: PlanResult) -> None:
         result.room_master_mode = self.mode.value
         result.room_master_solve_count = self.solve_count
@@ -73,6 +116,21 @@ class _RoomMasterDiagnostics:
         result.room_master_first_solution_time_s = self.first_solution_time_s
         result.room_master_optimal_status_count = self.optimal_status_count
         result.room_master_feasible_status_count = self.feasible_status_count
+        result.room_master_model_build_time_s = self.model_build_time_s
+        result.room_master_band_count = self.band_count
+        result.room_master_cost_discovery_solve_count = self.cost_discovery_solve_count
+        result.room_master_cost_discovery_time_s = self.cost_discovery_time_s
+        result.room_master_band_enumeration_solve_count = self.band_enumeration_solve_count
+        result.room_master_band_enumeration_time_s = self.band_enumeration_time_s
+        result.room_master_same_cost_packings_examined = self.same_cost_packings_examined
+        result.room_master_largest_completed_band_size = self.largest_completed_band_size
+
+
+@dataclass(slots=True)
+class _CompiledRoomMaster:
+    model: cp_model.CpModel
+    vars_by_instance: dict[str, list[cp_model.IntVar]]
+    search_cost_expr: cp_model.LinearExpr
 
 
 @dataclass(slots=True)
@@ -455,8 +513,72 @@ def _configure_room_master_ordering(
 
     if mode is _RoomMasterMode.HEURISTIC_OBJECTIVE:
         model.minimize(sum(candidate_order_terms))
-    elif mode is not _RoomMasterMode.FEASIBILITY_ENUMERATION:
+    elif mode not in {
+        _RoomMasterMode.FEASIBILITY_ENUMERATION,
+        _RoomMasterMode.HEURISTIC_COST_BANDS,
+    }:
         raise ValueError("Unsupported room-master mode")
+
+
+def _compile_room_master(
+    instances: list[ModuleInstance],
+    candidates: dict[str, list[_Candidate]],
+    *,
+    minimize_search_cost: bool,
+    natural_cost_floor: int,
+    cost_floor: int | None = None,
+    exact_cost: int | None = None,
+) -> _CompiledRoomMaster:
+    """Build the canonical room-packing domain with an optional exact cost restriction."""
+
+    if cost_floor is not None and exact_cost is not None:
+        raise ValueError("A room master cannot have both a cost floor and an exact cost band")
+    model = cp_model.CpModel()
+    vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
+    cell_vars: dict[tuple[int, int], list[cp_model.IntVar]] = {}
+    search_cost_terms: list[cp_model.LinearExpr] = []
+
+    for instance in instances:
+        candidate_list = candidates[instance.instance_id]
+        variables = [
+            model.new_bool_var(f"p_{instance.instance_id}_{idx}")
+            for idx in range(len(candidate_list))
+        ]
+        vars_by_instance[instance.instance_id] = variables
+        model.add_exactly_one(variables)
+        for var, position in zip(variables, candidate_list, strict=True):
+            for cell in position.cells:
+                cell_vars.setdefault(cell, []).append(var)
+            search_cost_terms.append(position.search_cost * var)
+
+    for variables in cell_vars.values():
+        model.add_at_most_one(variables)
+    _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
+
+    search_cost_expr = cp_model.LinearExpr.sum(search_cost_terms)
+    if exact_cost is not None:
+        model.add(search_cost_expr == exact_cost)
+    elif cost_floor is not None and cost_floor > natural_cost_floor:
+        model.add(search_cost_expr >= cost_floor)
+    if minimize_search_cost:
+        model.minimize(search_cost_expr)
+
+    validation_error = model.validate()
+    if validation_error:
+        raise RuntimeError(f"Invalid generated CP-SAT placement model: {validation_error}")
+    return _CompiledRoomMaster(model, vars_by_instance, search_cost_expr)
+
+
+def _solve_room_master(
+    solver: cp_model.CpSolver,
+    model: cp_model.CpModel,
+    *,
+    remaining_s: float,
+) -> tuple[cp_model.CpSolverStatus, float]:
+    solver.parameters.max_time_in_seconds = max(0.001, remaining_s)
+    solve_started = monotonic()
+    status = solver.solve(model)
+    return status, max(0.0, monotonic() - solve_started)
 
 
 def _finalize_search_diagnostics(
@@ -514,6 +636,7 @@ def _solve_instances(
     started_at: float | None = None,
     usage_weights: Mapping[str, float] | None = None,
     room_master_mode: _RoomMasterMode = _RoomMasterMode.HEURISTIC_OBJECTIVE,
+    room_packing_trace: list[_RoomPackingTrace] | None = None,
 ) -> PlanResult:
     """Exact objective decomposition over a supplied non-SOLVER instance set.
 
@@ -535,12 +658,9 @@ def _solve_instances(
     )
     room_master_diagnostics = _RoomMasterDiagnostics(room_master_mode)
     fixed_diagnostics = _FixedDiagnosticsAggregate()
-    model = cp_model.CpModel()
+    deadline = started_at + float(time_limit_s)
     candidates: dict[str, list[_Candidate]] = {}
-    vars_by_instance: dict[str, list[cp_model.IntVar]] = {}
-    cell_vars: dict[tuple[int, int], list[cp_model.IntVar]] = {}
 
-    candidate_order_terms = []
     for instance in instances:
         candidate_list = _candidate_positions(instance, base, effective_usage_weights)
         if not candidate_list:
@@ -564,29 +684,42 @@ def _solve_instances(
             )
             return result
         candidates[instance.instance_id] = candidate_list
-        variables = [
-            model.new_bool_var(f"p_{instance.instance_id}_{idx}")
-            for idx in range(len(candidate_list))
-        ]
-        vars_by_instance[instance.instance_id] = variables
-        model.add_exactly_one(variables)
-        for var, position in zip(variables, candidate_list, strict=True):
-            for cell in position.cells:
-                cell_vars.setdefault(cell, []).append(var)
-            candidate_order_terms.append(position.search_cost * var)
 
-    for variables in cell_vars.values():
-        model.add_at_most_one(variables)
+    natural_cost_floor = sum(
+        min(candidate.search_cost for candidate in candidates[instance.instance_id])
+        for instance in instances
+    )
 
-    _add_identical_instance_symmetry_breaking(model, instances, vars_by_instance)
-    _configure_room_master_ordering(model, candidate_order_terms, room_master_mode)
+    def build_master(
+        *,
+        minimize_search_cost: bool,
+        cost_floor: int | None = None,
+        exact_cost: int | None = None,
+    ) -> tuple[_CompiledRoomMaster, cp_model.CpSolver]:
+        build_started = monotonic()
+        compiled_master = _compile_room_master(
+            instances,
+            candidates,
+            minimize_search_cost=minimize_search_cost,
+            natural_cost_floor=natural_cost_floor,
+            cost_floor=cost_floor,
+            exact_cost=exact_cost,
+        )
+        room_master_diagnostics.observe_model_build(max(0.0, monotonic() - build_started))
+        master_solver = cp_model.CpSolver()
+        master_solver.parameters.num_search_workers = 8
+        return compiled_master, master_solver
 
-    validation_error = model.validate()
-    if validation_error:
-        raise RuntimeError(f"Invalid generated CP-SAT placement model: {validation_error}")
-
-    solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 8
+    cost_band_mode = room_master_mode is _RoomMasterMode.HEURISTIC_COST_BANDS
+    master_phase = "cost_discovery" if cost_band_mode else "standard"
+    compiled, solver = build_master(
+        minimize_search_cost=room_master_mode
+        in {_RoomMasterMode.HEURISTIC_OBJECTIVE, _RoomMasterMode.HEURISTIC_COST_BANDS},
+        cost_floor=natural_cost_floor if cost_band_mode else None,
+    )
+    current_band_cost: int | None = None
+    current_band_size = 0
+    emitted_cost_band_packings: set[tuple[int, ...]] = set()
 
     best_result: PlanResult | None = None
     common_objective: ScaledObjective | None = None
@@ -600,19 +733,50 @@ def _solve_instances(
     search_exhausted = False
     attempt_limit_reached = False
     all_fixed_objectives_resolved = True
-    deadline = started_at + float(time_limit_s)
 
-    for _ in range(max_layout_attempts):
+    def advance_after_packing(
+        selected_indices: tuple[int, ...],
+        selected_search_cost: int,
+        status: cp_model.CpSolverStatus,
+    ) -> bool:
+        nonlocal compiled, solver, master_phase, current_band_cost, current_band_size
+        if not cost_band_mode or master_phase == "band_enumeration":
+            selected_vars = [
+                compiled.vars_by_instance[instance.instance_id][index]
+                for instance, index in zip(instances, selected_indices, strict=True)
+            ]
+            compiled.model.add(sum(selected_vars) <= len(selected_vars) - 1)
+            return True
+        if status != cp_model.OPTIMAL:
+            return False
+
+        current_band_cost = selected_search_cost
+        current_band_size = 1
+        master_phase = "band_enumeration"
+        compiled, solver = build_master(
+            minimize_search_cost=False,
+            exact_cost=selected_search_cost,
+        )
+        discovery_vars = [
+            compiled.vars_by_instance[instance.instance_id][index]
+            for instance, index in zip(instances, selected_indices, strict=True)
+        ]
+        compiled.model.add(sum(discovery_vars) <= len(discovery_vars) - 1)
+        return True
+
+    while room_packings_examined < max_layout_attempts:
         remaining = deadline - monotonic()
         if remaining <= 0:
             time_limit_reached = True
             all_fixed_objectives_resolved = False
             break
 
-        solver.parameters.max_time_in_seconds = max(0.001, remaining)
-        master_solve_started = monotonic()
-        status = solver.solve(model)
-        room_master_diagnostics.observe(status, monotonic() - master_solve_started)
+        status, master_solve_time_s = _solve_room_master(
+            solver,
+            compiled.model,
+            remaining_s=remaining,
+        )
+        room_master_diagnostics.observe(status, master_solve_time_s, phase=master_phase)
 
         if status == cp_model.MODEL_INVALID:
             raise RuntimeError("CP-SAT rejected the generated placement model as invalid")
@@ -621,6 +785,19 @@ def _solve_instances(
             all_fixed_objectives_resolved = False
             break
         if status == cp_model.INFEASIBLE:
+            if cost_band_mode and master_phase == "band_enumeration":
+                if current_band_cost is None:
+                    raise AssertionError("Room-master band enumeration has no exact cost")
+                room_master_diagnostics.complete_band(current_band_size)
+                next_cost_floor = current_band_cost + 1
+                master_phase = "cost_discovery"
+                current_band_cost = None
+                current_band_size = 0
+                compiled, solver = build_master(
+                    minimize_search_cost=True,
+                    cost_floor=next_cost_floor,
+                )
+                continue
             search_exhausted = True
             break
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -628,11 +805,13 @@ def _solve_instances(
 
         room_packings_examined += 1
         rooms: list[ModulePlacement] = []
-        chosen_vars: list[cp_model.IntVar] = []
+        selected_indices: list[int] = []
+        selected_search_cost = 0
         for instance in instances:
-            for idx, var in enumerate(vars_by_instance[instance.instance_id]):
+            for idx, var in enumerate(compiled.vars_by_instance[instance.instance_id]):
                 if solver.value(var):
                     position = candidates[instance.instance_id][idx]
+                    selected_search_cost += position.search_cost
                     rooms.append(
                         ModulePlacement(
                             instance_id=instance.instance_id,
@@ -643,11 +822,44 @@ def _solve_instances(
                             height=instance.spec.height,
                         )
                     )
-                    chosen_vars.append(var)
+                    selected_indices.append(idx)
                     break
 
-        if len(chosen_vars) != len(instances):
+        if len(selected_indices) != len(instances):
             raise AssertionError("CP-SAT solution did not select exactly one placement per module")
+        selected_indices_tuple = tuple(selected_indices)
+        if cost_band_mode:
+            if selected_indices_tuple in emitted_cost_band_packings:
+                raise AssertionError("Cost-band room master emitted a duplicate room packing")
+            emitted_cost_band_packings.add(selected_indices_tuple)
+            if master_phase == "cost_discovery" and status == cp_model.OPTIMAL:
+                room_master_diagnostics.start_band()
+            elif master_phase == "band_enumeration":
+                if selected_search_cost != current_band_cost:
+                    raise AssertionError(
+                        "Room-master band enumeration emitted a packing outside its exact cost"
+                    )
+                current_band_size += 1
+                room_master_diagnostics.same_cost_packings_examined += 1
+        objective_bearing_solve = (
+            room_master_mode is _RoomMasterMode.HEURISTIC_OBJECTIVE
+            or (cost_band_mode and master_phase == "cost_discovery")
+        )
+        if status == cp_model.OPTIMAL and objective_bearing_solve:
+            rounded_objective = round(solver.objective_value)
+            if selected_search_cost != rounded_objective:
+                raise AssertionError(
+                    "Room-master objective disagrees with exact selected search cost: "
+                    f"selected={selected_search_cost}, objective={solver.objective_value}"
+                )
+        trace_entry = _RoomPackingTrace(
+            selected_search_cost=selected_search_cost,
+            master_solve_time_s=master_solve_time_s,
+            master_status=status.name,
+            master_phase=master_phase,
+        )
+        if room_packing_trace is not None:
+            room_packing_trace.append(trace_entry)
 
         objective = build_scaled_objective(rooms, effective_usage_weights)
         if common_objective is None:
@@ -669,13 +881,20 @@ def _solve_instances(
                 raise AssertionError("Incumbent is missing its exact scaled objective")
             if scaled_lower_bound > incumbent_scaled:
                 manhattan_pruned += 1
-                model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+                trace_entry.fixed_subproblem_status = "MANHATTAN_PRUNED"
+                if not advance_after_packing(
+                    selected_indices_tuple, selected_search_cost, status
+                ):
+                    time_limit_reached = True
+                    all_fixed_objectives_resolved = False
+                    break
                 continue
 
         remaining = deadline - monotonic()
         if remaining <= 0:
             time_limit_reached = True
             all_fixed_objectives_resolved = False
+            trace_entry.fixed_subproblem_status = "NOT_RUN_DEADLINE"
             break
 
         if usage_weights is None:
@@ -696,6 +915,8 @@ def _solve_instances(
                 usage_weights=effective_usage_weights,
             )
         fixed_diagnostics.observe(fixed_result.diagnostics)
+        trace_entry.fixed_subproblem_status = fixed_result.status
+        trace_entry.fixed_subproblem_time_s = fixed_result.diagnostics.total_time_s
         if fixed_result.status == "TIME_LIMIT":
             time_limit_reached = True
             all_fixed_objectives_resolved = False
@@ -705,7 +926,12 @@ def _solve_instances(
                 raise AssertionError(
                     "Bounded fixed subproblem reported unqualified INFEASIBLE status"
                 )
-            model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+            if not advance_after_packing(
+                selected_indices_tuple, selected_search_cost, status
+            ):
+                time_limit_reached = True
+                all_fixed_objectives_resolved = False
+                break
             continue
         if fixed_result.status == "OBJECTIVE_BOUND_INFEASIBLE":
             if incumbent_scaled is None:
@@ -713,7 +939,12 @@ def _solve_instances(
                     "Unbounded fixed subproblem reported objective-bound infeasibility"
                 )
             incumbent_bound_pruned += 1
-            model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
+            if not advance_after_packing(
+                selected_indices_tuple, selected_search_cost, status
+            ):
+                time_limit_reached = True
+                all_fixed_objectives_resolved = False
+                break
             continue
         if fixed_result.status not in {"OPTIMAL", "FEASIBLE"}:
             raise AssertionError(f"Unexpected fixed objective status: {fixed_result.status}")
@@ -765,6 +996,7 @@ def _solve_instances(
             )
 
         connected_candidates += 1
+        trace_entry.connected_candidate = True
         if time_to_first_feasible_s is None:
             time_to_first_feasible_s = monotonic() - started_at
         room_mass, utility_mass, total_mass, margin, travel_ok, breakdown = _mass_metrics(
@@ -814,9 +1046,12 @@ def _solve_instances(
         if best_result is None or _candidate_rank(candidate_result) < _candidate_rank(best_result):
             best_result = candidate_result
 
-        model.add(sum(chosen_vars) <= len(chosen_vars) - 1)
         if fixed_result.time_limit_reached or not fixed_proven:
             time_limit_reached = True
+            break
+        if not advance_after_packing(selected_indices_tuple, selected_search_cost, status):
+            time_limit_reached = True
+            all_fixed_objectives_resolved = False
             break
     else:
         attempt_limit_reached = True
@@ -931,6 +1166,7 @@ def _solve_plan_with_room_master_mode(
     base: BaseGeometry | None = None,
     *,
     room_master_mode: _RoomMasterMode,
+    room_packing_trace: list[_RoomPackingTrace] | None = None,
 ) -> PlanResult:
     """Internal benchmark seam for comparing exact room-master enumeration modes."""
 
@@ -950,6 +1186,7 @@ def _solve_plan_with_room_master_mode(
         started_at=started_at,
         usage_weights=effective_usage_weights,
         room_master_mode=room_master_mode,
+        room_packing_trace=room_packing_trace,
     )
 
 

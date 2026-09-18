@@ -122,6 +122,22 @@ def result_payload(result: PlanResult) -> dict[str, object]:
                     "first_solution_time_s": result.room_master_first_solution_time_s,
                     "optimal_status_count": result.room_master_optimal_status_count,
                     "feasible_status_count": result.room_master_feasible_status_count,
+                    "model_build_time_s": result.room_master_model_build_time_s,
+                    "band_count": result.room_master_band_count,
+                    "cost_discovery_solve_count": (
+                        result.room_master_cost_discovery_solve_count
+                    ),
+                    "cost_discovery_time_s": result.room_master_cost_discovery_time_s,
+                    "band_enumeration_solve_count": (
+                        result.room_master_band_enumeration_solve_count
+                    ),
+                    "band_enumeration_time_s": result.room_master_band_enumeration_time_s,
+                    "same_cost_packings_examined": (
+                        result.room_master_same_cost_packings_examined
+                    ),
+                    "largest_completed_band_size": (
+                        result.room_master_largest_completed_band_size
+                    ),
                 },
                 "fixed_subproblems": {
                     "count": result.fixed_subproblem_count,
