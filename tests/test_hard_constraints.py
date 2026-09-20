@@ -199,3 +199,52 @@ def test_overlapping_utility_anchors_cannot_both_be_selected() -> None:
     model.add(variables.corridor[(4, 0)] == 1)
 
     assert _solve(model) == cp_model.INFEASIBLE
+
+
+def test_airlock_requires_external_legal_connection() -> None:
+    """Regression for H6: isolated Airlock must be INFEASIBLE.
+
+    The Airlock (root) has no external physical connections. Per normative H6:
+    "Every installed network module has at least one legal connection."
+
+    Before fix: FEASIBLE (root flow equation 0 == 0 is trivially satisfiable)
+    After fix: INFEASIBLE (explicit root external edge constraint)
+    """
+    model = cp_model.CpModel()
+    buildable = frozenset((x, 0) for x in range(8))
+    options = (
+        _room("airlock-pos", "airlock-1", "airlock", x=0, y=0, width=4),
+    )
+
+    build_hard_constraint_layer(
+        model,
+        buildable_cells=buildable,
+        placement_options=options,
+        utility_anchors=(),
+        root_instance_id="airlock-1",
+    )
+
+    assert _solve(model) == cp_model.INFEASIBLE
+
+
+def test_airlock_with_direct_room_connection_is_feasible() -> None:
+    """Positive control: Airlock with direct room connection must remain FEASIBLE.
+
+    This verifies the H6 fix does not reject legal connected roots.
+    """
+    model = cp_model.CpModel()
+    buildable = frozenset((x, 0) for x in range(8))
+    options = (
+        _room("airlock-pos", "airlock-1", "airlock", x=0, y=0, width=4),
+        _room("workshop-pos", "workshop-1", "workshop", x=4, y=0, width=4),
+    )
+
+    build_hard_constraint_layer(
+        model,
+        buildable_cells=buildable,
+        placement_options=options,
+        utility_anchors=(),
+        root_instance_id="airlock-1",
+    )
+
+    assert _solve(model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)

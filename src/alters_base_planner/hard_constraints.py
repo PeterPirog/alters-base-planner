@@ -407,6 +407,34 @@ def build_hard_constraint_layer(
 
     model.add(sum(source_flow.values()) == sum(all_demand_terms))
 
+    # H6: Airlock (root) must have at least one ACTIVE EXTERNAL physical connection.
+    # Internal transit edges (LEFT<->RIGHT within the same room) do NOT satisfy H6.
+    # A root connection must be to another room or a selected utility anchor.
+    root_node_ids = {node.node_id for node in root_nodes}
+    root_external_edge_literals: list[cp_model.IntVar] = []
+    for edge in edges:
+        a_is_root = edge.a in root_node_ids
+        b_is_root = edge.b in root_node_ids
+        # External connection: exactly one endpoint is a root port, the other is not
+        if a_is_root ^ b_is_root:
+            # Create a literal representing: ALL edge.conditions are true
+            edge_active = model.new_bool_var(f"root_ext_edge__{edge.edge_id}")
+            for condition in edge.conditions:
+                # edge_active <= condition (if edge_active then all conditions true)
+                model.add(edge_active <= condition)
+            # All conditions true => edge_active (equivalence)
+            if edge.conditions:
+                model.add(sum(edge.conditions) - len(edge.conditions) + 1 <= edge_active)
+            else:
+                model.add(edge_active == 1)
+            root_external_edge_literals.append(edge_active)
+
+    if root_external_edge_literals:
+        model.add(sum(root_external_edge_literals) >= 1)
+    else:
+        # No possible external connection for root: structurally infeasible
+        model.add(1 == 0)
+
     return HardConstraintVariables(
         placement=placement,
         corridor=corridor,
