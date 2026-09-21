@@ -224,6 +224,55 @@ def build_hard_constraint_layer(
         if len(occupants) > 1:
             model.add_at_most_one(occupants)
 
+    room_sink, flow, source_flow = _build_connectivity_layer(
+        model,
+        placement=placement,
+        corridor=corridor,
+        elevator=elevator,
+        utility_active=utility_active,
+        placement_options=placement_options,
+        utility_anchors=utility_anchors,
+        root_instance_id=root_instance_id,
+    )
+
+    return HardConstraintVariables(
+        placement=placement,
+        corridor=corridor,
+        elevator=elevator,
+        utility_active=utility_active,
+        room_sink=room_sink,
+        flow=flow,
+        source_flow=source_flow,
+    )
+
+
+def _build_connectivity_layer(
+    model: cp_model.CpModel,
+    *,
+    placement: dict[str, cp_model.IntVar],
+    corridor: dict[Anchor, cp_model.IntVar],
+    elevator: dict[Anchor, cp_model.IntVar],
+    utility_active: dict[Anchor, cp_model.IntVar],
+    placement_options: tuple[PlacementOptionSpec, ...],
+    utility_anchors: tuple[UtilityAnchorSpec, ...],
+    root_instance_id: str,
+) -> tuple[
+    dict[tuple[str, NodeId], cp_model.IntVar],
+    dict[tuple[str, str], cp_model.IntVar],
+    dict[NodeId, cp_model.IntVar],
+]:
+    """Build the candidate-conditioned physical graph and the rooted flow layer.
+
+    ``placement`` maps option_id -> Boolean literal meaning "this candidate is selected".
+    Formulation A passes its placement BoolVars directly; the compact Formulation B1 passes
+    exact candidate-selection channel literals. Everything below depends only on those
+    literals and the utility variables, so both formulations share identical connectivity
+    semantics (H5/H6/H7/H8/H9/H10/H11).
+
+    This function is an exact code-motion extraction of the former inline section of
+    :func:`build_hard_constraint_layer`; it adds the same constraints in the same order.
+    """
+
     # Create one graph node for every candidate-resolved room port. A port node is active iff
     # the corresponding room placement candidate is selected.
     port_nodes: list[_PortNode] = []
@@ -379,7 +428,10 @@ def build_hard_constraint_layer(
     for anchor, node_id in utility_node.items():
         demand_terms_by_node[node_id].append(utility_active[anchor])
 
-    max_flow = max(1, len(options_by_instance) - 1 + len(utility_anchors))
+    max_flow = max(
+        1,
+        len({option.instance_id for option in placement_options}) - 1 + len(utility_anchors),
+    )
     incoming: dict[NodeId, list[cp_model.IntVar]] = defaultdict(list)
     outgoing: dict[NodeId, list[cp_model.IntVar]] = defaultdict(list)
     flow: dict[tuple[str, str], cp_model.IntVar] = {}
@@ -443,12 +495,4 @@ def build_hard_constraint_layer(
         # No possible external connection for root: structurally infeasible
         model.add(1 == 0)
 
-    return HardConstraintVariables(
-        placement=placement,
-        corridor=corridor,
-        elevator=elevator,
-        utility_active=utility_active,
-        room_sink=room_sink,
-        flow=flow,
-        source_flow=source_flow,
-    )
+    return room_sink, flow, source_flow
