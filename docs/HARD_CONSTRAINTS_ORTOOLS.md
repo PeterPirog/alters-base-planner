@@ -23,9 +23,38 @@ The implementation separates two kinds of hard rules:
 
 This is intentional. A placement outside the Base mask is not an alternative that the solver should search and reject later; it should never be part of the decision domain.
 
+## Normative H-numbering synchronization
+
+`PROJECT_SYSTEM_REQUIREMENTS.md` (section 7) is the authoritative hard-constraint contract and
+uses the normative numbering H1-H12. This document was written with an earlier, more granular
+historical numbering (H1-H18). The mapping is:
+
+| Historical (this document) | Normative (`PROJECT_SYSTEM_REQUIREMENTS.md`) |
+|---|---|
+| H1 inside active Base geometry | H2 Base-mask legality |
+| H2 fixed obstruction/core exclusion | H2 Base-mask legality (blocked `X` cells) |
+| H3 exclusive physical occupancy | H3 No overlap |
+| H4 legal size and orientation | H4 Orientation |
+| H5 exact required room multiplicity | H1 Exact multiplicity |
+| H6 solver ownership of Corridor/Elevator | H9 Corridor / H10 Elevator continuity |
+| H7 explicit legal room ports | H5 Legal ports |
+| H8 legal direct room adjacency | H5 Legal ports (direct room-room port compatibility) |
+| H9 legal room-to-utility contact | H5 Legal ports (room-to-utility anchor compatibility) |
+| H10 horizontal utility connectivity | H9 Corridor / H10 Elevator continuity (horizontal attachment) |
+| H11/H12 vertical travel stacked Elevators | H10 Elevator continuity |
+| H13 transit versus terminal room | H8 Non-transit behaviour |
+| H14/H15/H16 reachability | H7 Airlock reachability (+ H6 Local connection) |
+| H17 special module semantics override defaults | supports H5/H8 via verified module data |
+| H18 selected utilities belong to the access network | H11 No floating infrastructure |
+
+Since the H6 repair (PR #31), the layer additionally enforces the normative H6 local-connection
+requirement explicitly for the Airlock root: the selected Airlock placement must participate in
+at least one active external graph connection, and its own internal LEFT<->RIGHT transit edge
+does not count.
+
 ---
 
-## H1 — inside active Base geometry
+## H1 — inside active Base geometry (normative: H2 Base-mask legality)
 
 **Rule:** every selected room and utility module must lie completely inside the active buildable Base domain.
 
@@ -35,7 +64,7 @@ This is intentional. A placement outside the Base mask is not an alternative tha
 
 ---
 
-## H2 — fixed obstruction/core exclusion
+## H2 — fixed obstruction/core exclusion (normative: H2 Base-mask legality)
 
 **Rule:** no movable module may occupy a fixed core/blocked cell.
 
@@ -45,7 +74,7 @@ This is intentional. A placement outside the Base mask is not an alternative tha
 
 ---
 
-## H3 — exclusive physical occupancy
+## H3 — exclusive physical occupancy (normative: H3 No overlap)
 
 **Rule:** one Base cell may belong to at most one selected module.
 
@@ -57,7 +86,7 @@ This covers room-room, room-Corridor, room-Elevator and every utility-utility ov
 
 ---
 
-## H4 — legal size and orientation
+## H4 — legal size and orientation (normative: H4 Orientation)
 
 **Rule:** a room must preserve the verified module footprint/orientation.
 
@@ -67,7 +96,7 @@ This covers room-room, room-Corridor, room-Elevator and every utility-utility ov
 
 ---
 
-## H5 — exact required room multiplicity
+## H5 — exact required room multiplicity (normative: H1 Exact multiplicity)
 
 **Rule:** every required room instance must be placed exactly once.
 
@@ -79,7 +108,7 @@ Requested count and mandatory/story-state expansion therefore happens before thi
 
 ---
 
-## H6 — solver ownership of Corridor/Elevator
+## H6 — solver ownership of Corridor/Elevator (normative: H9 Corridor / H10 Elevator continuity)
 
 **Rule:** Corridor and Elevator are solver-managed 2x1 modules.
 
@@ -104,7 +133,7 @@ The player does not provide utility counts.
 
 ---
 
-## H7 — explicit legal room ports
+## H7 — explicit legal room ports (normative: H5 Legal ports)
 
 **Rule:** room connections may use only verified explicit access ports.
 
@@ -114,7 +143,7 @@ The player does not provide utility counts.
 
 ---
 
-## H8 — legal direct room adjacency
+## H8 — legal direct room adjacency (normative: H5 Legal ports — direct room-room port compatibility)
 
 **Rule:** two rooms connect directly only when opposite explicit port boundaries meet at identical absolute `(edge_x, edge_y)`.
 
@@ -124,7 +153,7 @@ The player does not provide utility counts.
 
 ---
 
-## H9 — legal room-to-utility contact
+## H9 — legal room-to-utility contact (normative: H5 Legal ports — room-to-utility anchor compatibility)
 
 **Rule:** a room may join Corridor/Elevator only at the exact 2x1 anchor immediately outside a resolved port.
 
@@ -134,7 +163,7 @@ The player does not provide utility counts.
 
 ---
 
-## H10 — horizontal utility connectivity
+## H10 — horizontal utility connectivity (normative: H9 Corridor / H10 Elevator continuity — horizontal attachment)
 
 **Rule:** consecutive 2x1 utility modules connect horizontally when their anchors differ by exactly two x-cells on the same row.
 
@@ -146,7 +175,7 @@ Corridor and Elevator may both participate in horizontal transfer on a floor.
 
 ---
 
-## H11/H12 — vertical travel only through stacked Elevator modules
+## H11/H12 — vertical travel only through stacked Elevator modules (normative: H10 Elevator continuity)
 
 **Rule:** vertical movement exists only between Elevator modules at `(x,y)` and `(x,y+1)`.
 
@@ -160,7 +189,7 @@ A shifted shaft is therefore possible only if the selected utilities provide a g
 
 ---
 
-## H13 — transit versus terminal room
+## H13 — transit versus terminal room (normative: H8 Non-transit behaviour)
 
 **Rule:** a terminal/non-transit room can be reached but cannot bridge traffic between its opposite sides.
 
@@ -172,7 +201,7 @@ For a module such as Rapidium Ark, its ports exist and can satisfy room reachabi
 
 ---
 
-## H14/H15/H16 — every room reachable from Airlock, at least one port is sufficient
+## H14/H15/H16 — every room reachable from Airlock, at least one port is sufficient (normative: H7 Airlock reachability, plus H6 Local connection for the Airlock root)
 
 **Rule:** every installed non-root room must have at least one legal port reachable from the Airlock-rooted network. Both room ports are not required.
 
@@ -186,7 +215,7 @@ Therefore a disconnected room cannot satisfy the model, while a legal terminal r
 
 ---
 
-## H17 — special module semantics override defaults
+## H17 — special module semantics override defaults (supports normative H5/H8 via verified module data)
 
 **Rule:** verified module exceptions override standard access/transit assumptions.
 
@@ -196,7 +225,7 @@ Therefore a disconnected room cannot satisfy the model, while a legal terminal r
 
 ---
 
-## H18 — selected utilities belong to the access network
+## H18 — selected utilities belong to the access network (normative: H11 No floating infrastructure)
 
 **Rule:** a selected Corridor or Elevator may not form a floating disconnected island.
 

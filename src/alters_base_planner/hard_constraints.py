@@ -88,8 +88,12 @@ def _validate_input_domain(
 ) -> None:
     """Validate hard constraints that are best enforced before CP-SAT variable creation.
 
-    H1/H2/H4/H7 are domain-definition constraints rather than useful search variables:
-    illegal placements/orientations/ports should never enter the CP-SAT domain.
+    Static domain rules are validated here so illegal candidates never enter the CP-SAT
+    search domain: Base-mask containment (H2), resolved-port legality and geometry (H5),
+    utility-anchor legality (H5/H2) and candidate/instance consistency. H4 orientation and
+    fixed-core exclusion belong to upstream candidate generation, not to this function.
+    Connectivity rules (H6 local connection, H7 Airlock reachability) are decision-level
+    constraints and are NOT enforced here.
     """
 
     if not buildable_cells:
@@ -153,18 +157,21 @@ def build_hard_constraint_layer(
     """Add the reusable hard-feasibility layer for the future integrated Base solver.
 
     This function intentionally does **not** define a gameplay objective. It encodes only
-    feasibility and connectivity semantics:
+    feasibility and connectivity semantics (normative H1-H11; H12 journey mass remains
+    outside this structural layer):
 
-    - exactly one placement option per required room instance;
-    - no room/utility cell overlap;
-    - solver-managed optional Corridor/Elevator occupation on legal 2x1 anchors;
-    - legal direct room contacts only through matching explicit ports;
-    - legal room-to-utility contacts only through the exact external port anchor;
-    - horizontal utility connectivity in 2-cell steps;
-    - vertical connectivity only between stacked Elevator modules;
-    - no internal LEFT<->RIGHT passage through terminal/non-transit rooms;
-    - at least one Airlock-rooted reachable port for every installed room;
-    - every selected Corridor/Elevator belongs to the Airlock-rooted network.
+    - H1: exactly one placement option per required room instance;
+    - H3: no room/utility cell overlap;
+    - H9/H10: solver-managed optional Corridor/Elevator occupation on legal 2x1 anchors;
+    - H5: legal direct room contacts only through matching explicit resolved ports;
+    - H5: legal room-to-utility contacts only through the exact external port anchor;
+    - H9/H10: horizontal utility connectivity in full 2-cell steps;
+    - H10: vertical connectivity only between stacked Elevator modules;
+    - H8: no internal LEFT<->RIGHT passage through terminal/non-transit rooms;
+    - H7: at least one Airlock-rooted reachable port for every installed room;
+    - H6: explicit Airlock local external connection (its own internal transit edge does
+      not count);
+    - H11: every selected Corridor/Elevator belongs to the Airlock-rooted network.
 
     Static rules such as Base-mask containment, fixed-core exclusion, orientation and port
     geometry are validated before variable creation because illegal candidates should not be
@@ -182,7 +189,7 @@ def build_hard_constraint_layer(
     for option in placement_options:
         options_by_instance[option.instance_id].append(option)
 
-    # H5: the requested/mandatory module multiplicity is represented by room instances;
+    # H1: the requested/mandatory module multiplicity is represented by room instances;
     # every instance must choose exactly one legal placement candidate.
     placement: dict[str, cp_model.IntVar] = {}
     for option in placement_options:
@@ -190,8 +197,8 @@ def build_hard_constraint_layer(
     for options in options_by_instance.values():
         model.add_exactly_one(placement[option.option_id] for option in options)
 
-    # H6: Corridor and Elevator are solver-managed 2x1 modules. They share the same anchor,
-    # therefore at most one utility kind can occupy a given anchor.
+    # H9/H10: Corridor and Elevator are solver-managed 2x1 modules. They share the same
+    # anchor, therefore at most one utility kind can occupy a given anchor.
     corridor: dict[Anchor, cp_model.IntVar] = {}
     elevator: dict[Anchor, cp_model.IntVar] = {}
     utility_active: dict[Anchor, cp_model.IntVar] = {}
@@ -263,8 +270,9 @@ def build_hard_constraint_layer(
         )
         edge_counter += 1
 
-    # H13: a transit room joins its LEFT and RIGHT port sides internally. A terminal room has
-    # no such internal edge, so it can be reached but cannot serve as a bridge.
+    # H8: a transit room joins its LEFT and RIGHT port sides internally (transit_allowed).
+    # A terminal/non-transit room has no such internal edge, so it can be reached but cannot
+    # serve as a bridge.
     for option in placement_options:
         if not option.transit_allowed:
             continue
@@ -279,7 +287,7 @@ def build_hard_constraint_layer(
                     placement[option.option_id],
                 )
 
-    # H8: direct room-to-room travel exists only where opposite explicit port boundaries meet.
+    # H5: direct room-to-room contact exists only where opposite explicit resolved ports meet.
     left_index: dict[tuple[int, int], list[_PortNode]] = defaultdict(list)
     right_index: dict[tuple[int, int], list[_PortNode]] = defaultdict(list)
     for node in port_nodes:
@@ -302,7 +310,7 @@ def build_hard_constraint_layer(
                     right_node.active,
                 )
 
-    # H9: a room can join a utility module only at the exact 2x1 external anchor derived from
+    # H5: a room can join a utility module only at the exact 2x1 external anchor derived from
     # its resolved explicit port.
     for node in port_nodes:
         anchor = node.port.utility_anchor
@@ -318,7 +326,7 @@ def build_hard_constraint_layer(
 
     utility_by_anchor = {utility.anchor: utility for utility in utility_anchors}
 
-    # H10: horizontal utility connectivity advances by one complete 2x1 module, i.e. x+2.
+    # H9/H10: horizontal utility connectivity advances by one complete 2x1 module, i.e. x+2.
     # Both Corridor and Elevator modules may participate in horizontal transfer on a floor.
     for anchor in sorted(utility_by_anchor):
         x, y = anchor
@@ -332,7 +340,7 @@ def build_hard_constraint_layer(
             utility_active[right_anchor],
         )
 
-    # H11/H12: vertical travel exists only through immediately stacked Elevator modules at the
+    # H10: vertical travel exists only through immediately stacked Elevator modules at the
     # same x coordinate. This also permits shifted shafts only through a real horizontal
     # transfer path on a shared floor; no global single-x shaft rule is imposed.
     for anchor in sorted(utility_by_anchor):
@@ -347,9 +355,9 @@ def build_hard_constraint_layer(
             elevator[below_anchor],
         )
 
-    # H14/H15/H16/H18: exact rooted reachability via single-commodity flow.
+    # H7: exact Airlock-rooted reachability via single-commodity flow.
     # Every non-root room consumes one unit of flow at exactly one selected active port.
-    # Every selected utility consumes one unit too, excluding floating utility islands.
+    # Every selected utility consumes one unit too, excluding floating utility islands (H11).
     # The source may inject flow only into active Airlock/root ports.
     room_sink: dict[tuple[str, NodeId], cp_model.IntVar] = {}
     demand_terms_by_node: dict[NodeId, list[cp_model.IntVar]] = defaultdict(list)
@@ -407,9 +415,9 @@ def build_hard_constraint_layer(
 
     model.add(sum(source_flow.values()) == sum(all_demand_terms))
 
-    # H6: Airlock (root) must have at least one ACTIVE EXTERNAL physical connection.
-    # Internal transit edges (LEFT<->RIGHT within the same room) do NOT satisfy H6.
-    # A root connection must be to another room or a selected utility anchor.
+    # H6 (local connection): Airlock (root) must have at least one ACTIVE EXTERNAL physical
+    # connection. Internal transit edges (LEFT<->RIGHT within the same room) do NOT satisfy
+    # H6. A root connection must be to another room or a selected utility anchor.
     root_node_ids = {node.node_id for node in root_nodes}
     root_external_edge_literals: list[cp_model.IntVar] = []
     for edge in edges:

@@ -99,7 +99,10 @@ RIGHT = (edge_x,     edge_y)
 
 A layout is structurally feasible only when all applicable rules hold.
 
-### H1 — Multiplicity and ownership
+The H1-H12 numbering below is synchronized with the normative definitions in
+`PROJECT_SYSTEM_REQUIREMENTS.md`, which takes precedence if the two ever diverge.
+
+### H1 — Exact multiplicity
 
 - exactly one of every baseline SYSTEM module;
 - exactly the requested count of every PLAYER module;
@@ -109,7 +112,7 @@ A layout is structurally feasible only when all applicable rules hold.
 
 SYSTEM and SOLVER keys are rejected from player room counts.
 
-### H2 — Exact Base mask
+### H2 — Base-mask legality
 
 Every occupied cell must be buildable (`1`) in the selected canonical Base CSV. No movable module may occupy `0` or `X`.
 
@@ -137,29 +140,38 @@ Each physical grid cell belongs to at most one selected SYSTEM/PLAYER/Corridor/E
 
 No rotation unless future verified game evidence explicitly supports it.
 
-### H5 — Direct room connection
+### H5 — Legal ports
 
-Two room-like modules connect directly only when resolved explicit ports have the same `edge_x`, the same `edge_y` and opposite sides. Direct compatible endpoint adjacency has travel cost 0.
+Connectivity exists only through compatible resolved ports/utility anchors. High rooms use
+floor-level access except the explicit verified Radiation-Repulsor top-access exception. H5 has
+two contact forms; no separate hard-constraint numbers are introduced for them.
 
-### H6 — Room-to-utility connection
+#### H5.1 Direct room-room port compatibility
 
-A Corridor/Elevator may attach to a room-like module only at the exact external 2x1 anchor derived from a resolved port. The utility footprint must itself be legal and unoccupied.
+Two room-like modules connect directly only when resolved explicit ports have the same `edge_x`,
+the same `edge_y` and opposite sides. Direct compatible endpoint adjacency has travel cost 0.
 
-### H7 — Corridor
+#### H5.2 Room-to-utility anchor compatibility
 
-Corridor is a solver-managed 2x1 module of mass 2. It provides horizontal connectivity and contributes travel cost +1 when traversed.
+A Corridor/Elevator may attach to a room-like module only at the exact external 2x1 anchor
+derived from a resolved port. The utility footprint must itself be legal and unoccupied.
 
-### H8 — Elevator
+### H6 — Local connection
 
-Elevator is a solver-managed 2x1 module of mass 2. It provides horizontal attachment plus vertical connectivity only between immediately adjacent Elevator modules at the same x. Every traversed Elevator contributes +1.
+Every installed network module has at least one legal connection. This does not replace global
+reachability (H7), and global reachability does not erase the local-connection requirement.
 
-A shifted shaft is legal only through a real horizontal transfer path on a shared floor. No central-shaft community preference is a hard constraint.
+For the Airlock root this is enforced explicitly: the selected Airlock placement must participate
+in at least one ACTIVE EXTERNAL graph connection — to another room or to a selected utility
+anchor. The Airlock's own internal LEFT<->RIGHT transit edge does not satisfy H6, because it
+connects two port nodes of the same installed module and not the module to the network.
 
-### H9 — Airlock-rooted connectivity
+### H7 — Airlock reachability
 
-Every installed module has at least one legal network connection and is reachable from Airlock. Local degree conditions never replace global reachability.
+All installed modules are reachable from Airlock. The hard layer proves this with an exact
+single-commodity flow rooted at the Airlock's active ports.
 
-### H10 — Non-transit modules
+### H8 — Non-transit behaviour
 
 A module with `transit_allowed=false` may terminate a route but has no internal side-to-side bridge.
 
@@ -172,17 +184,52 @@ Rapidium Ark
 
 They still must be Airlock-reachable.
 
-### H11 — No floating utilities
+### H9 — Corridor
+
+Corridor is a solver-managed 2x1 module of mass 2. It provides horizontal connectivity and contributes travel cost +1 when traversed.
+
+### H10 — Elevator continuity
+
+Elevator is a solver-managed 2x1 module of mass 2. It provides horizontal attachment plus vertical
+connectivity only between immediately adjacent Elevator modules at the same x. Every traversed
+Elevator contributes +1.
+
+Horizontal utility connectivity advances by one complete 2x1 module, i.e. `x + 2`; both Corridor
+and Elevator modules may participate in horizontal transfer on a floor.
+
+A shifted shaft is legal only through a real horizontal transfer path on a shared floor. No
+central-shaft community preference is a hard constraint. Every used vertical level is represented
+by an Elevator module: a vertical graph edge requires selected Elevator modules at both
+immediately adjacent anchors.
+
+The exact evaluator independently checks accepted vertical semantics; disagreement with the
+CP-SAT hard model is an internal error.
+
+### H11 — No floating infrastructure
 
 Every selected Corridor/Elevator belongs to the Airlock-rooted network.
 
-### H12 — Elevator continuity
+### H12 — Journey mass
 
-Every vertical graph edge requires selected Elevator modules at both immediately adjacent anchors. The exact evaluator independently checks accepted vertical semantics; disagreement with the CP-SAT hard model is an internal error.
+```text
+total_base_mass = sum(installed module masses)
+organics_required_for_journey = total_base_mass
+journey_feasible = structural_feasible and total_base_mass <= organics_capacity
+```
+
+Because Corridor and Elevator each have mass 2, this is equivalent to non-SOLVER mass plus
+`2 * corridor_count + 2 * elevator_module_count` (exact decomposition in section 4).
+
+H12 is derived journey feasibility: it is computed after structural feasibility and is not a
+structural SAT connectivity constraint inside the hard layer. Structural feasibility and journey
+feasibility are reported separately.
 
 ---
 
 ## 4. Structural versus journey feasibility
+
+Section 3 rule H12 (journey mass) is evaluated here: structural feasibility is decided by the
+hard-constraint layers below, and journey feasibility is a derived post-structural check.
 
 ```text
 room_mass    = sum(SYSTEM/PLAYER module masses)
