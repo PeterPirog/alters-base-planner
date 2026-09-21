@@ -313,7 +313,7 @@ def test_airlock_multiple_placement_candidates_solver_chooses_connectable() -> N
         _room("workshop-pos", "workshop-1", "workshop", x=12, y=0, width=4),
     )
 
-    build_hard_constraint_layer(
+    variables = build_hard_constraint_layer(
         model,
         buildable_cells=buildable,
         placement_options=options,
@@ -321,12 +321,14 @@ def test_airlock_multiple_placement_candidates_solver_chooses_connectable() -> N
         root_instance_id="airlock-1",
     )
 
-    status = _solve(model)
+    solver = cp_model.CpSolver()
+    status = solver.solve(model)
     assert status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
-    # Note: We can't easily verify which placement was chosen without extracting
-    # the solution, but the model being feasible proves the solver could choose
-    # the connectable placement B.
+    # Explicitly verify the solver chose the connectable placement B
+    assert solver.value(variables.placement["airlock-a"]) == 0
+    assert solver.value(variables.placement["airlock-b"]) == 1
+    assert solver.value(variables.placement["workshop-pos"]) == 1
 
 
 def test_airlock_inactive_candidate_does_not_satisfy_h6() -> None:
@@ -334,19 +336,23 @@ def test_airlock_inactive_candidate_does_not_satisfy_h6() -> None:
 
     Selected candidate is isolated; unselected candidate would have a connection.
     Expected: INFEASIBLE.
+
+    This test FORCES selection of the isolated candidate (airlock-a) and
+    verifies that the inactive candidate's external edges do NOT satisfy H6
+    for the selected isolated root.
     """
     model = cp_model.CpModel()
     buildable = frozenset((x, 0) for x in range(16))
     options = (
-        # Placement A: isolated at x=0
+        # Placement A: isolated at x=0 (FORCED SELECTED)
         _room("airlock-a", "airlock-1", "airlock", x=0, y=0, width=4),
-        # Placement B: would connect to workshop at x=12
+        # Placement B: would connect to workshop at x=12 (FORCED UNSELECTED)
         _room("airlock-b", "airlock-1", "airlock", x=8, y=0, width=4),
         # Workshop at x=12 only connects to placement B
         _room("workshop-pos", "workshop-1", "workshop", x=12, y=0, width=4),
     )
 
-    build_hard_constraint_layer(
+    variables = build_hard_constraint_layer(
         model,
         buildable_cells=buildable,
         placement_options=options,
@@ -354,11 +360,9 @@ def test_airlock_inactive_candidate_does_not_satisfy_h6() -> None:
         root_instance_id="airlock-1",
     )
 
-    status = _solve(model)
-    # The model should be FEASIBLE (solver can choose placement B)
-    assert status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    # Force selection of isolated placement A and de-selection of connectable placement B
+    model.add(variables.placement["airlock-a"] == 1)
+    model.add(variables.placement["airlock-b"] == 0)
 
-    # This test documents that the solver correctly picks the connectable placement.
-    # To force the isolated placement we'd need access to placement variables,
-    # but the core requirement (inactive candidate cannot satisfy H6) is covered
-    # by the isolated Airlock test.
+    # With isolated root forced, H6 must be violated (no external connection possible)
+    assert _solve(model) == cp_model.INFEASIBLE
